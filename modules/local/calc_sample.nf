@@ -1,16 +1,16 @@
-process CALC_SIMPLE {
+process CALC_SAMPLE {
     tag "${sample_meta[1]}"
     label 'process_single'
 
-    container "domebraccia/bulktcr:0.3"
+    container "domebraccia/bulktcr:0.5"
 
-    publishDir "${params.output_dir}/simple_calc", mode: 'copy'
+    // publishDir "${params.output_dir}/sample_calc", mode: 'copy'
 
     input:
     tuple val(sample_meta), path(count_table)
 
     output:
-    path 'simple_stats.csv', emit: simple_csv
+    path 'sample_stats.csv', emit: sample_csv
     path 'v_family.csv', emit: v_family_csv
     path 'd_family.csv', emit: d_family_csv
     path 'j_family.csv', emit: j_family_csv
@@ -18,14 +18,14 @@ process CALC_SIMPLE {
 
     script:
     """
-    python $projectDir/bin/calc_simple.py \
+    python $projectDir/bin/calc_sample.py \
         -m '${sample_meta}' \
         -c ${count_table} 
     """
 
     stub:
     """
-    touch simple_calc.csv
+    touch sample_calc.csv
     touch v_family.csv
     touch d_family.csv
     touch j_family.csv

@@ -22,5 +22,9 @@ RUN mkdir -p /opt/quarto/1.3.433 \
         --strip-components=1 \
     && rm quarto.tar.gz 
 
+# install R
+RUN mamba install -y r-base=4.1.0 \
+    && mamba clean -afy
+
 # add quarto to the path
 ENV PATH="/opt/quarto/1.3.433/bin:${PATH}"

@@ -6,3 +6,10 @@
 results*
 work
 test*
+
+notebooks/*.png
+notebooks/*.ipynb
+notebooks/*.html
+
+## vscode
+.vscode/*

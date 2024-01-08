@@ -12,11 +12,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import entropy
 import numpy as np
-from pathlib import Path
 import csv
-import pickle
-# import logging
-# import sys
 
 # print('-- ENTERED calc_clonality.py--')
 
@@ -46,8 +42,8 @@ counts = counts.rename(columns={'count (templates/reads)': 'read_count', 'freque
 # print('counts columns: \n')
 # print(counts.columns)
 
-def calc_clonality(metadata, counts):
-    """Calculate clonality of a TCR repertoire."""
+def calc_sample_stats(metadata, counts):
+    """Calculate sample level statistics of TCR repertoire."""
 
     ## first pass stats
     clone_counts = counts['read_count']
@@ -76,7 +72,7 @@ def calc_clonality(metadata, counts):
     cdr3_avg_len = np.mean(cdr3_lens)
 
     # write above values to csv file
-    with open('simple_stats.csv', 'w') as csvfile:
+    with open('sample_stats.csv', 'w') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow([metadata[0], metadata[1], metadata[2], metadata[3], 
                          num_clones, num_TCRs, simpson_index, simpson_index_corrected, clonality,
@@ -123,4 +119,4 @@ def calc_clonality(metadata, counts):
     # with open('gene_usage_' + str(metadata[1] + '_' + str(metadata[2] + '_' + str(metadata[3]))) + '.pkl', 'wb') as f:
     #     pickle.dump(gene_usage, f)
 
-calc_clonality(metadata, counts)
+calc_sample_stats(metadata, counts)
