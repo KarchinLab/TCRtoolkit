@@ -103,7 +103,7 @@ toc()
 
 # Sample level statistics v2
 
-Below are plots showing basic T cell repertoire statistics. Each plot has a basic description about the statistic shown. However, biological interpretation of each plot is left to the user.
+Below are plots showing basic T cell repertoire statistics. Each plot has a description about the statistic shown and formulas used to calculate the metric when applicable. Specific biological interpretation of each plot is left to the user.
 
 ## Number of clones
 
@@ -119,7 +119,7 @@ plt_combined(df, x_col='timepoint', y_col='num_clones', patient_col='patient_id'
 plt_combined(df, x_col='timepoint', y_col='clonality', patient_col='patient_id')
 ```
 
-**Figure 2. The clonality of samples across timepoints.** Clonality is a measure of T cell clonal expansion and reflects the degree to which the sample is dominated by 1 or more T cell clones. Clonality is calculated as: *Clonality = 1 - entropy(clone_counts) / log2(number of clones)*. Left: Boxplot, Right: matched paitent line plot.
+**Figure 2. The clonality of samples across timepoints.** Clonality is a measure of T cell clonal expansion and reflects the degree to which the sample is dominated by 1 or more T cell clones. Clonality is calculated via: $$Clonality = \frac {1-H} {\log_{2} N} \quad\text{,}\quad H = -\sum\limits_{i=1}^N p_i \log_{2}{p_i}$$ where $H$ is the Shannon entropy of a given sample, $N$ is the number of unique TCRs in the sample, and $p_i$ is the frequency of the $i$ th unique TCR in the sample. Left: Boxplot, Right: matched paitent line plot.
 
 ## Simpson Index
 
@@ -127,7 +127,11 @@ plt_combined(df, x_col='timepoint', y_col='clonality', patient_col='patient_id')
 plt_combined(df, x_col='timepoint', y_col='simpson_index_corrected', patient_col='patient_id')
 ```
 
-**Figure 3. Corrected Simpson Index.** The Simpson Index is a measure of diversity that takes into account the number of clones and the relative abundance of each clone in a sample. The corrected Simpson Index is calculated as: *Corrected Simpson Index = sum(clone_counts\*(clone_counts-1)) / (number of TCRs\*(number of TCRs-1))*. Left: Boxplot, Right: matched paitent line plot.
+**Figure 3. Corrected Simpson Index.** The Simpson Index is a measure of diversity that takes into account the number of clones and the relative abundance of each clone in a sample. The corrected Simpson Index, $D$, is calculated as: 
+
+$$D = \sum\limits_{i=1}^N \frac {p_i(p_i - 1)} {T(T - 1)} \quad\text{,}\quad T = \sum\limits_{i=1}^N p_i$$
+
+Where $N$ is the number of unique TCRs in the sample, $p_i$ is the frequency of the $i$ th unique TCR in the sample, and $T$ is the total number of T Cells counted in the sample. Left: Boxplot, Right: matched paitent line plot.
 
 ## Percent of productive TCRs
 
@@ -135,7 +139,11 @@ plt_combined(df, x_col='timepoint', y_col='simpson_index_corrected', patient_col
 plt_combined(df, x_col='timepoint', y_col='pct_prod', patient_col='patient_id')
 ```
 
-**Figure 4. Percent of productive TCRs.** A productive TCR is a DNA/RNA sequence that can be translated into a protein sequence, i.e. it does not contain a premature stop codon or an out of frame rearrangement. The percent of productive TCRs is calculated as: *Percent productive TCRs = number of productive TCRs / number of TCRs*. Left: Boxplot, Right: matched paitent line plot.
+**Figure 4. Percent of productive TCRs.** A productive TCR is a DNA/RNA sequence that can be translated into a protein sequence, i.e. it does not contain a premature stop codon or an out of frame rearrangement. The percent of productive TCRs is calculated as: 
+
+$$ Percent \text{ } productive \text{ } TCRs = \frac P N $$
+
+where $P$ is the number of productive TCRs and $N$ is the total number of TCRs in a given sample. Left: Boxplot, Right: matched paitent line plot.
 
 ## Average CDR3 Length
 
@@ -146,6 +154,13 @@ plt_combined(df, x_col='timepoint', y_col='cdr3_avg_len', patient_col='patient_i
 **Figure 5. Average CDR3 Length** The average length of the CDR3 region of the TCR. The CDR3 region is the most variable region of the TCR and is the region that determines antigen specificity. Left: Boxplot, Right: matched paitent line plot.
 
 ## V gene family usage
+
+**Description**: V family usage of the T Cell Receptors in each sample. The x-axis shows the timepoint collected for each individual, and the y-axis displays the proportion V gene family.
+
+The equation for calculating the proportion of TCRs that use a given V gene family is:
+
+$$n_gk$$
+
 
 ```{python}
 # Loop through each patient and plot gene usage
