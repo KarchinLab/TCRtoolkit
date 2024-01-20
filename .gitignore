@@ -11,5 +11,7 @@ notebooks/*.png
 notebooks/*.ipynb
 notebooks/*.html
 
+assets/TCRseq_metadata_templates/*
+
 ## vscode
 .vscode/*

@@ -101,6 +101,18 @@ print('-- Imported v_family_csv as `v_family`...')
 toc()
 ```
 
+# Sample level statistics v3
+
+Below are plots showing basic T cell repertoire statistics. Each plot has a description about the statistic shown and formulas used to calculate the metric when applicable. Specific biological interpretation of each plot is left to the user.
+
+Version 3 of these plots features plotly express interactive plots. This version is exploratory and may be updated in the future.
+
+## Number of clones
+
+```{python}
+
+```
+
 # Sample level statistics v2
 
 Below are plots showing basic T cell repertoire statistics. Each plot has a description about the statistic shown and formulas used to calculate the metric when applicable. Specific biological interpretation of each plot is left to the user.
