@@ -31,11 +31,11 @@ workflow SAMPLE {
         .set { sample_stats_csv }
 
     CALC_SAMPLE.out.v_family_csv
-        .collectFile(name: 'v_family.csv', sort: true)
+        .collectFile(name: 'v_family.csv', sort: true,
+                     storeDir: params.output_dir)
         .set { v_family_csv }
 
     CALC_SAMPLE.out.sample_meta
-        // .view()
         .collectFile(name: 'sample_meta.csv', sort: true)
         .set { sample_meta_csv }
     

@@ -3,7 +3,7 @@ process PLOT_SAMPLE {
     tag "${sample_stats_csv}"
     label 'plot_sample'
 
-    container "domebraccia/bulktcr:0.5"
+    container "domebraccia/bulktcr:1.0.1"
 
     publishDir "${params.output_dir}/plot_sample", mode: 'copy'
     

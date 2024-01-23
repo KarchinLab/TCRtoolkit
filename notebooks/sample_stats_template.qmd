@@ -31,6 +31,7 @@ import math
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
+import plotly.express as px
 ```
 
 ## Pipeline Parameters
@@ -110,7 +111,122 @@ Version 3 of these plots features plotly express interactive plots. This version
 ## Number of clones
 
 ```{python}
+timepts = df.timepoint.unique().tolist()
+timepts.sort()
+fig = px.box(df, 
+             x = 'timepoint', 
+             y='num_clones', 
+             color='origin', 
+             points='all', hover_data=['sample_id'],
+             category_orders={'timepoint': timepts})
+fig.show()
+```
 
+**Figure 1. Number of clones across timepoints.** A clone is defined as a T cell with a unique CDR3 amino acid sequence. The number of clones is shown on the y-axis and 'origin_timepoint' is shown on the x-axis. Left: Boxplot, Right: matched paitent line plot.
+
+## Clonality
+
+```{python}
+fig = px.box(df, 
+             x = 'timepoint', 
+             y='clonality', 
+             color='origin', 
+             points='all', hover_data=['sample_id'],
+             category_orders={'timepoint': timepts})
+fig.show()
+```
+
+**Figure 2. The clonality of samples across timepoints.** Clonality is a measure of T cell clonal expansion and reflects the degree to which the sample is dominated by 1 or more T cell clones. Clonality is calculated via: $$Clonality = \frac {1-H} {\log_{2} N} \quad\text{,}\quad H = -\sum\limits_{i=1}^N p_i \log_{2}{p_i}$$ where $H$ is the Shannon entropy of a given sample, $N$ is the number of unique TCRs in the sample, and $p_i$ is the frequency of the $i$ th unique TCR in the sample. Left: Boxplot, Right: matched paitent line plot.
+
+## Simpson Index
+
+```{python}
+fig = px.box(df, 
+             x = 'timepoint', 
+             y='simpson_index_corrected', 
+             color='origin', 
+             points='all', hover_data=['sample_id'],
+             category_orders={'timepoint': timepts})
+fig.show()
+```
+
+**Figure 3. Corrected Simpson Index.** The Simpson Index is a measure of diversity that takes into account the number of clones and the relative abundance of each clone in a sample. The corrected Simpson Index, $D$, is calculated as: 
+
+$$D = \sum\limits_{i=1}^N \frac {p_i(p_i - 1)} {T(T - 1)} \quad\text{,}\quad T = \sum\limits_{i=1}^N p_i$$
+
+Where $N$ is the number of unique TCRs in the sample, $p_i$ is the frequency of the $i$ th unique TCR in the sample, and $T$ is the total number of T Cells counted in the sample. Left: Boxplot, Right: matched paitent line plot.
+
+## Percent of productive TCRs
+
+```{python}
+fig = px.box(df, 
+             x = 'timepoint', 
+             y='pct_prod', 
+             color='origin', 
+             points='all', hover_data=['sample_id'],
+             category_orders={'timepoint': timepts})
+fig.show()
+```
+
+**Figure 4. Percent of productive TCRs.** A productive TCR is a DNA/RNA sequence that can be translated into a protein sequence, i.e. it does not contain a premature stop codon or an out of frame rearrangement. The percent of productive TCRs is calculated as: 
+
+$$ Percent \text{ } productive \text{ } TCRs = \frac P N $$
+
+where $P$ is the number of productive TCRs and $N$ is the total number of TCRs in a given sample. Left: Boxplot, Right: matched paitent line plot.
+
+## Average CDR3 Length
+
+```{python}
+fig = px.box(df, 
+             x = 'timepoint', 
+             y='cdr3_avg_len', 
+             color='origin', 
+             points='all', hover_data=['sample_id'],
+             category_orders={'timepoint': timepts})
+fig.show()
+```
+
+**Figure 5. Average CDR3 Length** The average length of the CDR3 region of the TCR. The CDR3 region is the most variable region of the TCR and is the region that determines antigen specificity. Left: Boxplot, Right: matched paitent line plot.
+
+## V gene family usage
+
+**Figure 6. V gene family usage.** The V gene family usage of the TCRs in each sample. The x-axis shows the timepoint collected for each individual, and the y-axis shows the proportion of TCRs that use each V gene family.
+
+The equation for calculating the proportion of TCRs that use a given V gene family is:
+
+$$n_gk$$
+
+```{python}
+## loop through all patients and plot stacked bar chart of v_family
+v_genes = ["TCRBV01", "TCRBV02", "TCRBV03", "TCRBV04", "TCRBV05", "TCRBV06", "TCRBV07", 
+           "TCRBV08", "TCRBV09", "TCRBV10", "TCRBV11", "TCRBV12", "TCRBV13", "TCRBV14", 
+           "TCRBV15", "TCRBV16", "TCRBV17", "TCRBV18", "TCRBV19", "TCRBV20", "TCRBV21", 
+           "TCRBV22", "TCRBV23", "TCRBV24", "TCRBV25", "TCRBV26", "TCRBV27", "TCRBV28", 
+           "TCRBV29", "TCRBV30"]
+
+for patient in v_family.patient_id.unique().tolist():
+    v_family_counts = v_family[v_family.patient_id == patient]
+
+    # Assume v_family_9881 is a DataFrame with columns 'timepoint' and 'TCRBV01'-'TCRBV30'
+
+    # Reshape from wide to long format
+    df_long = pd.melt(v_family_counts, id_vars=['timepoint', 'origin'], value_vars=v_genes, var_name='gene', value_name='value')
+
+    # Generate a palette with as many colors as there are genes
+    palette = sns.color_palette('magma', len(v_genes))
+
+    # Convert the RGB values to hexadecimal
+    palette_hex = palette.as_hex()
+
+    # Create the color map
+    color_map = {gene: color for gene, color in zip(v_genes, palette_hex)}
+
+    # Create the plot
+    fig = px.bar(df_long, x='timepoint', y='value', color='gene', 
+                 title=('Subject: ' + str(patient) + ', V Gene Family Usage'), 
+                 color_discrete_map=color_map, facet_col='origin')
+
+    fig.show()
 ```
 
 # Sample level statistics v2
@@ -167,7 +283,7 @@ plt_combined(df, x_col='timepoint', y_col='cdr3_avg_len', patient_col='patient_i
 
 ## V gene family usage
 
-**Description**: V family usage of the T Cell Receptors in each sample. The x-axis shows the timepoint collected for each individual, and the y-axis displays the proportion V gene family.
+**Figure 6. V gene family usage of the T Cell Receptors.** The x-axis shows the timepoint collected for each individual, and the y-axis displays the proportion V gene family.
 
 The equation for calculating the proportion of TCRs that use a given V gene family is:
 
