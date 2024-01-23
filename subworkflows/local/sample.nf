@@ -20,10 +20,11 @@ workflow SAMPLE {
 
     take:
     sample_map
-    // meta_data
+    meta_data
 
     main:
-    CALC_SAMPLE( sample_map )
+    CALC_SAMPLE( sample_map,
+                 meta_data )
 
     CALC_SAMPLE.out.sample_csv
         .collectFile(name: 'sample_stats.csv', sort: true, 

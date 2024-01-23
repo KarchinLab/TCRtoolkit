@@ -3,7 +3,7 @@ process PLOT_SAMPLE {
     tag "${sample_stats_csv}"
     label 'plot_sample'
 
-    container "domebraccia/bulktcr:1.0.1"
+    container "domebraccia/bulktcr:1.0-beta"
 
     publishDir "${params.output_dir}/plot_sample", mode: 'copy'
     
@@ -13,12 +13,6 @@ process PLOT_SAMPLE {
     path v_family_csv
 
     output:
-    path 'num_clones.png'
-    path 'clonality.png'
-    path 'simpson_index_corrected.png'
-    path 'pct_prod.png'
-    path 'cdr3_avg_len.png'
-    path 'v_family_usage.png'
     path 'sample_stats.html'
 
     script:    
