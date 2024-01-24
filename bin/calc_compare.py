@@ -29,6 +29,28 @@ parser.add_argument('-p', '--patient_table',
 
 args = parser.parse_args() 
 
+# Define functions
+def jaccard_index(sample1, sample2):
+    set1 = set(sample1)
+    set2 = set(sample2)
+    intersection = len(set1.intersection(set2))
+    union = len(set1.union(set2))
+    return intersection / union
+
+def sorensen_index(sample1, sample2):
+    set1 = set(sample1)
+    set2 = set(sample2)
+    intersection = len(set1.intersection(set2))
+    return 2 * intersection / (len(set1) + len(set2))
+
+def morisita_horn_index(sample1, sample2):
+    N1 = sum(sample1)
+    N2 = sum(sample2)
+    sum_n1i_n2i = sum([n1i * n2i for n1i, n2i in zip(sample1, sample2)])
+    sum_n1i_sq = sum([n1i**2 for n1i in sample1])
+    sum_n2i_sq = sum([n2i**2 for n2i in sample2])
+    return 2 * sum_n1i_n2i / ((sum_n1i_sq + sum_n2i_sq) * (N1 + N2))
+
 
 ## Read in sample table CSV file
 sample_table = pd.read_csv(args.sample_table, sep=',', header=0)

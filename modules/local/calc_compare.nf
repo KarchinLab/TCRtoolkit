@@ -2,7 +2,7 @@ process CALC_COMPARE {
     
     // tag
     // label
-    container "domebraccia/bulktcr:0.5"
+    container "domebraccia/bulktcr:1.0-beta"
 
     input:
     path sample_utf8
