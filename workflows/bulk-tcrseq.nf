@@ -47,7 +47,8 @@ workflow BULKTCRSEQ {
             INPUT_CHECK.out.meta_data )
 
     ///// ===== COMPARE SUBWORKFLOW ====================================== /////
-    
+    COMPARE ( INPUT_CHECK.out.sample_utf8,
+              INPUT_CHECK.out.meta_data )   
 }
 
 /*

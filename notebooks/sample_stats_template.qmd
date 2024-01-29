@@ -58,14 +58,12 @@ print('Date and time:         ' + str(datetime.datetime.now()))
 
 ## Importing custom plotting functions
 
-Plotting functions are defined in `bin/plot_utils.py`.
+Plotting functions are defined in `bin/utility_functions.py`.
 
 ```{python}
 ## custom plotting and timing functions
 sys.path.append(project_dir + '/bin/')
-from plot_utils import TicTocGenerator, tic, toc
-
-## create an instance of the TicTocGen generator
+from utility_functions import TicTocGenerator, tic, toc
 TicToc = TicTocGenerator()
 ```
 

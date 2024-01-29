@@ -1,0 +1,99 @@
+---
+title: "Comparative bulk T Cell Repertoire statistics"
+format:
+  html: 
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    code-fold: true
+    embed-resources: true
+    number-sections: true
+    grid:
+      body-width: 1000px
+      margin-width: 300px
+
+jupyter: python3
+---
+
+This notebook was generated via the `bulk-tcrseq` pipeline developed at Johns Hopkins for use by BTC scientists. 
+
+# Report Setup
+
+## Load Packages
+
+```{python}
+import os
+import datetime
+import sys
+import pandas as pd
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+import plotly.express as px
+```
+
+## Pipeline Parameters
+
+Default inputs are overwritten at the command line in `modules/local/plot_sample.nf`
+```{python, echo=false}
+#| tags: [parameters]
+#| echo: false
+
+workflow_cmd='<command used to run the pipeline>'
+project_name='path/to/project_name'
+project_dir='path/to/project_dir'
+sample_table='path/to/sample_table.csv'
+sample_stats_csv='path/to/sample_stats.csv'
+v_family_csv='path/to/v_family.csv'
+```
+
+```{python}
+print('Project Name:          ' + project_name)
+print('Workflow command:      ' + workflow_cmd)
+print('Pipeline Directory:    ' + project_dir)
+print('Date and time:         ' + str(datetime.datetime.now()))
+```
+
+## Importing custom plotting functions
+
+Plotting functions are defined in `bin/utility_functions.py`.
+
+```{python}
+## custom plotting and timing functions
+sys.path.append(project_dir + '/bin/')
+from utility_functions import TicTocGenerator, tic, toc
+TicToc = TicTocGenerator()
+```
+
+## Loading data
+
+```{python}
+tic()
+
+## reading combined repertoire statistics
+df = pd.read_csv(sample_stats_csv, sep=',', header=0, 
+                 names=['sample_id', 'patient_id', 'timepoint', 'origin',
+                        'treatment', 'response', 'clinical_data',
+                        'num_clones', 'num_TCRs', 'simpson_index', 'simpson_index_corrected', 'clonality',
+                        'num_in', 'num_out', 'num_stop', 'pct_prod', 'pct_out', 'pct_stop', 'pct_nonprod',
+                        'cdr3_avg_len', 'num_convergent', 'ratio_convergent'])
+print('-- Imported sample_stats_csv as `df`...')
+
+## reading sample metadata
+meta = pd.read_csv(sample_table, sep=',', header=0, index_col=None,
+                   names=['sample_id', 'file_path', 'patient_id', 'timepoint', 'origin'])
+print('-- Imported sample_table as `meta`...')
+
+## reading V gene family usage 
+v_family = pd.read_csv(v_family_csv, sep=',', header=0, index_col=None,
+                       names=['patient_id', 'timepoint', 'origin', 'TCRBV01', 
+                              'TCRBV02', 'TCRBV03', 'TCRBV04', 'TCRBV05', 'TCRBV06',
+                              'TCRBV07', 'TCRBV08', 'TCRBV09', 'TCRBV10', 'TCRBV11',
+                              'TCRBV12', 'TCRBV13', 'TCRBV14', 'TCRBV15', 'TCRBV16',
+                              'TCRBV17', 'TCRBV18', 'TCRBV19', 'TCRBV20', 'TCRBV21',
+                              'TCRBV22', 'TCRBV23', 'TCRBV24', 'TCRBV25', 'TCRBV26',
+                              'TCRBV27', 'TCRBV28', 'TCRBV29', 'TCRBV30'])
+v_family = v_family.sort_values(by=['patient_id', 'timepoint'])
+print('-- Imported v_family_csv as `v_family`...')
+
+toc()
+```
