@@ -1,5 +1,5 @@
 process PLOT_COMPARE {
-    tag "${sample_stats_csv}"
+    tag "${jaccard_mat}"
     label 'plot_compare'
 
     container "domebraccia/bulktcr:1.0-beta"
@@ -7,8 +7,9 @@ process PLOT_COMPARE {
     publishDir "${params.output_dir}/plot_compare", mode: 'copy'
     
     input:
-    // path sample_table
-    // path sample_stats_csv
+    path jaccard_mat
+    path sorensen_mat
+    path morisita_mat
 
     output:
     path 'compare_stats.html'
@@ -23,8 +24,9 @@ process PLOT_COMPARE {
         -P project_name:$params.project_name \
         -P workflow_cmd:'$workflow.commandLine' \
         -P project_dir:$projectDir \
-        -P sample_table:$sample_table \
-        -P sample_stats_csv:$sample_stats_csv \
+        -P jaccard_mat:$jaccard_mat \
+        -P sorensen_mat:$sorensen_mat \
+        -P morisita_mat:$morisita_mat \
         --to html
     """
 

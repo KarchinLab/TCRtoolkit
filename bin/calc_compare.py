@@ -9,6 +9,7 @@ import argparse
 import pandas as pd
 import numpy as np
 import os
+import sys
 import csv
 from scipy.stats import entropy
 
@@ -26,8 +27,18 @@ parser.add_argument('-m', '--meta_data',
                     metavar='meta_data',
                     type=str,
                     help='metadata CSV file initially passed to nextflow run command')
+parser.add_argument('-p', '--project_dir',
+                    metavar='project_dir',
+                    type=str,
+                    help='path to project directory')
 
 args = parser.parse_args() 
+
+## Import project directory path
+project_dir = args.project_dir
+sys.path.append(project_dir + '/bin/')
+from utility_functions import TicTocGenerator, tic, toc, jaccard_index, sorensen_index, morisita_horn_index
+TicToc = TicTocGenerator()
 
 ## Read in sample table CSV file
 ## convert metadata to list
@@ -57,29 +68,50 @@ for file_path in file_paths:
 print('number of files in dfs: ' + str(len(dfs)))
 
 ## calculate the jaccard index between each sample pair in dfs and store in an nxn matrix and write to file
-samples = dfs.keys()
-for sample in samples:
-    dfs[sample]
+samples = list(dfs.keys())
+jaccard_mat = np.zeros((len(samples), len(samples)))
+for i, sample1 in enumerate(samples):
+    for j, sample2 in enumerate(samples):
+        # calculate jaccard index
+        value = jaccard_index(dfs[sample1]['aminoAcid'], dfs[sample2]['aminoAcid'])
+        # store in numpy array
+        jaccard_mat[i, j] = value
+
+# define column and index names
+sample_names= [os.path.basename(sample).split('.')[0] for sample in samples]
+jaccard_df = pd.DataFrame(jaccard_mat, columns=sample_names, index=sample_names)
+
+# save jacard_df to csv
+jaccard_df.to_csv('jaccard_mat.csv', index=True, header=True)
 
 ## calculate the sorensen index between each sample pair in dfs and store in an nxn matrix and write to file
+sorensen_mat = np.zeros((len(samples), len(samples)))
+for i, sample1 in enumerate(samples):
+    for j, sample2 in enumerate(samples):
+        # calculate sorensen index
+        value = sorensen_index(dfs[sample1]['aminoAcid'], dfs[sample2]['aminoAcid'])
+        # store in numpy array
+        sorensen_mat[i, j] = value
 
+# define column and index names
+sorensen_df = pd.DataFrame(sorensen_mat, columns=sample_names, index=sample_names)
+
+# save sorensen_df to csv
+sorensen_df.to_csv('sorensen_mat.csv', index=True, header=True)
 
 ## calculate the morisita index between each sample pair in dfs and store in an nxn matrix and write to file
+morisita_mat = np.zeros((len(samples), len(samples)))
+for i, sample1 in enumerate(samples):
+    for j, sample2 in enumerate(samples):
+        # calculate morisita index
+        value = morisita_horn_index(dfs, sample1, sample2)
+        # store in numpy array
+        morisita_mat[i, j] = value
 
+# define column and index names
+morisita_df = pd.DataFrame(morisita_mat, columns=sample_names, index=sample_names)
+
+# save morisita_df to csv
+morisita_df.to_csv('morisita_mat.csv', index=True, header=True)
 
 ## ========================================================================== ##
-
-## Write dummy file named jaccard_amat.csv
-with open('jaccard_amat.csv', 'w') as f:
-    writer = csv.writer(f)
-    writer.writerow(['patient', 'sample', 'jaccard'])
-
-## Write dummy file named sorensen_amat.csv
-with open('sorensen_amat.csv', 'w') as f:
-    writer = csv.writer(f)
-    writer.writerow(['patient', 'sample', 'sorensen'])
-
-## Write dummy file named morisita_amat.csv
-with open('morisita_amat.csv', 'w') as f:
-    writer = csv.writer(f)
-    writer.writerow(['patient', 'sample', 'morisita'])

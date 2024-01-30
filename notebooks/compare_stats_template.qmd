@@ -19,81 +19,138 @@ This notebook was generated via the `bulk-tcrseq` pipeline developed at Johns Ho
 
 # Report Setup
 
-## Load Packages
+Below is information about the environment and parameters used to generate this report; if you are more computationally inclined and curious about how the report is set up then ...
 
-```{python}
-import os
-import datetime
-import sys
-import pandas as pd
-import seaborn as sns
-from matplotlib.colors import LinearSegmentedColormap
-import plotly.express as px
-```
-
-## Pipeline Parameters
-
-Default inputs are overwritten at the command line in `modules/local/plot_sample.nf`
 ```{python, echo=false}
 #| tags: [parameters]
 #| echo: false
 
+## 2. Pipeline Parameters
+#Default inputs are overwritten at the command line in `modules/local/plot_sample.nf`
 workflow_cmd='<command used to run the pipeline>'
 project_name='path/to/project_name'
 project_dir='path/to/project_dir'
-sample_table='path/to/sample_table.csv'
-sample_stats_csv='path/to/sample_stats.csv'
-v_family_csv='path/to/v_family.csv'
+jaccard_mat='path/to/jaccard_mat.csv'
+sorenson_mat='path/to/sorenson_mat.csv'
+morisita_mat='path/to/morisita_mat.csv'
 ```
 
 ```{python}
+#| tags: [setup]
+
+# 1. Load Packages
+import os
+import datetime
+import sys
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+import plotly.express as px
+
+# 2. Print Pipeline Information
+print('Pipeline information and parameters:' + '\n')
 print('Project Name:          ' + project_name)
 print('Workflow command:      ' + workflow_cmd)
 print('Pipeline Directory:    ' + project_dir)
 print('Date and time:         ' + str(datetime.datetime.now()))
-```
 
-## Importing custom plotting functions
-
-Plotting functions are defined in `bin/utility_functions.py`.
-
-```{python}
-## custom plotting and timing functions
+# 3. Importing custom plotting functions
+## Plotting functions are defined in `bin/utility_functions.py`.
 sys.path.append(project_dir + '/bin/')
 from utility_functions import TicTocGenerator, tic, toc
 TicToc = TicTocGenerator()
+
+# 4. Importing data
+## 4a. jaccard similarity matrix
+jaccard_df = pd.read_csv(jaccard_mat, sep=',', header=0, index_col=0)
+
+## 4b. sorenson similarity matrix
+sorenson_df = pd.read_csv(sorenson_mat, sep=',', header=0, index_col=0)
+
+## 4c. morisita similarity matrix
+morisita_df = pd.read_csv(morisita_mat, sep=',', header=0, index_col=0)
 ```
 
-## Loading data
+# Analysis
+
+## Jaccard Similarity Matrix
 
 ```{python}
+import scipy.cluster.hierarchy as sch
+import scipy.spatial.distance as ssd
+from plotly.figure_factory import create_dendrogram
+import plotly.graph_objects as go
+
 tic()
 
-## reading combined repertoire statistics
-df = pd.read_csv(sample_stats_csv, sep=',', header=0, 
-                 names=['sample_id', 'patient_id', 'timepoint', 'origin',
-                        'treatment', 'response', 'clinical_data',
-                        'num_clones', 'num_TCRs', 'simpson_index', 'simpson_index_corrected', 'clonality',
-                        'num_in', 'num_out', 'num_stop', 'pct_prod', 'pct_out', 'pct_stop', 'pct_nonprod',
-                        'cdr3_avg_len', 'num_convergent', 'ratio_convergent'])
-print('-- Imported sample_stats_csv as `df`...')
+# Assuming jaccard_mat is a pandas DataFrame
+jaccard_numeric = jaccard_df.apply(pd.to_numeric, errors='coerce')
 
-## reading sample metadata
-meta = pd.read_csv(sample_table, sep=',', header=0, index_col=None,
-                   names=['sample_id', 'file_path', 'patient_id', 'timepoint', 'origin'])
-print('-- Imported sample_table as `meta`...')
+# Log scale the data
+jaccard_numeric = np.log10(jaccard_numeric)
 
-## reading V gene family usage 
-v_family = pd.read_csv(v_family_csv, sep=',', header=0, index_col=None,
-                       names=['patient_id', 'timepoint', 'origin', 'TCRBV01', 
-                              'TCRBV02', 'TCRBV03', 'TCRBV04', 'TCRBV05', 'TCRBV06',
-                              'TCRBV07', 'TCRBV08', 'TCRBV09', 'TCRBV10', 'TCRBV11',
-                              'TCRBV12', 'TCRBV13', 'TCRBV14', 'TCRBV15', 'TCRBV16',
-                              'TCRBV17', 'TCRBV18', 'TCRBV19', 'TCRBV20', 'TCRBV21',
-                              'TCRBV22', 'TCRBV23', 'TCRBV24', 'TCRBV25', 'TCRBV26',
-                              'TCRBV27', 'TCRBV28', 'TCRBV29', 'TCRBV30'])
-v_family = v_family.sort_values(by=['patient_id', 'timepoint'])
-print('-- Imported v_family_csv as `v_family`...')
+# Replace non-numeric values with NaN
+jaccard_numeric = jaccard_numeric.where(pd.notnull(jaccard_numeric), np.nan)
+
+# Assuming jaccard_numeric is your DataFrame
+sns_cluster = sns.clustermap(jaccard_numeric)
+
+# Get the clustered data
+clustered_data = jaccard_numeric.iloc[sns_cluster.dendrogram_row.reordered_ind, sns_cluster.dendrogram_col.reordered_ind]
+
+# Create a heatmap with plotly
+fig = go.Figure(data=go.Heatmap(
+                   z=clustered_data,
+                   x=clustered_data.columns,
+                   y=clustered_data.index,
+                   coloraxis="coloraxis"))
+
+fig.update_layout(
+    title='Jaccard Similarity Matrix',
+    xaxis_title='Sample ID',
+    yaxis_title='Sample ID',
+    autosize=False,
+    width=950,
+    height=950,
+    margin=dict(l=100, r=100, b=100, t=100, pad=2),
+    coloraxis=dict(colorscale='Blues', colorbar=dict(title="Log Scale"))
+)
+
+fig.show()
 
 toc()
+## Jaccard Similarity Matrix (Clustered)
+
+
+# Assuming mat is your nxn numpy matrix
+distArray = ssd.squareform(ssd.pdist(jaccard_numeric))
+
+# Perform hierarchical clustering
+Z = sch.linkage(distArray, method='average')
+
+# Create a dendrogram
+dendro = create_dendrogram(Z, orientation='bottom')
+
+# Create a heatmap
+heatmap = go.Heatmap(
+    x=dendro['layout']['xaxis']['tickvals'],
+    y=dendro['layout']['yaxis']['tickvals'],
+    z=jaccard_numeric,
+    colorscale='Blues'
+)
+
+# Combine the dendrogram and heatmap into one figure
+fig = go.Figure(data=[dendro['data'][0], heatmap])
+
+# Update the layout
+fig.update_layout(
+    title='Hierarchical Clustering',
+    width=800,
+    height=800,
+    autosize=False,
+    margin=dict(l=100, r=100, b=100, t=100, pad=2)
+)
+
+fig.show()
 ```

@@ -25,18 +25,12 @@ workflow COMPARE {
     main:
     CALC_COMPARE( sample_utf8,
                   meta_data )
-    
 
-    
-    /////// =================== PLOT COMPARE ===================  ///////
-    // PLOT_COMPARE(
-    //     file(params.sample_table),
-    //     sample_stats_csv
-    //     )
+    PLOT_COMPARE( CALC_COMPARE.out.jaccard_mat,
+                  CALC_COMPARE.out.sorensen_mat,
+                  CALC_COMPARE.out.morisita_mat )
     
     // emit:
-    // sample_stats_csv
-    // v_family_csv
-    // sample_meta_csv
+    // compare_stats_html
     // versions = SAMPLESHEET_CHECK.out.versions // channel: [ versions.yml ]
 }

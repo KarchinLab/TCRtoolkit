@@ -11,7 +11,6 @@ import time
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import time
 
 def TicTocGenerator():
     # Generator that returns time differences
@@ -49,14 +48,47 @@ def sorensen_index(sample1, sample2):
     intersection = len(set1.intersection(set2))
     return 2 * intersection / (len(set1) + len(set2))
 
-def morisita_horn_index(sample1, sample2):
-    N1 = sum(sample1)
-    N2 = sum(sample2)
-    sum_n1i_n2i = sum([n1i * n2i for n1i, n2i in zip(sample1, sample2)])
-    sum_n1i_sq = sum([n1i**2 for n1i in sample1])
-    sum_n2i_sq = sum([n2i**2 for n2i in sample2])
-    return 2 * sum_n1i_n2i / ((sum_n1i_sq + sum_n2i_sq) * (N1 + N2))
+def morisita_horn_index(dfs, sample1, sample2):
+    # create sets of amino acid sequences
+    set1 = set(dfs[sample1]['aminoAcid'])
+    set2 = set(dfs[sample2]['aminoAcid'])
+    # identify union of sets
+    union = set1.union(set2)
+    # loop through union of aa sequences and calculate morisita index between sample1 and sample2
+    products=[]
+    for aa in union:
+        # get counts of aa sequences in sample1 and sample2
+        if aa not in set(dfs[sample1]['aminoAcid']):
+            n1i = 0
+        else:
+            n1i = dfs[sample1].where(dfs[sample1]['aminoAcid'] == aa)['read_count'].dropna().values[0]
 
+        if aa not in set(dfs[sample2]['aminoAcid']):
+            n2i = 0
+        else:
+            n2i = dfs[sample2].where(dfs[sample2]['aminoAcid'] == aa)['read_count'].dropna().values[0]
+            
+        product = n1i * n2i
+        products.append(product)
+
+    # calculate simpson index values for sample1 and sample2
+    s1_si = sum([(count/sum(dfs[sample1]['read_count']))**2 for count in dfs[sample1]['read_count']])
+    s2_si = sum([(count/sum(dfs[sample2]['read_count']))**2 for count in dfs[sample2]['read_count']])
+
+    numerator = 2 * sum(products)
+    denominator = (s1_si + s2_si) * (len(set1)*len(set2))
+    return numerator / denominator
+
+# def morisita_horn_index(sample1, sample2):
+#     N1 = sum(sample1)
+#     N2 = sum(sample2)
+#     sum_n1i_n2i = sum([n1i * n2i for n1i, n2i in zip(sample1, sample2)])
+#     sum_n1i_sq = sum([n1i**2 for n1i in sample1])
+#     sum_n2i_sq = sum([n2i**2 for n2i in sample2])
+#     return 2 * sum_n1i_n2i / ((sum_n1i_sq + sum_n2i_sq) * (N1 + N2))
+
+
+#### =========================== LEGACY CODE ============================== ####
 
 # def plot_timecourse2(df, x_col, y_col, patient_col):
 #     # Create a list of colors for the scatter plot points

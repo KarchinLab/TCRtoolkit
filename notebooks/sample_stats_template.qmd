@@ -49,6 +49,8 @@ sample_stats_csv='path/to/sample_stats.csv'
 v_family_csv='path/to/v_family.csv'
 ```
 
+Info for this report:
+
 ```{python}
 print('Project Name:          ' + project_name)
 print('Workflow command:      ' + workflow_cmd)

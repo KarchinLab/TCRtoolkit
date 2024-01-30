@@ -12,15 +12,16 @@ process CALC_COMPARE {
     path meta_data
 
     output:
-    path 'jaccard_amat.csv', emit: jaccard_amat
-    path 'sorensen_amat.csv', emit: sorensen_amat
-    path 'morisita_amat.csv', emit: morisita_amat
+    path 'jaccard_mat.csv', emit: jaccard_mat
+    path 'sorensen_mat.csv', emit: sorensen_mat
+    path 'morisita_mat.csv', emit: morisita_mat
 
     script:
     """
     python $projectDir/bin/calc_compare.py \
         -s $sample_utf8 \
-        -m $meta_data
+        -m $meta_data \
+        -p $projectDir 
     """
 
 }
