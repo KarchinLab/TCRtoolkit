@@ -19,6 +19,8 @@ process CALC_SAMPLE {
 
     script:
     """
+    echo '' > sample_stats.csv
+    
     python $projectDir/bin/calc_sample.py \
         -s '${sample_meta}' \
         -c ${count_table} \
@@ -27,7 +29,7 @@ process CALC_SAMPLE {
 
     stub:
     """
-    touch sample_calc.csv
+    touch sample_stats.csv
     touch v_family.csv
     touch d_family.csv
     touch j_family.csv

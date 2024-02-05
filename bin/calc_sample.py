@@ -103,7 +103,7 @@ def calc_sample_stats(sample_meta, counts):
     with open('sample_stats.csv', 'w') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow([sample_meta[0], sample_meta[1], sample_meta[2], sample_meta[3],
-                         str(current_meta.treatment), str(current_meta.response), str(current_meta.clinical_data),
+                         str(current_meta.treatment.iloc[0]), str(current_meta.response.iloc[0]), str(current_meta.clinical_data.iloc[0]),
                          num_clones, num_TCRs, simpson_index, simpson_index_corrected, clonality,
                          num_in, num_out, num_stop, pct_prod, pct_out, pct_stop, pct_nonprod,
                          cdr3_avg_len, num_convergent, ratio_convergent])
