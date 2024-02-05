@@ -20,13 +20,13 @@ This pipeline uses Docker containers to run the analysis. To install Docker, fol
 ```
 nextflow run main.nf \
     --project_name=ribas_pd1 \
-    --sample_table=assets/ribas_pd1_sample_table.csv \
-    --patient_table=assets/ribas_pd1_patient_table.csv \
+    --sample_table=/lab/projects1/btc/bulk-tcrseq/assets/ribas_pd1_sample_table.csv \
+    --patient_table=/lab/projects1/btc/bulk-tcrseq/assets/ribas_pd1_patient_table.csv \
     --output_dir=<outdir>
 
 nextflow run main.nf \
     --project_name=Neutrophils_dominate_NSCL \
-    --sample_table=assets/neutrophils_dominate_sample_table.csv \
+    --sample_table=assets/neutrophils_domqinate_sample_table.csv \
     --patient_table=assets/neutrophils_dominate_patient_table.csv \
     --output_dir=results/out51
 
@@ -38,9 +38,15 @@ nextflow run main.nf \
 
 nextflow run main.nf \
     --project_name=Bladder_Cancer \
-    --sample_table=assets/bladder_cancer_sample_table.csv \
-    --patient_table=assets/bladder_cancer_patient_table.csv \
-    --output_dir=results/out53
+    --sample_table=/lab/projects1/btc/bulk-tcrseq/assets/bladder_cancer_sample_table.csv \
+    --patient_table=/lab/projects1/btc/bulk-tcrseq/assets/bladder_cancer_patient_table.csv \
+    --output_dir=results/urothelial_cancer_PD1_blockade_v
+
+nextflow run main.nf \
+    --project_name=ribas_pd1 \
+    --sample_table=/lab/projects1/btc/bulk-tcrseq/assets/ribas_pd1_sample_table.csv \
+    --patient_table=/lab/projects1/btc/bulk-tcrseq/assets/ribas_pd1_patient_table.csv \
+    --output_dir=results/ribas_pd1_v1
 ```
 
 Running pipeline from specific entrypoint
