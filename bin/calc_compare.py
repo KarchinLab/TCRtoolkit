@@ -101,12 +101,25 @@ sorensen_df.to_csv('sorensen_mat.csv', index=True, header=True)
 
 ## calculate the morisita index between each sample pair in dfs and store in an nxn matrix and write to file
 morisita_mat = np.zeros((len(samples), len(samples)))
-for i, sample1 in enumerate(samples):
-    for j, sample2 in enumerate(samples):
+for i in range(len(samples)):
+    for j in range(i+1):
+        print('- on samples: [' + str(i) + ', ' + str(j) + ']')
         # calculate morisita index
-        value = morisita_horn_index(dfs, sample1, sample2)
+        value = morisita_horn_index(dfs, samples[i], samples[j])
         # store in numpy array
         morisita_mat[i, j] = value
+
+# Copy the lower triangle to the upper triangle
+morisita_mat = morisita_mat + morisita_mat.T - np.diag(morisita_mat.diagonal())
+
+# morisita_mat = np.zeros((len(samples), len(samples)))
+# for i, sample1 in enumerate(samples):
+#     for j, sample2 in enumerate(samples):
+#         print('on samples: [' + str(i) + ', ' + str(j) + ']')
+#         # calculate morisita index
+#         value = morisita_horn_index(dfs, sample1, sample2)
+#         # store in numpy array
+#         morisita_mat[i, j] = value
 
 # define column and index names
 morisita_df = pd.DataFrame(morisita_mat, columns=sample_names, index=sample_names)

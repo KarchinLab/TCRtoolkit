@@ -16,7 +16,7 @@ include { PLOT_COMPARE  } from '../../modules/local/plot_compare.nf'
 
 workflow COMPARE {
 
-    println("Welcome to the BULK TCRSEQ pipeline! -- COMPARE ")
+    // println("Welcome to the BULK TCRSEQ pipeline! -- COMPARE ")
 
     take:
     sample_utf8
@@ -26,7 +26,8 @@ workflow COMPARE {
     CALC_COMPARE( sample_utf8,
                   meta_data )
 
-    PLOT_COMPARE( CALC_COMPARE.out.jaccard_mat,
+    PLOT_COMPARE( sample_utf8,
+                  CALC_COMPARE.out.jaccard_mat,
                   CALC_COMPARE.out.sorensen_mat,
                   CALC_COMPARE.out.morisita_mat )
     

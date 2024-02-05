@@ -1,5 +1,5 @@
 process CALC_COMPARE {
-    tag "${sample_utf8}"
+    // tag "${sample_utf8}"
     label 'process_single'
 
     // beforeScript 'export DOCKER_OPTS="-v $${params.data_dir}:$${params.data_dir}"'
