@@ -28,7 +28,7 @@ workflow SAMPLE {
         .collectFile(name: 'sample_stats.csv', sort: true, 
                      storeDir: params.output_dir)
         .map { file -> 
-            ["bash", "-c", "echo 'sample_id,patient_id,timepoint,origin,treatment,response,clinical_data,num_clones,num_TCRs,simpson_index,simpson_index_corrected,clonality,num_in,num_out,num_stop,pct_prod,pct_out,pct_stop,pct_nonprod,cdr3_avg_len,num_convergent,ratio_convergent' \
+            ["bash", "-c", "echo 'sample_id,patient_id,timepoint,origin,num_clones,num_TCRs,simpson_index,simpson_index_corrected,clonality,num_in,num_out,num_stop,pct_prod,pct_out,pct_stop,pct_nonprod,cdr3_avg_len,num_convergent,ratio_convergent' \
             | cat - $file > temp && mv temp $file"].execute()
             return file 
         }

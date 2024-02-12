@@ -82,7 +82,8 @@ for file_path in file_paths:
 
     # Rename columns
     df = df.rename(columns={'count (templates/reads)': 'read_count', 'frequencyCount (%)': 'frequency'})
-    dfs[file_path] = df
+    sample_id = os.path.basename(file_path).split('.')[0]
+    dfs[sample_id] = df
 ```
 
 # Analysis
@@ -202,18 +203,20 @@ dropdown2 = widgets.Dropdown(options=samples, description='Sample 2:')
 
 # Function to generate scatter plot
 def plot_scatter(sample1, sample2):
-    fig = go.Figure(data=go.Scatter(
-        x=dfs[sample1]['column_name'],  # replace 'column_name' with the actual column name
-        y=dfs[sample2]['column_name'],  # replace 'column_name' with the actual column name
-        mode='markers'
-    ))
-    fig.update_layout(
-        xaxis_title=sample1,
-        yaxis_title=sample2,
-        title='Scatter plot'
-    )
-    fig.show()
+    # fig = go.Figure(data=go.Scatter(
+    #     x=dfs[sample1]['read_count'],
+    #     y=dfs[sample2]['read_count'],
+    #     mode='markers'
+    # ))
+    # fig.update_layout(
+    #     xaxis_title=sample1,
+    #     yaxis_title=sample2,
+    #     title='Scatter plot'
+    # )
+    # fig.show()
+    print('Sample 1 is: ', sample1)
+    print('Sample 2 is: ', sample2)
 
 # Interactive widget
-widgets.interact(plot_scatter, sample1=dropdown1, sample2=dropdown2)
+# widgets.interact(plot_scatter, sample1=dropdown1, sample2=dropdown2)
 ```
