@@ -1,6 +1,6 @@
 # Bulk TCR repertoire analysis
 
-![My App Icon](./assets/tcr-toolkit-icon.png)
+<img src="./assets/tcr-toolkit-icon.png" width="200" height="200">
 
 Thanks for checking out the `tcr-toolkit`!
 
