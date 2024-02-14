@@ -1,5 +1,7 @@
 # Bulk TCR repertoire analysis
 
+![My App Icon](./assets/tcr-toolkit-icon.png)
+
 Thanks for checking out the `tcr-toolkit`!
 
 This repo contains the minimum viable pipeline for bulk TCR repertoire analysis.
@@ -14,13 +16,20 @@ options to process and analyze raw sequencing data from DNA and RNA TCRseq data.
 
 ## Installation
 
-```{python}
+### 
+
+```{bash}
 ## code here
 ```
 
 ## Running the pipeline
 
+TODO: modify to cli tool with `tcr-toolkit` command
+
+```{bash}
+
 ```
+
 nextflow run main.nf \
     --project_name=ribas_pd1 \
     --sample_table=/lab/projects1/btc/bulk-tcrseq/assets/ribas_pd1_sample_table.csv \
