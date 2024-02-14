@@ -1,6 +1,6 @@
 # TCRtoolkit: A T Cell Repertoire Analysis Platform
 
-<img src="./assets/TCRtoolkit-banner.png" width="800" height="200">
+[TCRtoolkit-banner](./assets/TCRtoolkit-banner.png)
 
 Thanks for checking out `TCRtoolkit`, the platform for T Cell Repertoire analysis! `TCRtoolkit` is wrapped in NextFlow, written in python, and uses Docker to manage dependencies.
 
