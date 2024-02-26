@@ -1,7 +1,7 @@
 process METADATA_CHECK {
     tag "${patient_table}"
 
-    container "domebraccia/bulktcr:0.1"
+    container "domebraccia/bulktcr:1.0-beta"
 
     publishDir "${params.output_dir}/input_check", mode: 'copy'
 

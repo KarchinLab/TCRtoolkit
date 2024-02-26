@@ -14,35 +14,37 @@ from scipy.stats import entropy
 import numpy as np
 import csv
 
-# print('-- ENTERED calc_clonality.py--')
-
 # initialize parser
 parser = argparse.ArgumentParser(description='Calculate clonality of a TCR repertoire')
 
 # add arguments
-parser.add_argument('-m', '--metadata', 
-                    metavar='metadata', 
+parser.add_argument('-s', '--sample_meta', 
+                    metavar='sample_meta', 
                     type=str, 
-                    help='metadata passed in through samples CSV file')
-parser.add_argument('-c', '--counts', 
-                    metavar='counts', 
+                    help='sample metadata passed in through samples CSV file')
+parser.add_argument('-c', '--count_table', 
+                    metavar='count_table', 
                     type=argparse.FileType('r'), 
                     help='counts file in TSV format')
+parser.add_argument('-m', '--meta_data',
+                    metavar='meta_data',
+                    type=argparse.FileType('r'),
+                    help='metadata file in CSV format')
 
 args = parser.parse_args() 
 
 ## convert metadata to list
-s = args.metadata
-metadata = args.metadata[1:-1].split(', ')
-# print('metadata looks like this: ' + str(metadata))
+s = args.sample_meta
+sample_meta = args.sample_meta[1:-1].split(', ')
+# print('sample_meta looks like this: ' + str(sample_meta))
 
 # Read in the counts file
-counts = pd.read_csv(args.counts, sep='\t', header=0)
+counts = pd.read_csv(args.count_table, sep='\t', header=0)
 counts = counts.rename(columns={'count (templates/reads)': 'read_count', 'frequencyCount (%)': 'frequency'})
 # print('counts columns: \n')
 # print(counts.columns)
 
-def calc_sample_stats(metadata, counts):
+def calc_sample_stats(sample_meta, counts):
     """Calculate sample level statistics of TCR repertoire."""
 
     ## first pass stats
@@ -71,13 +73,37 @@ def calc_sample_stats(metadata, counts):
     cdr3_lens = counts['cdr3Length']
     cdr3_avg_len = np.mean(cdr3_lens)
 
+    ## Calculate convergence for each T cell receptor
+    aas = counts[counts.aminoAcid.notnull()].aminoAcid.unique()
+    dict_df = {}
+    for aa in aas:
+        dict_df[aa] = {'counts': counts[counts.aminoAcid == aa]}
+        # append key value pair to dict_df[aa] with key convergence equal to the number of rows in counts
+        dict_df[aa]['convergence'] = len(counts[counts.aminoAcid == aa])
+
+    ## calculate the number of covergent TCRs for each sample
+    num_convergent = 0
+    for aa in aas:
+      if dict_df[aa]['convergence'] > 1:
+        num_convergent += 1    
+    
+    ## calculate ratio of convergent TCRs to total TCRs
+    ratio_convergent = num_convergent/len(aas)
+
+    ## add in patient meta_data such as responder status to sample_stats.csv
+    # read in metadata file
+    meta_data = pd.read_csv(args.meta_data, sep=',', header=0)
+
+    # filter out metadata for the current sample
+    current_meta = meta_data[meta_data['patient_id'] == sample_meta[1]]
+
     # write above values to csv file
     with open('sample_stats.csv', 'w') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow([metadata[0], metadata[1], metadata[2], metadata[3], 
+        writer.writerow([sample_meta[0], sample_meta[1], sample_meta[2], sample_meta[3],
                          num_clones, num_TCRs, simpson_index, simpson_index_corrected, clonality,
                          num_in, num_out, num_stop, pct_prod, pct_out, pct_stop, pct_nonprod,
-                         cdr3_avg_len])
+                         cdr3_avg_len, num_convergent, ratio_convergent])
         
     # store v_family gene usage in a dataframe
     v_family = counts['vFamilyName'].value_counts(dropna=False).to_frame().T.sort_index(axis=1)
@@ -98,16 +124,16 @@ def calc_sample_stats(metadata, counts):
     d_family_reindex = d_family.reindex(columns=all_d_fam, fill_value=0)
     j_family_reindex = j_family.reindex(columns=all_j_fam, fill_value=0)
 
-    # add metadata columns to v_family_reindex and make them the first three columns
-    v_family_reindex.insert(0, 'origin', metadata[3])
-    v_family_reindex.insert(0, 'timepoint', metadata[2])
-    v_family_reindex.insert(0, 'patient_id', metadata[1])
-    d_family_reindex.insert(0, 'origin', metadata[3])
-    d_family_reindex.insert(0, 'timepoint', metadata[2])
-    d_family_reindex.insert(0, 'patient_id', metadata[1])
-    j_family_reindex.insert(0, 'origin', metadata[3])
-    j_family_reindex.insert(0, 'timepoint', metadata[2])
-    j_family_reindex.insert(0, 'patient_id', metadata[1])
+    # add sample_meta columns to v_family_reindex and make them the first three columns
+    v_family_reindex.insert(0, 'origin', sample_meta[3])
+    v_family_reindex.insert(0, 'timepoint', sample_meta[2])
+    v_family_reindex.insert(0, 'patient_id', sample_meta[1])
+    d_family_reindex.insert(0, 'origin', sample_meta[3])
+    d_family_reindex.insert(0, 'timepoint', sample_meta[2])
+    d_family_reindex.insert(0, 'patient_id', sample_meta[1])
+    j_family_reindex.insert(0, 'origin', sample_meta[3])
+    j_family_reindex.insert(0, 'timepoint', sample_meta[2])
+    j_family_reindex.insert(0, 'patient_id', sample_meta[1])
 
     # Write v_family_reindex to csv file with no header and no index
     v_family_reindex.to_csv('v_family.csv', header=False, index=False)
@@ -119,4 +145,4 @@ def calc_sample_stats(metadata, counts):
     # with open('gene_usage_' + str(metadata[1] + '_' + str(metadata[2] + '_' + str(metadata[3]))) + '.pkl', 'wb') as f:
     #     pickle.dump(gene_usage, f)
 
-calc_sample_stats(metadata, counts)
+calc_sample_stats(sample_meta, counts)

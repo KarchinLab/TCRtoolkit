@@ -2,12 +2,13 @@ process CALC_SAMPLE {
     tag "${sample_meta[1]}"
     label 'process_single'
 
-    container "domebraccia/bulktcr:0.5"
+    container "domebraccia/bulktcr:1.0-beta"
 
     // publishDir "${params.output_dir}/sample_calc", mode: 'copy'
 
     input:
     tuple val(sample_meta), path(count_table)
+    path meta_data
 
     output:
     path 'sample_stats.csv', emit: sample_csv
@@ -18,14 +19,17 @@ process CALC_SAMPLE {
 
     script:
     """
+    echo '' > sample_stats.csv
+    
     python $projectDir/bin/calc_sample.py \
-        -m '${sample_meta}' \
-        -c ${count_table} 
+        -s '${sample_meta}' \
+        -c ${count_table} \
+        -m ${meta_data} 
     """
 
     stub:
     """
-    touch sample_calc.csv
+    touch sample_stats.csv
     touch v_family.csv
     touch d_family.csv
     touch j_family.csv
