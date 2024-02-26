@@ -1,0 +1,231 @@
+---
+title: "Comparative T Cell Repertoire statistics"
+format:
+  html: 
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    code-fold: true
+    embed-resources: true
+    number-sections: true
+    smooth-scroll: true
+    grid:
+      body-width: 1000px
+      margin-width: 300px
+
+jupyter: python3
+---
+
+Thank you for using TCRtoolkit! This report is generated from sample data and metadata you provided. The report is divided into two sections: 
+
+@sec-heatmap : Heatmap of sample to sample repertoire similarity using Jaccard, Sorensen, and Morisita indices (v1.0-beta)
+
+@sec-scatters : Scatter plots of clone size distribution in NxN grids (up to 5x5) for user selected samples (v1.0.0)
+
+# Report Setup
+
+```{python, echo=false}
+#| tags: [parameters]
+#| echo: false
+
+## 2. Pipeline Parameters
+#Default inputs are overwritten at the command line in `modules/local/plot_sample.nf`
+workflow_cmd='<command used to run the pipeline>'
+project_name='path/to/project_name'
+project_dir='path/to/project_dir'
+jaccard_mat='path/to/jaccard_mat.csv'
+sorensen_mat='path/to/sorensen_mat.csv'
+morisita_mat='path/to/morisita_mat.csv'
+sample_utf8='path/to/sample_utf8.csv'
+```
+
+```{python}
+#| tags: [setup]
+#| warning: false
+
+# 1. Load Packages
+import os
+import datetime
+import sys
+import numpy as np
+import pandas as pd
+import seaborn as sns
+# from matplotlib.colors import LinearSegmentedColormap
+# import scipy.cluster.hierarchy as sch
+
+# 2. Print Pipeline Information
+print('Pipeline information and parameters:' + '\n')
+print('Project Name:          ' + project_name)
+print('Workflow command:      ' + workflow_cmd)
+print('Pipeline Directory:    ' + project_dir)
+print('Date and time:         ' + str(datetime.datetime.now()))
+
+# 3. Importing custom plotting functions
+## Plotting functions are defined in `bin/utility_functions.py`.
+sys.path.append(project_dir + '/bin/')
+from utils import TicTocGenerator, tic, toc
+TicToc = TicTocGenerator()
+
+# 4. Importing similarity data
+## 4a. jaccard similarity matrix
+jaccard_df = pd.read_csv(jaccard_mat, sep=',', header=0, index_col=0)
+
+## 4b. sorensen similarity matrix
+sorensen_df = pd.read_csv(sorensen_mat, sep=',', header=0, index_col=0)
+
+## 4c. morisita similarity matrix
+morisita_df = pd.read_csv(morisita_mat, sep=',', header=0, index_col=0)
+
+# 5. Importing sample level counts
+sample_utf8 = pd.read_csv(sample_utf8, sep=',', header=0, index_col=0)
+file_paths = sample_utf8['file_path']
+dfs = {}
+for file_path in file_paths:
+    # load data
+    df = pd.read_csv(file_path, sep='\t', header=0)
+
+    # Rename columns
+    df = df.rename(columns={'count (templates/reads)': 'read_count', 'frequencyCount (%)': 'frequency'})
+    sample_id = os.path.basename(file_path).split('.')[0]
+    dfs[sample_id] = df
+```
+
+# Analysis
+
+## Overall Repertoire Similarity {#sec-heatmap}
+
+Similarity metrics such as Jaccard, Sorensen, and Morisita are often used to compare the similarity between two samples. Here, we compare the similarity of TCR repertoires between samples using these three metrics.
+
+```{python}
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.figure_factory import create_dendrogram
+from plotly.subplots import make_subplots
+import scipy.spatial.distance as ssd
+import matplotlib.pyplot as plt
+
+# preprocess the data prior to clustering
+jaccard_numeric = jaccard_df.apply(pd.to_numeric, errors='coerce')
+jaccard_numeric = np.log10(jaccard_numeric+1e-6)
+jaccard_numeric = jaccard_numeric.where(pd.notnull(jaccard_numeric), np.nan)
+
+sorensen_numeric = sorensen_df.apply(pd.to_numeric, errors='coerce')
+sorensen_numeric = np.log10(sorensen_numeric+1e-6)
+sorensen_numeric = sorensen_numeric.where(pd.notnull(sorensen_numeric), np.nan)
+
+morisita_numeric = morisita_df.apply(pd.to_numeric, errors='coerce')
+morisita_numeric = np.log10(morisita_numeric+1e-6)
+morisita_numeric = morisita_numeric.where(pd.notnull(morisita_numeric), np.nan)
+
+# Assuming jaccard_numeric, sorensen_numeric, and morisita_numeric are your DataFrames
+# and sns_cluster_jaccard, sns_cluster_sorensen, and sns_cluster_morisita are the corresponding clustermaps
+sns_cluster_jaccard = sns.clustermap(jaccard_numeric)
+plt.close()
+sns_cluster_sorensen = sns.clustermap(sorensen_numeric)
+plt.close()
+sns_cluster_morisita = sns.clustermap(morisita_numeric)
+plt.close()
+
+# Create a subplot with 3 rows
+fig = make_subplots(rows=3, cols=1)
+
+# Reindex the dataframes to match the clustering
+jaccard_clustered = jaccard_numeric.iloc[sns_cluster_jaccard.dendrogram_row.reordered_ind, sns_cluster_jaccard.dendrogram_col.reordered_ind]
+sorensen_clustered = sorensen_numeric.iloc[sns_cluster_sorensen.dendrogram_row.reordered_ind, sns_cluster_sorensen.dendrogram_col.reordered_ind]
+morisita_clustered = morisita_numeric.iloc[sns_cluster_morisita.dendrogram_row.reordered_ind, sns_cluster_morisita.dendrogram_col.reordered_ind]
+
+# Create individual heatmaps
+heatmap_jaccard = go.Heatmap(z=jaccard_clustered, x=jaccard_clustered.columns, y=jaccard_clustered.index, coloraxis="coloraxis", visible=False)
+heatmap_sorensen = go.Heatmap(z=sorensen_clustered, x=sorensen_clustered.columns, y=sorensen_clustered.index, coloraxis="coloraxis", visible=False)
+heatmap_morisita = go.Heatmap(z=morisita_clustered, x=morisita_clustered.columns, y=morisita_clustered.index, coloraxis="coloraxis", visible=True)
+
+# Add the heatmaps to the figure
+fig = go.Figure(data=[heatmap_jaccard, heatmap_sorensen, heatmap_morisita])
+
+# Create buttons to switch between the heatmaps
+buttons = [
+    dict(label="Jaccard", method="update", 
+         args=[{"visible": [True, False, False]}, {"title": "Jaccard"}]),
+    dict(label="Sorensen", method="update", 
+         args=[{"visible": [False, True, False]}, {"title": "Sorensen"}]),
+    dict(label="Morisita", method="update", 
+         args=[{"visible": [False, False, True]}, {"title": "Morisita"}])
+]
+
+# Update the layout of the figure
+fig.update_layout(
+    updatemenus=[dict(type="buttons", showactive=True, buttons=buttons)],
+    title='Similarity Matrices',
+    xaxis_title='Sample ID',
+    yaxis_title='Sample ID',
+    autosize=False,
+    width=950,
+    height=950,
+    coloraxis=dict(colorscale='Blues', colorbar=dict(title="Log Scale"))
+)
+
+fig.show()
+```
+
+The jaccard index is calculated via:
+
+$$
+J(A,B) = \frac{|A \cap B|}{|A \cup B|}
+$$
+
+Where $A$ and $B$ are the sets of unique CDR3 amino acid sequences (TCRs) in samples A and B, respectively. The Jaccard Index is defined as the ratio of the number of common elements between two sets to the total number of distinct elements in the two sets.
+
+The sorensen index is calculated via:
+
+$$
+S(A,B) = \frac{2|A \cap B|}{|A| + |B|}
+$$
+
+Where $A$ and $B$ are the sets of unique CDR3 amino acid sequences (TCRs) in samples A and B, respectively. The difference between the sorensen index and the jaccard index is that the sorensen index takes into account the size of the two sets being compared, while the jaccard index only considers the number of common elements between the two sets.
+
+The morisita index is calculated via:
+
+$$
+M(A,B)=\frac{2\sum_{i=1}^{S}a_{i}b_{i}}{(D_{a}+D_{b})AB} ; D_{a}=\frac{\sum_{i=1}^{S}a_{i}^{2}}{A^2}, D_{b}=\frac{\sum_{i=1}^{S}b_{i}^{2}}{B^2}
+$$
+
+Where: 
+- $A$ and $B$ are the sets of unique CDR3 amino acid sequences (TCRs) in samples A and B, 
+- $a_{i}$ ($b_{i}$) is the number of times TCR $i$ is represented in the total $A$ ($B$) from one sample.
+- $S$ is the total number of unique TCRs in the two samples.
+- $D_{a}$ and $D_{b}$ are the Simpson Index values for samples A and B, respectively.
+
+
+## Specific Repertoire Similarity {#sec-scatters}
+
+Here, we provide a means to generate specific clone size comparison, and frequency comparisons between two samples of interest.
+
+```{python}
+import ipywidgets as widgets
+import plotly.graph_objs as go
+
+samples = list(dfs.keys())
+
+# Create dropdowns for sample selection
+dropdown1 = widgets.Dropdown(options=samples, description='Sample 1:')
+dropdown2 = widgets.Dropdown(options=samples, description='Sample 2:')
+
+# Function to generate scatter plot
+def plot_scatter(sample1, sample2):
+    # fig = go.Figure(data=go.Scatter(
+    #     x=dfs[sample1]['read_count'],
+    #     y=dfs[sample2]['read_count'],
+    #     mode='markers'
+    # ))
+    # fig.update_layout(
+    #     xaxis_title=sample1,
+    #     yaxis_title=sample2,
+    #     title='Scatter plot'
+    # )
+    # fig.show()
+    print('Sample 1 is: ', sample1)
+    print('Sample 2 is: ', sample2)
+
+# Interactive widget
+# widgets.interact(plot_scatter, sample1=dropdown1, sample2=dropdown2)
+```

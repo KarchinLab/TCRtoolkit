@@ -14,8 +14,6 @@ from scipy.stats import entropy
 import numpy as np
 import csv
 
-# print('-- ENTERED calc_clonality.py--')
-
 # initialize parser
 parser = argparse.ArgumentParser(description='Calculate clonality of a TCR repertoire')
 
@@ -24,8 +22,8 @@ parser.add_argument('-s', '--sample_meta',
                     metavar='sample_meta', 
                     type=str, 
                     help='sample metadata passed in through samples CSV file')
-parser.add_argument('-c', '--counts', 
-                    metavar='counts', 
+parser.add_argument('-c', '--count_table', 
+                    metavar='count_table', 
                     type=argparse.FileType('r'), 
                     help='counts file in TSV format')
 parser.add_argument('-m', '--meta_data',
@@ -41,7 +39,7 @@ sample_meta = args.sample_meta[1:-1].split(', ')
 # print('sample_meta looks like this: ' + str(sample_meta))
 
 # Read in the counts file
-counts = pd.read_csv(args.counts, sep='\t', header=0)
+counts = pd.read_csv(args.count_table, sep='\t', header=0)
 counts = counts.rename(columns={'count (templates/reads)': 'read_count', 'frequencyCount (%)': 'frequency'})
 # print('counts columns: \n')
 # print(counts.columns)
@@ -103,7 +101,6 @@ def calc_sample_stats(sample_meta, counts):
     with open('sample_stats.csv', 'w') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow([sample_meta[0], sample_meta[1], sample_meta[2], sample_meta[3],
-                         str(current_meta.treatment), str(current_meta.response), str(current_meta.clinical_data),
                          num_clones, num_TCRs, simpson_index, simpson_index_corrected, clonality,
                          num_in, num_out, num_stop, pct_prod, pct_out, pct_stop, pct_nonprod,
                          cdr3_avg_len, num_convergent, ratio_convergent])

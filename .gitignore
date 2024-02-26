@@ -19,6 +19,7 @@ bin/__pycache__/*
 ## Quarto
 notebooks/*
 !notebooks/sample_stats_template.qmd
+!notebooks/compare_stats_template.qmd
 
 ## vscode
 .vscode/*

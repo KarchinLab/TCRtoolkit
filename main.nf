@@ -1,9 +1,9 @@
 #!/usr/bin/env nextflow
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    btc/bulktcrseq
+    karchinlab/TCRtoolkit
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    Github : https://github.com/karchinlab/bulk-tcrseq
+    Github : https://github.com/karchinlab/TCRtoolkit
 ----------------------------------------------------------------------------------------
 */
 
@@ -23,6 +23,7 @@ for (param in checkPathParamList) { if (param) { file(param, checkIfExists: true
 if (params.project_name) { project_name = params.project_name } else { exit 1, 'Project name not specified. Please, provide a --project_name=project_name !' }
 if (params.sample_table) { sample_table = file(params.sample_table) } else { exit 1, 'Sample table not specified. Please, provide a --sample_table=/path/to/sample_table.csv !' }
 if (params.patient_table) { patient_table = file(params.patient_table) } else { exit 1, 'Patient table not specified. Please, provide a --patient_table=/path/to/patient_table.csv !' }
+if (params.data_dir) { data_dir = params.data_dir } else { exit 1, 'Data directory not specified. Please, provide a --data_dir=/path/to/data_dir !' }
 if (params.output_dir) { output_dir = params.output_dir } else { exit 1, 'Output directory not specified. Please, provide a --output_dir=/path/to/output_dir !' }
 
 /*
@@ -31,14 +32,14 @@ if (params.output_dir) { output_dir = params.output_dir } else { exit 1, 'Output
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { BULKTCRSEQ } from './workflows/bulk-tcrseq.nf'
+include { TCRTOOLKIT_BULK } from './workflows/tcrtoolkit-bulk.nf'
 
 //
 // WORKFLOW: Run main bulk TCRseq analysis pipeline
 //
 
-workflow BTC_BULKTCR {
-    BULKTCRSEQ()
+workflow TCRTOOLKIT {
+    TCRTOOLKIT_BULK()
 }
 
 /*
@@ -52,7 +53,7 @@ workflow BTC_BULKTCR {
 // See: https://github.com/nf-core/rnaseq/issues/619
 //
 workflow {
-    BTC_BULKTCR ()
+    TCRTOOLKIT ()
 }
 
 /*

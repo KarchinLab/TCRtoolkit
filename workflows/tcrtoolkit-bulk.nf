@@ -36,7 +36,7 @@ include { COMPARE     } from '../subworkflows/local/compare'
 */
 
 
-workflow BULKTCRSEQ {
+workflow TCRTOOLKIT_BULK {
 
     ///// ===== INPUT_CHECK ============================================== /////
     INPUT_CHECK( params.sample_table,
@@ -47,7 +47,8 @@ workflow BULKTCRSEQ {
             INPUT_CHECK.out.meta_data )
 
     ///// ===== COMPARE SUBWORKFLOW ====================================== /////
-    
+    COMPARE ( INPUT_CHECK.out.sample_utf8,
+              INPUT_CHECK.out.meta_data )
 }
 
 /*

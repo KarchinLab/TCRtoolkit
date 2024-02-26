@@ -49,6 +49,8 @@ sample_stats_csv='path/to/sample_stats.csv'
 v_family_csv='path/to/v_family.csv'
 ```
 
+Info for this report:
+
 ```{python}
 print('Project Name:          ' + project_name)
 print('Workflow command:      ' + workflow_cmd)
@@ -58,14 +60,12 @@ print('Date and time:         ' + str(datetime.datetime.now()))
 
 ## Importing custom plotting functions
 
-Plotting functions are defined in `bin/plot_utils.py`.
+Plotting functions are defined in `bin/utility_functions.py`.
 
 ```{python}
 ## custom plotting and timing functions
 sys.path.append(project_dir + '/bin/')
-from plot_utils import TicTocGenerator, tic, toc
-
-## create an instance of the TicTocGen generator
+from utility_functions import TicTocGenerator, tic, toc
 TicToc = TicTocGenerator()
 ```
 
@@ -77,7 +77,6 @@ tic()
 ## reading combined repertoire statistics
 df = pd.read_csv(sample_stats_csv, sep=',', header=0, 
                  names=['sample_id', 'patient_id', 'timepoint', 'origin',
-                        'treatment', 'response', 'clinical_data',
                         'num_clones', 'num_TCRs', 'simpson_index', 'simpson_index_corrected', 'clonality',
                         'num_in', 'num_out', 'num_stop', 'pct_prod', 'pct_out', 'pct_stop', 'pct_nonprod',
                         'cdr3_avg_len', 'num_convergent', 'ratio_convergent'])
