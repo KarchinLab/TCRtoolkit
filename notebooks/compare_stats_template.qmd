@@ -78,7 +78,6 @@ morisita_df = pd.read_csv(morisita_mat, sep=',', header=0, index_col=0)
 
 # 5. Importing sample level counts
 sample_utf8 = pd.read_csv(sample_utf8, sep=',', header=0, index_col=0)
-
 file_paths = sample_utf8['file_path']
 dfs = {}
 for file_path in file_paths:

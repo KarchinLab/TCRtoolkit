@@ -38,7 +38,6 @@ args = parser.parse_args()
 project_dir = args.project_dir
 sys.path.append(project_dir + '/bin/')
 from utils import TicTocGenerator, tic, toc, jaccard_index, sorensen_index, morisita_horn_index
-TicToc = TicTocGenerator()
 
 ## Read in sample table CSV file
 ## convert metadata to list

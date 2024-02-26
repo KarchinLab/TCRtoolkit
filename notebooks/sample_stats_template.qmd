@@ -1,5 +1,5 @@
 ---
-title: "Sample Level T Cell Repertoire statistics"
+title: "Basic bulk T Cell Repertoire statistics"
 format:
   html: 
     theme: flatly
@@ -8,7 +8,6 @@ format:
     code-fold: true
     embed-resources: true
     number-sections: true
-    smooth-scroll: true
     grid:
       body-width: 1000px
       margin-width: 300px
@@ -16,12 +15,28 @@ format:
 jupyter: python3
 ---
 
-Thank you for using `TCRtoolkit`. This report, generated from your provided data, presents sample level T cell repertoire statistics. Each plot includes a description, relevant formulas, and biological relevance. However, *specific* biological interpretation is up to the user.
-
-As this pipeline is still in beta, **please report any issues or suggestions for improvement to:** dbracci1 [at] jh [dot] edu.
+This notebook was generated via the `bulk-tcrseq` pipeline developed at Johns Hopkins for use by BTC scientists. 
 
 # Report Setup
 
+## Load Packages
+
+```{python}
+from IPython.display import Image
+import os
+import datetime
+import sys
+import pandas as pd
+import math
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+import plotly.express as px
+```
+
+## Pipeline Parameters
+
+Default inputs are overwritten at the command line in `modules/local/plot_sample.nf`
 ```{python, echo=false}
 #| tags: [parameters]
 #| echo: false
@@ -34,35 +49,29 @@ sample_stats_csv='path/to/sample_stats.csv'
 v_family_csv='path/to/v_family.csv'
 ```
 
+Info for this report:
+
 ```{python}
-#| tags: [setup]
-#| warning: false
-
-# 1. Load packages
-from IPython.display import Image
-import os
-import datetime
-import sys
-import pandas as pd
-import math
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.colors import LinearSegmentedColormap
-import plotly.express as px
-import plotly.graph_objects as go
-
-# 2. Print pipeline information
 print('Project Name:          ' + project_name)
 print('Workflow command:      ' + workflow_cmd)
 print('Pipeline Directory:    ' + project_dir)
 print('Date and time:         ' + str(datetime.datetime.now()))
+```
 
-# 3. Importing custom plotting functions
+## Importing custom plotting functions
+
+Plotting functions are defined in `bin/utility_functions.py`.
+
+```{python}
+## custom plotting and timing functions
 sys.path.append(project_dir + '/bin/')
-from utils import TicTocGenerator, tic, toc
+from utility_functions import TicTocGenerator, tic, toc
 TicToc = TicTocGenerator()
+```
 
-# 4. Loading Data
+## Loading data
+
+```{python}
 tic()
 
 ## reading combined repertoire statistics
@@ -91,13 +100,13 @@ v_family = v_family.sort_values(by=['patient_id', 'timepoint'])
 print('-- Imported v_family_csv as `v_family`...')
 
 toc()
-
-
 ```
 
-# Sample Statistics
+# Sample level statistics v3
 
-Below are plots showing sample level T cell repertoire statistics. Each plot has a description and formulas used to calculate the metric shown.
+Below are plots showing basic T cell repertoire statistics. Each plot has a description about the statistic shown and formulas used to calculate the metric when applicable. Specific biological interpretation of each plot is left to the user.
+
+Version 3 of these plots features plotly express interactive plots. This version is exploratory and may be updated in the future.
 
 ## Number of clones
 
@@ -107,14 +116,13 @@ timepts.sort()
 fig = px.box(df, 
              x = 'timepoint', 
              y='num_clones', 
-             color='origin',
-             template='simple_white',
+             color='origin', 
              points='all', hover_data=['sample_id'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
 
-**Figure 1. Number of clones across timepoints.** Here, we define a clone as a T cell with a unique CDR3 amino acid sequence. The number of clones is shown on the y-axis and 'origin_timepoint' is shown on the x-axis. 
+**Figure 1. Number of clones across timepoints.** A clone is defined as a T cell with a unique CDR3 amino acid sequence. The number of clones is shown on the y-axis and 'origin_timepoint' is shown on the x-axis. 
 
 ## Clonality
 
@@ -123,17 +131,12 @@ fig = px.box(df,
              x = 'timepoint', 
              y='clonality', 
              color='origin', 
-             template='simple_white',
              points='all', hover_data=['sample_id'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
 
-**Figure 2. The clonality of samples across timepoints.** Clonality is a measure of T cell clonal expansion and reflects the degree to which the sample is dominated by 1 or more T cell clones. Clonality is calculated via: 
-
-$$Clonality = 1 - \frac {H} {\log_{2} N} \quad\text{,}\quad H = -\sum\limits_{i=1}^N p_i \log_{2}{p_i}$$
-
- where $H$ is the Shannon entropy of a given sample, $N$ is the number of unique TCRs in the sample, and $p_i$ is the frequency of the $i$ th unique TCR in the sample. 
+**Figure 2. The clonality of samples across timepoints.** Clonality is a measure of T cell clonal expansion and reflects the degree to which the sample is dominated by 1 or more T cell clones. Clonality is calculated via: $$Clonality = \frac {1-H} {\log_{2} N} \quad\text{,}\quad H = -\sum\limits_{i=1}^N p_i \log_{2}{p_i}$$ where $H$ is the Shannon entropy of a given sample, $N$ is the number of unique TCRs in the sample, and $p_i$ is the frequency of the $i$ th unique TCR in the sample. 
 
 ## Simpson Index
 
@@ -141,8 +144,7 @@ $$Clonality = 1 - \frac {H} {\log_{2} N} \quad\text{,}\quad H = -\sum\limits_{i=
 fig = px.box(df, 
              x = 'timepoint', 
              y='simpson_index_corrected', 
-             color='origin',
-             template='simple_white',
+             color='origin', 
              points='all', hover_data=['sample_id'],
              category_orders={'timepoint': timepts})
 fig.show()
@@ -161,7 +163,6 @@ fig = px.box(df,
              x = 'timepoint', 
              y='pct_prod', 
              color='origin', 
-             template='simple_white',
              points='all', hover_data=['sample_id'],
              category_orders={'timepoint': timepts})
 fig.show()
@@ -180,7 +181,6 @@ fig = px.box(df,
              x = 'timepoint', 
              y='cdr3_avg_len', 
              color='origin', 
-             template='simple_white',
              points='all', hover_data=['sample_id'],
              category_orders={'timepoint': timepts})
 fig.show()
@@ -195,13 +195,12 @@ fig = px.box(df,
              x = 'timepoint', 
              y='ratio_convergent', 
              color='origin', 
-             template='simple_white',
              points='all', hover_data=['sample_id'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
 
-**Figure 6. TCR Convergence** The ratio of convergent TCRs to total TCRs. A convergent TCR is a TCR that is generated via 2 or more unique nucleotide sequences via codon degeneracy. Convergence can be seen as a proxy for selection.
+**Figure 6. TCR Convergence** The ratio of convergent TCRs to total TCRs. A convergent TCR is a TCR that is generated via 2 or more unique nucleotide sequences via codon degeneracy. 
 
 # Gene Family Usage
 
@@ -214,43 +213,35 @@ The equation for calculating the proportion of TCRs that use a given V gene fami
 $$n_gk$$
 
 ```{python}
-
-
-## calculate v gene usage proportion from raw counts
-v_family_proportion = v_family.iloc[:, :3].copy()
-v_family_proportion[v_family.columns[3:]] = v_family.iloc[:, 3:].div(v_family.iloc[:, 3:].sum(axis=1), axis=0)
-v_family_proportion_long = pd.melt(v_family_proportion, id_vars=['patient_id', 'timepoint', 'origin'], value_vars=v_family.columns[3:], var_name='v_gene', value_name='proportion')
-
-## choose color gradient for each v gene (using https://colordesigner.io/gradient-generator)
-colors = ["#fafa70","#fdef6b","#ffe566","#ffda63","#ffd061","#ffc660","#ffbb5f","#fdb15f","#fba860","#f79e61","#f39562","#ef8c63","#e98365","#e37b66","#dd7367","#d66b68","#ce6469","#c65e6a","#bd576b","#b4526b","#ab4c6b","#a1476a","#974369","#8c3e68","#823a66","#773764","#6d3361","#62305e","#572c5a","#4d2956"]
-
 ## loop through all patients and plot stacked bar chart of v_family
-## (code adapted from https://www.moritzkoerber.com/posts/plotly-grouped-stacked-bar-chart/)
-for patient in v_family_proportion_long.patient_id.unique().tolist():
-    current = v_family_proportion_long[v_family_proportion_long.patient_id == patient]
-    fig = go.Figure()
-    fig.update_layout(
-        template="simple_white",
-        title_text="Patient: " + str(patient),
-        xaxis=dict(title_text="timepont"),
-        yaxis=dict(title_text="proportion"),
-        barmode="stack",
-    )
+v_genes = ["TCRBV01", "TCRBV02", "TCRBV03", "TCRBV04", "TCRBV05", "TCRBV06", "TCRBV07", 
+           "TCRBV08", "TCRBV09", "TCRBV10", "TCRBV11", "TCRBV12", "TCRBV13", "TCRBV14", 
+           "TCRBV15", "TCRBV16", "TCRBV17", "TCRBV18", "TCRBV19", "TCRBV20", "TCRBV21", 
+           "TCRBV22", "TCRBV23", "TCRBV24", "TCRBV25", "TCRBV26", "TCRBV27", "TCRBV28", 
+           "TCRBV29", "TCRBV30"]
 
-    for g, c in zip(current.v_gene.unique(), colors):
-        plot_df = current[current.v_gene == g]
-        fig.add_trace(
-            go.Bar(x=[plot_df.timepoint, plot_df.origin], 
-                   y=plot_df.proportion, name=g, marker_color=c),
-        )
+for patient in v_family.patient_id.unique().tolist():
+    v_family_counts = v_family[v_family.patient_id == patient]
+
+    # Assume v_family_9881 is a DataFrame with columns 'timepoint' and 'TCRBV01'-'TCRBV30'
+
+    # Reshape from wide to long format
+    df_long = pd.melt(v_family_counts, id_vars=['timepoint', 'origin'], value_vars=v_genes, var_name='gene', value_name='value')
+
+    # Generate a palette with as many colors as there are genes
+    palette = sns.color_palette('magma', len(v_genes))
+
+    # Convert the RGB values to hexadecimal
+    palette_hex = palette.as_hex()
+
+    # Create the color map
+    color_map = {gene: color for gene, color in zip(v_genes, palette_hex)}
+
+    # Create the plot
+    fig = px.bar(df_long, x='timepoint', y='value', color='gene', 
+                 title=('Subject: ' + str(patient) + ', V Gene Family Usage'), 
+                 color_discrete_map=color_map, facet_col='origin')
 
     fig.show()
 ```
 
-# Environment
-
-```{python}
-#| tags: [environment]
-
-!mamba list
-```
