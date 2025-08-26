@@ -2,7 +2,7 @@ process GLIPH2_TURBOGLIPH {
     label 'process_high'
     label 'process_high_compute'
     label 'process_high_memory'
-    container "ghcr.io/karchinlab/tcrtoolkit-bulk:main"
+    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path concat_cdr3
@@ -56,7 +56,7 @@ process GLIPH2_TURBOGLIPH {
 
 process GLIPH2_PLOT {
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit-bulk:main"
+    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path gliph2_report_template

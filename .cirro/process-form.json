@@ -17,16 +17,6 @@
                 "type": "boolean",
                 "value": true
             },
-            "matrix_sparsity": {
-                "default": "sparse",
-                "description": "Compute sparse or full distance matrix for TCRdist3. Warning: full matrix compute and memory costs are very high for large inputs (>10,000 clones).",
-                "title": "",
-                "type": "string",
-                "enum": [
-                    "sparse",
-                    "full"
-                ]
-            },
             "distance_metric": {
                 "default": "tcrdist",
                 "description": "Use default TCRdist3 or Levenshtein distance metric.",

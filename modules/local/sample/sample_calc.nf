@@ -1,7 +1,7 @@
 process SAMPLE_CALC {
     tag "${sample_meta.sample}"
     label 'process_single'
-    container "ghcr.io/karchinlab/tcrtoolkit-bulk:main"
+    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     tuple val(sample_meta), path(count_table)

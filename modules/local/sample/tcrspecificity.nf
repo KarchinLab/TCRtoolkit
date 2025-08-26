@@ -1,6 +1,6 @@
 process VDJDB_GET {
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit-bulk:main"
+    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     output:
     path("vdjdb-2025-02-21/"), emit: ref_db
@@ -15,7 +15,7 @@ process VDJDB_GET {
 process VDJDB_VDJMATCH {
     tag "${sample_meta.sample}"
     label 'process_medium'
-    container "ghcr.io/karchinlab/tcrtoolkit-bulk:main"
+    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     tuple val(sample_meta), path(count_table)

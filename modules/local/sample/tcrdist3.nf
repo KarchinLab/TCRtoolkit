@@ -1,6 +1,6 @@
 process TCRDIST3_MATRIX {
     tag "${sample_meta.sample}"
-    container "ghcr.io/karchinlab/tcrtoolkit-bulk:main"
+    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     cpus 8
     memory {
@@ -41,7 +41,7 @@ process TCRDIST3_MATRIX {
 process TCRDIST3_HISTOGRAM_CALC {
     tag "${sample_meta.sample}"
     label 'process_high'
-    container "ghcr.io/karchinlab/tcrtoolkit-bulk:main"
+    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     tuple val(sample_meta), path(distance_matrix)
@@ -122,7 +122,7 @@ process TCRDIST3_HISTOGRAM_CALC {
 process TCRDIST3_HISTOGRAM_PLOT {
     tag "${sample_meta.sample}"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit-bulk:main"
+    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     tuple val(sample_meta), path(histogram_data)

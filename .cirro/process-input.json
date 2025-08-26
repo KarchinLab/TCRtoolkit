@@ -3,7 +3,7 @@
     "convert_lvl": false,
     "sample_lvl": "$.params.dataset.paramJson.sample_lvl",
     "compare_lvl": "$.params.dataset.paramJson.compare_lvl",
-    "matrix_sparsity": "$.params.dataset.paramJson.matrix_sparsity",
+    "matrix_sparsity": "sparse",
     "distance_metric": "$.params.dataset.paramJson.distance_metric",
     "kmer_min_depth": "$.params.dataset.paramJson.kmer_min_depth",
     "local_min_OVE": "$.params.dataset.paramJson.local_min_OVE",
