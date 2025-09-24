@@ -1,0 +1,25 @@
+nextflow_pipeline {
+
+    name "Test Workflow main.nf"
+    script "main.nf"
+
+    test("Minimal example dataset") {
+
+        tag "basic-sd"
+
+        when {
+            params {
+                samplesheet = "../../../tests/test_data/minimal-example/samplesheet.csv"
+                outdir = "out-minimal-example" 
+                input_format = "adaptive" 
+                max_memory = "8.GB" 
+                max_cpus = 4
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+}
