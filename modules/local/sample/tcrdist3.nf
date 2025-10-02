@@ -2,7 +2,7 @@ process TCRDIST3_MATRIX {
     tag "${sample_meta.sample}"
     container "ghcr.io/karchinlab/tcrtoolkit:main"
 
-    cpus 8
+    cpus params.max_cpus
     memory {
         def sz = count_table.size()
         def mb = 1024 * 1024
