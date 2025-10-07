@@ -14,9 +14,10 @@ process SAMPLE_CALC {
     val sample_meta             , emit: sample_meta
 
     script:
+    def meta_json = groovy.json.JsonOutput.toJson(sample_meta)
+
     """
-    echo '' > sample_stats.csv
-    sample_calc.py -s '${sample_meta}' -c ${count_table}
+    sample_calc.py -s '${meta_json}' -c ${count_table}
     """
 
     stub:
