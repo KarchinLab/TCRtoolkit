@@ -34,17 +34,14 @@ def compute_gene_family_table(counts, col_name, all_families, sample_meta):
     return fam_df
 
 def calc_gene_family(counts, gene_column, family_prefix, max_index, output_file, meta_df):
-    # Apply extraction
-    counts[f'{family_prefix}FamilyName'] = counts[gene_column].apply(extract_trb_family)
-
     # Build list of all possible family names
     all_fams = [f'{family_prefix}{i}' for i in range(1, max_index + 1)]
 
     # Count usage
-    fam_df = counts[f'{family_prefix}FamilyName'].value_counts(dropna=False).to_frame().T.sort_index(axis=1)
+    fam_df = counts[gene_column].apply(extract_trb_family).value_counts(dropna=False).to_frame().T
 
     # Reindex to include all families
-    fam_df = fam_df.reindex(columns=all_fams, fill_value=0)
+    fam_df = pd.DataFrame([fam_df.reindex(columns=all_fams, fill_value=0).iloc[0]]).reset_index(drop=True)
 
     # Add metadata columns
     fam_df = pd.concat([meta_df, fam_df], axis=1)
@@ -138,7 +135,7 @@ def main():
     counts = pd.read_csv(args.count_table, sep='\t', header=0)
 
     # Build metadata row from selected keys
-    meta_keys = ['sample', 'subject_id', 'timepoint', 'origin']
+    meta_keys = ['subject_id', 'timepoint', 'origin']
     meta_row = {k: sample_meta[k] for k in meta_keys}
     meta_df = pd.DataFrame([meta_row])
 
@@ -147,7 +144,7 @@ def main():
     calc_gene_family(counts, 'j_call', 'TRBJ', 2, 'j_family.csv', meta_df)
 
     # Build metadata row from selected keys
-    meta_keys = ['subject_id', 'timepoint', 'origin']
+    meta_keys = ['sample', 'subject_id', 'timepoint', 'origin']
     meta_row = {k: sample_meta[k] for k in meta_keys}
     meta_df = pd.DataFrame([meta_row])
     
