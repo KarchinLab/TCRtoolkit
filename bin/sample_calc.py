@@ -46,9 +46,9 @@ def calc_gene_family(counts, gene_column, family_prefix, max_index, output_file,
     # Add metadata columns
     fam_df = pd.concat([meta_df, fam_df], axis=1)
 
-    fam_df.to_csv(output_file, index=False, header=False)
+    fam_df.to_csv(output_file, header=True, index=False)
 
-def calc_sample_stats(meta_df, counts):
+def calc_sample_stats(meta_df, counts, output_file):
     """Calculate sample level statistics of TCR repertoire."""
 
     ## first pass stats
@@ -109,7 +109,7 @@ def calc_sample_stats(meta_df, counts):
     df_stats = pd.concat([meta_df, df_stats], axis=1)
 
     # Save to CSV
-    df_stats.to_csv('sample_stats.csv', header=False, index=False)
+    df_stats.to_csv(output_file, header=True, index=False)
 
 
 def main():
@@ -139,16 +139,18 @@ def main():
     meta_row = {k: sample_meta[k] for k in meta_keys}
     meta_df = pd.DataFrame([meta_row])
 
-    calc_gene_family(counts, 'v_call', 'TRBV', 30, 'v_family.csv', meta_df)
-    calc_gene_family(counts, 'd_call', 'TRBD', 2, 'd_family.csv', meta_df)
-    calc_gene_family(counts, 'j_call', 'TRBJ', 2, 'j_family.csv', meta_df)
+    sample = sample_meta['sample']
+
+    calc_gene_family(counts, 'v_call', 'TRBV', 30, f'vdj/v_family_{sample}.csv', meta_df)
+    calc_gene_family(counts, 'd_call', 'TRBD', 2, f'vdj/d_family_{sample}.csv', meta_df)
+    calc_gene_family(counts, 'j_call', 'TRBJ', 2, f'vdj/j_family_{sample}.csv', meta_df)
 
     # Build metadata row from selected keys
     meta_keys = ['sample', 'subject_id', 'timepoint', 'origin']
     meta_row = {k: sample_meta[k] for k in meta_keys}
     meta_df = pd.DataFrame([meta_row])
     
-    calc_sample_stats(meta_df, counts)
+    calc_sample_stats(meta_df, counts, f'stats/sample_stats_{sample}.csv')
 
 if __name__ == "__main__":
     main()
