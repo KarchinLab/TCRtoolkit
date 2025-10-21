@@ -1,0 +1,236 @@
+nextflow_process {
+
+    name "Test CONVERT_ADAPTIVE"
+    script "modules/local/airr_convert/convert_adaptive.nf"
+    process "CONVERT_ADAPTIVE"
+
+    // Note: Test fixtures in tests/fixtures/data/ contain small subsets of
+    // Adaptive Biotechnologies format TCR data for testing conversion to AIRR format
+
+    test("Should convert valid Adaptive format to AIRR") {
+
+        tag "basic"
+
+        when {
+            process {
+                """
+                input[0] = [
+                    [sample: 'Patient01_Base'],
+                    file("${projectDir}/tests/fixtures/data/PD1_Patient01_Base.tsv")
+                ]
+                input[1] = file("${projectDir}/assets/airr/airr_rearrangement_schema.json")
+                input[2] = file("${projectDir}/assets/airr/imgt_adaptive_lookup.tsv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.adaptive_convert
+
+            with(process.out.adaptive_convert) {
+                assert size() == 1
+
+                // Check the tuple structure [sample_meta, file]
+                def (meta, airr_file) = get(0)
+                assert meta.sample == 'Patient01_Base'
+
+                // Check output file exists and has correct name
+                def file_path = path(airr_file)
+                assert file_path.exists()
+                assert file_path.getFileName().toString() == 'Patient01_Base_airr.tsv'
+
+                // Verify AIRR format structure
+                def lines = file_path.readLines()
+                assert lines.size() > 1  // Header + data rows
+
+                // Check for AIRR standard columns
+                def header = lines[0]
+                assert header.contains("sequence_id")
+                assert header.contains("sequence")
+                assert header.contains("junction")
+                assert header.contains("junction_aa")
+                assert header.contains("v_call")
+                assert header.contains("d_call")
+                assert header.contains("j_call")
+                assert header.contains("productive")
+                assert header.contains("duplicate_count")
+            }
+        }
+    }
+
+    test("Should convert multiple samples from minimal-example") {
+
+        tag "integration"
+
+        when {
+            process {
+                """
+                input[0] = [
+                    [sample: 'Patient02_Base'],
+                    file("${projectDir}/tests/test_data/minimal-example/PD1_Patient02_Base.tsv")
+                ]
+                input[1] = file("${projectDir}/assets/airr/airr_rearrangement_schema.json")
+                input[2] = file("${projectDir}/assets/airr/imgt_adaptive_lookup.tsv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.adaptive_convert
+
+            with(process.out.adaptive_convert) {
+                def (meta, airr_file) = get(0)
+                assert meta.sample == 'Patient02_Base'
+
+                def file_path = path(airr_file)
+                assert file_path.exists()
+
+                // Verify substantial data was converted
+                def lines = file_path.readLines()
+                assert lines.size() > 10  // Should have many rows from full dataset
+            }
+        }
+    }
+
+    test("Should handle Post timepoint samples") {
+
+        tag "timepoint"
+
+        when {
+            process {
+                """
+                input[0] = [
+                    [sample: 'Patient01_Post'],
+                    file("${projectDir}/tests/fixtures/data/PD1_Patient01_Post.tsv")
+                ]
+                input[1] = file("${projectDir}/assets/airr/airr_rearrangement_schema.json")
+                input[2] = file("${projectDir}/assets/airr/imgt_adaptive_lookup.tsv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.adaptive_convert
+
+            with(process.out.adaptive_convert) {
+                def (meta, airr_file) = get(0)
+                assert meta.sample == 'Patient01_Post'
+                assert path(airr_file).exists()
+            }
+        }
+    }
+
+    test("Should preserve sample metadata through conversion") {
+
+        tag "metadata"
+
+        when {
+            process {
+                """
+                input[0] = [
+                    [
+                        sample: 'Patient03_Base',
+                        subject_id: 'Patient03',
+                        timepoint: 'Base',
+                        origin: 'tumor'
+                    ],
+                    file("${projectDir}/tests/fixtures/data/PD1_Patient03_Base.tsv")
+                ]
+                input[1] = file("${projectDir}/assets/airr/airr_rearrangement_schema.json")
+                input[2] = file("${projectDir}/assets/airr/imgt_adaptive_lookup.tsv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.adaptive_convert
+
+            with(process.out.adaptive_convert) {
+                def (meta, airr_file) = get(0)
+
+                // Verify all metadata is preserved
+                assert meta.sample == 'Patient03_Base'
+                assert meta.subject_id == 'Patient03'
+                assert meta.timepoint == 'Base'
+                assert meta.origin == 'tumor'
+
+                assert path(airr_file).exists()
+            }
+        }
+    }
+
+    test("Should handle malformed Adaptive data gracefully") {
+
+        tag "error-handling"
+
+        when {
+            process {
+                """
+                input[0] = [
+                    [sample: 'MalformedSample'],
+                    file("${projectDir}/tests/fixtures/data/malformed_adaptive.tsv")
+                ]
+                input[1] = file("${projectDir}/assets/airr/airr_rearrangement_schema.json")
+                input[2] = file("${projectDir}/assets/airr/imgt_adaptive_lookup.tsv")
+                """
+            }
+        }
+
+        then {
+            // Should fail due to missing required columns
+            assert process.failed
+        }
+    }
+
+    test("Should convert V, D, J gene calls correctly") {
+
+        tag "gene-conversion"
+
+        when {
+            process {
+                """
+                input[0] = [
+                    [sample: 'Patient01_Base'],
+                    file("${projectDir}/tests/fixtures/data/PD1_Patient01_Base.tsv")
+                ]
+                input[1] = file("${projectDir}/assets/airr/airr_rearrangement_schema.json")
+                input[2] = file("${projectDir}/assets/airr/imgt_adaptive_lookup.tsv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.adaptive_convert
+
+            with(process.out.adaptive_convert) {
+                def (meta, airr_file) = get(0)
+                def file_path = path(airr_file)
+                def lines = file_path.readLines()
+
+                // Check that gene calls are present in output
+                def header = lines[0].split('\t')
+                def v_idx = header.findIndexOf { it == 'v_call' }
+                def d_idx = header.findIndexOf { it == 'd_call' }
+                def j_idx = header.findIndexOf { it == 'j_call' }
+
+                assert v_idx >= 0
+                assert d_idx >= 0
+                assert j_idx >= 0
+
+                // Check first data row has gene calls
+                if (lines.size() > 1) {
+                    def first_row = lines[1].split('\t')
+                    // Should have IMGT format gene calls (e.g., TRBV30-01*01)
+                    if (first_row.size() > v_idx && first_row[v_idx]) {
+                        assert first_row[v_idx].contains('TRB') || first_row[v_idx].isEmpty()
+                    }
+                }
+            }
+        }
+    }
+}
