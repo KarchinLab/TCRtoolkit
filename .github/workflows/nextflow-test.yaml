@@ -38,7 +38,7 @@ jobs:
 
       - name: Upload unit test results
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: unit-test-results
           path: .nf-test/tests/
@@ -81,7 +81,7 @@ jobs:
 
       - name: Upload pipeline test results
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: pipeline-test-results
           path: .nf-test/tests/
