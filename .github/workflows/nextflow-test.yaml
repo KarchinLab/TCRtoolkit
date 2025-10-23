@@ -34,14 +34,23 @@ jobs:
           sudo mv nf-test /usr/local/bin
 
       - name: Run unit tests
-        run: nf-test test tests/modules/ --verbose
+        run: nf-test test tests/modules/ --verbose --junitxml=unit-test-results.xml
+
+      - name: Publish unit test results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: unit-test-results.xml
+          check_name: Unit Test Results
 
       - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-results
-          path: .nf-test/tests/
+          path: |
+            .nf-test/tests/
+            unit-test-results.xml
 
   pipeline-test:
     name: Pipeline Integration Test
@@ -77,11 +86,20 @@ jobs:
           sudo mv nf-test /usr/local/bin
 
       - name: Run pipeline test
-        run: nf-test test tests/main.nf.test --verbose
+        run: nf-test test tests/main.nf.test --verbose --junitxml=pipeline-test-results.xml
+
+      - name: Publish pipeline test results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: pipeline-test-results.xml
+          check_name: Pipeline Test Results
 
       - name: Upload pipeline test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pipeline-test-results
-          path: .nf-test/tests/
+          path: |
+            .nf-test/tests/
+            pipeline-test-results.xml
