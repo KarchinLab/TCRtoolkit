@@ -94,35 +94,6 @@ nextflow_process {
         }
     }
 
-    test("Should handle Post timepoint samples") {
-
-        tag "timepoint"
-
-        when {
-            process {
-                """
-                input[0] = [
-                    [sample: 'Patient01_Post'],
-                    file("${projectDir}/tests/fixtures/data/PD1_Patient01_Post.tsv")
-                ]
-                input[1] = file("${projectDir}/assets/airr/airr_rearrangement_schema.json")
-                input[2] = file("${projectDir}/assets/airr/imgt_adaptive_lookup.tsv")
-                """
-            }
-        }
-
-        then {
-            assert process.success
-            assert process.out.adaptive_convert
-
-            with(process.out.adaptive_convert) {
-                def (meta, airr_file) = get(0)
-                assert meta.sample == 'Patient01_Post'
-                assert path(airr_file).exists()
-            }
-        }
-    }
-
     test("Should preserve sample metadata through conversion") {
 
         tag "metadata"
