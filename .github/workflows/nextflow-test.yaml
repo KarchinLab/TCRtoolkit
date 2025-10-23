@@ -87,19 +87,3 @@ jobs:
 
       - name: Run pipeline test
         run: nf-test test tests/main.nf.test --verbose --junitxml=pipeline-test-results.xml
-
-      - name: Publish pipeline test results
-        if: always()
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        with:
-          files: pipeline-test-results.xml
-          check_name: Pipeline Test Results
-
-      - name: Upload pipeline test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pipeline-test-results
-          path: |
-            .nf-test/tests/
-            pipeline-test-results.xml
