@@ -8,10 +8,12 @@ process PSEUDOBULK_CELLRANGER {
     path airr_schema
 
     output:
-    tuple val(sample_meta), path("${sample_meta.sample}_pseudobulk.tsv") , emit: "cellranger_pseudobulk"
+    // tuple val(sample_meta), path("${sample_meta.sample}_pseudobulk.tsv") , emit: "cellranger_pseudobulk"
+    tuple val(sample_meta), path("${sample_meta.sample}_pseudobulk_phenotype.tsv") , emit: "cellranger_pseudobulk_phenotype" // Changed
 
     script:
     """
-    pseudobulk.py ${count_table} ${sample_meta.sample} ${airr_schema}
+    pseudobulk.py ${count_table} ${sample_meta.sample} ${airr_schema} --phenotype ${params.sobject}
     """
 }
+// pseudobulk.py ${count_table} ${sample_meta.sample} ${airr_schema}

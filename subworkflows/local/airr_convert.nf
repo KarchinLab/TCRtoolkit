@@ -34,6 +34,7 @@ workflow AIRR_CONVERT {
             params.airr_schema
         )
             .cellranger_pseudobulk
+            // .cellranger_pseudobulk_phenotype // Changed
             .set { sample_map_converted }
     }
 

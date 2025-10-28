@@ -30,3 +30,7 @@ tmp
 
 ## vscode
 .vscode/*
+
+# Results
+out-minimal-dev/*
+GBM_Trial1-bulkTCR-Level3-P004-TCRToolkit-analysis/*
