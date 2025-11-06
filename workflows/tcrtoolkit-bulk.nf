@@ -5,7 +5,7 @@
 */
 
 // Validate pipeline parameters
-def checkPathParamList = [ params.samplesheet]
+def checkPathParamList = [ params.samplesheet, params.sobject_gex ]
 for (param in checkPathParamList) { if (param) { file(param, checkIfExists: true) } }
 
 // Check mandatory parameters
@@ -27,6 +27,12 @@ include { AIRR_CONVERT }        from '../subworkflows/local/airr_convert'
 include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
 include { COMPARE }             from '../subworkflows/local/compare'
+
+include { MAP_PHENOTYPES }      from '../subworkflows/local/map_phenotypes'
+
+include { RESOLVE_SAMPLESHEET as RESOLVE_SAMPLESHEET_PHENO } from '../subworkflows/local/resolve_samplesheet'
+include { SAMPLE as SAMPLE_PHENO } from '../subworkflows/local/sample'
+include { COMPARE as COMPARE_PHENO } from '../subworkflows/local/compare'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -54,29 +60,68 @@ workflow TCRTOOLKIT_BULK {
     // Checking input tables
     INPUT_CHECK( file(params.samplesheet) )
 
+    // ---  ---
+
+    // Empty channels used for phenotype analysis
+    ch_phenotype_files_transformed = Channel.empty() // Initialize empty transformed channel
+    ch_phenotype_samplesheet = Channel.empty() // Initialize empty samplesheet for pheno files
+
     if (input_format in ['adaptive', 'cellranger']) {
-        AIRR_CONVERT( INPUT_CHECK.out.sample_map,
-            input_format
-            )
-            .sample_map_converted
-            .set { sample_map_final }
+        AIRR_CONVERT(
+            INPUT_CHECK.out.sample_map,
+            input_format,
+            params.sobject_gex
+        )
+        
+        sample_map_final = AIRR_CONVERT.out.sample_map_converted
+
+        // --- Phenotype file handling ---
+        MAP_PHENOTYPES(
+            AIRR_CONVERT.out.pseudobulk_phenotype_files,
+            INPUT_CHECK.out.samplesheet_utf8
+        )
+
+        ch_phenotype_files_transformed = MAP_PHENOTYPES.out.files_transformed
+        ch_phenotype_samplesheet = MAP_PHENOTYPES.out.samplesheet_pheno
+
     } else {
-        INPUT_CHECK.out.sample_map
-            .set { sample_map_final }
+        sample_map_final = INPUT_CHECK.out.sample_map
     }
 
-    RESOLVE_SAMPLESHEET( INPUT_CHECK.out.samplesheet_utf8,
-        sample_map_final )
+    // --- Main Analysis ---
+    RESOLVE_SAMPLESHEET( 
+        INPUT_CHECK.out.samplesheet_utf8,
+        sample_map_final 
+    )
 
-    // Running sample level analysis
     if (levels.contains('sample')) {
         SAMPLE( sample_map_final )
     }
 
-    // Running comparison analysis
     if (levels.contains('compare')) {
-        COMPARE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
-            RESOLVE_SAMPLESHEET.out.all_sample_files)
+        COMPARE( 
+            RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
+            RESOLVE_SAMPLESHEET.out.all_sample_files
+        )
+    }
+    
+    // --- Phenotype Analysis ---
+    
+    // These processes will be skipped if their input channels are empty
+    RESOLVE_SAMPLESHEET_PHENO(
+        ch_phenotype_samplesheet,
+        ch_phenotype_files_transformed
+    )
+
+    if (levels.contains('sample')) {
+        SAMPLE_PHENO( ch_phenotype_files_transformed )
+    }
+
+    if (levels.contains('compare')) {
+        COMPARE_PHENO(
+            RESOLVE_SAMPLESHEET_PHENO.out.samplesheet_resolved,
+            RESOLVE_SAMPLESHEET_PHENO.out.all_sample_files
+        )
     }
 }
 
