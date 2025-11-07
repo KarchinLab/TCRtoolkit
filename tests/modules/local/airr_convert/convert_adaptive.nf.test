@@ -198,7 +198,7 @@ nextflow_process {
                     def first_row = lines[1].split('\t')
                     // Should have IMGT format gene calls (e.g., TRBV30-01*01)
                     if (first_row.size() > v_idx && first_row[v_idx]) {
-                        assert first_row[v_idx].contains('TRB') || first_row[v_idx].isEmpty()
+                        assert first_row[v_idx].contains('TRB')
                     }
                 }
             }
