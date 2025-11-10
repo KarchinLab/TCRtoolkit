@@ -6,6 +6,11 @@ runs/*
 
 results*
 work
+out-*
+
+## nf-test
+.nf-test/
+.nf-test.log
 
 notebooks/*.png
 notebooks/*.ipynb

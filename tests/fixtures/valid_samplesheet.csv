@@ -1,0 +1,5 @@
+sample,subject_id,timepoint,origin,file
+Patient01_Base,Patient01,Base,tumor,tests/fixtures/data/PD1_Patient01_Base.tsv
+Patient02_Base,Patient02,Base,tumor,tests/fixtures/data/PD1_Patient02_Base.tsv
+Patient03_Base,Patient03,Base,tumor,tests/fixtures/data/PD1_Patient03_Base.tsv
+Patient01_Post,Patient01,Post,tumor,tests/fixtures/data/PD1_Patient01_Post.tsv

@@ -1,36 +1,82 @@
 #inspired by https://docs.cirro.bio/pipelines/development/#automated-testing
-name: minimal-example
+name: Nextflow Tests
 
 on:
   pull_request:
       branches:
       - 'main'
   workflow_dispatch:
+
 jobs:
-  test:
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - name: setup BATS
-        uses: mig4/setup-bats@v1
-        with:
-          bats-version: 1.2.1
-
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
           submodules: recursive
-      - uses: actions/setup-java@v2
+
+      - name: Setup Java
+        uses: actions/setup-java@v2
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: install nextflow
+      - name: Install Nextflow
         run: |
           wget -qO- get.nextflow.io | bash
           sudo mv nextflow /usr/local/bin/
-      - name: install nf-test
+
+      - name: Install nf-test
         run: |
           wget -qO- https://get.nf-test.com | bash
           sudo mv nf-test /usr/local/bin
 
-      - name: run pipeline
-        run: nf-test test
+      - name: Run unit tests
+        run: nf-test test tests/modules/ --verbose --junitxml=unit-test-results.xml
+
+      - name: Publish unit test results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: unit-test-results.xml
+          check_name: Unit Test Results
+
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: |
+            .nf-test/tests/
+            unit-test-results.xml
+
+  pipeline-test:
+    name: Pipeline Integration Test
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Setup Java
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Nextflow
+        run: |
+          wget -qO- get.nextflow.io | bash
+          sudo mv nextflow /usr/local/bin/
+
+      - name: Install nf-test
+        run: |
+          wget -qO- https://get.nf-test.com | bash
+          sudo mv nf-test /usr/local/bin
+
+      - name: Run pipeline test
+        run: nf-test test tests/main.nf.test --verbose --junitxml=pipeline-test-results.xml
