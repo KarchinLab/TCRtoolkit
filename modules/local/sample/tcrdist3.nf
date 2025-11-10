@@ -2,7 +2,16 @@ process TCRDIST3_MATRIX {
     tag "${sample_meta.sample}"
     container "ghcr.io/karchinlab/tcrtoolkit:main"
 
-    cpus params.max_cpus
+    cpus {
+        if (task.memory > 256.GB)
+            return 16 * task.attempt
+        else if (task.memory > 64.GB)
+            return 8 * task.attempt
+        else if (task.memory > 4.GB)
+            return 4 * task.attempt
+        else
+            return 2 * task.attempt
+        }
     memory {
         def sz = count_table.size()
         def mb = 1024 * 1024
