@@ -2,7 +2,7 @@
 
 ![TCRtoolkit-banner](./assets/images/TCRtoolkit-banner.png)
 
-Thanks for checking out `TCRtoolkit-Bulk`, the platform for bulk T Cell Repertoire analysis! `TCRtoolkit-Bulk` is wrapped in NextFlow, written in python, and uses Docker to manage dependencies.
+Thanks for checking out `TCRtoolkit-Bulk`, the platform for bulk T Cell Repertoire analysis! `TCRtoolkit-Bulk` is wrapped in Nextflow, written in python, and uses Docker to manage dependencies.
 
 <p align="center">
     <img src=assets/TCR_Bulk_profiling.png/>
