@@ -1,8 +1,8 @@
-# TCRtoolkit-Bulk: A T Cell Repertoire Analysis Platform
+# TCRtoolkit: A T Cell Repertoire Analysis Platform
 
 ![TCRtoolkit-banner](./assets/images/TCRtoolkit-banner.png)
 
-Thanks for checking out `TCRtoolkit-Bulk`, the platform for bulk T Cell Repertoire analysis! `TCRtoolkit-Bulk` is wrapped in Nextflow, written in python, and uses Docker to manage dependencies.
+Thanks for checking out `TCRtoolkit`, the platform for bulk T Cell Repertoire analysis! `TCRtoolkit` is wrapped in Nextflow, written in python, and uses Docker to manage dependencies.
 
 <p align="center">
     <img src=assets/TCR_Bulk_profiling.png/>
@@ -25,13 +25,13 @@ The nextflow executable is now available to run on the command line. The executa
 
 2. Docker
 
-`TCRtoolkit-Bulk` runs in Docker containers available at [GHCR](https://github.com/KarchinLab/TCRtoolkit/pkgs/container/tcrtoolkit). Depending on what operating system you are running (Linux, MacOS, WSL), please refer to the [Docker documentation](https://docs.docker.com/engine/install/) for installation instructions.
+`TCRtoolkit` runs in Docker containers available at [GHCR](https://github.com/KarchinLab/TCRtoolkit/pkgs/container/tcrtoolkit). Depending on what operating system you are running (Linux, MacOS, WSL), please refer to the [Docker documentation](https://docs.docker.com/engine/install/) for installation instructions.
 
-3. TCRtoolkit-Bulk
+3. TCRtoolkit
 
 ```{bash}
-git clone https://github.com/KarchinLab/TCRtoolkit-Bulk.git
-cd TCRtoolkit-Bulk
+git clone https://github.com/KarchinLab/TCRtoolkit.git
+cd TCRtoolkit
 ```
 
 
@@ -40,7 +40,7 @@ cd TCRtoolkit-Bulk
 Below is a minimal example of how to run the pipeline. The `minimal-example` dataset provided is a small subset of the dataset from this manuscript by [Tumeh and Ribas et al. (2014)](https://www.nature.com/articles/nature13954). Note that the results are simply for demonstration purposes and are not intended for biological interpretation.
 
 ```
-## from the TCRtoolkit-Bulk directory
+## from the TCRtoolkit directory
 nextflow run main.nf \
     --samplesheet test_data/minimal-example/samplesheet.csv \
     --outdir out-minimal-dev \
