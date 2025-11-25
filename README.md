@@ -2,13 +2,13 @@
 
 ![TCRtoolkit-banner](./assets/images/TCRtoolkit-banner.png)
 
-Thanks for checking out `TCRtoolkit`, the platform for bulk T Cell Repertoire analysis! `TCRtoolkit` is wrapped in Nextflow, written in python, and uses Docker to manage dependencies.
+Thanks for checking out `TCRtoolkit`, the platform for T Cell Repertoire analysis! `TCRtoolkit` is wrapped in Nextflow, written in python, and uses Docker to manage dependencies.
 
 <p align="center">
-    <img src=assets/TCR_Bulk_profiling.png/>
+    <img src=assets/TCR_profiling.png/>
 </p>
 
-We currently support bulk TCRseq data in either AIRR or Adaptive Biotechnologies formats. Support for pseudo-bulk from single cell TCR sequencing will be available soon!
+We support bulk and single cell pseudo-bulk TCR sequencing data in either AIRR or Adaptive Biotechnologies formats.
 
 ##  Requirements
 

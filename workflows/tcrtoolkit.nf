@@ -35,9 +35,9 @@ include { COMPARE }             from '../subworkflows/local/compare'
 */
 
 
-workflow TCRTOOLKIT_BULK {
+workflow TCRTOOLKIT {
 
-    println("Running TCRTOOLKIT_BULK workflow...")
+    println("Running TCRTOOLKIT workflow...")
 
     // Split the workflow_level parameter into a list of levels
     def levels = params.workflow_level.toLowerCase().tokenize(',')
@@ -88,7 +88,7 @@ workflow TCRTOOLKIT_BULK {
 
 // workflow.onComplete {
 
-//     log.info(workflow.success ? "Finished tcrtoolkit-bulk!" : "Please check your inputs.")
+//     log.info(workflow.success ? "Finished tcrtoolkit!" : "Please check your inputs.")
 
 // }
 

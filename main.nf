@@ -1,9 +1,9 @@
 #!/usr/bin/env nextflow
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    karchinlab/TCRtoolkit-Bulk
+    karchinlab/TCRtoolkit
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    Github : https://github.com/karchinlab/TCRtoolkit-Bulk
+    Github : https://github.com/karchinlab/TCRtoolkit
 ----------------------------------------------------------------------------------------
 */
 
@@ -15,7 +15,7 @@ nextflow.enable.dsl = 2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { TCRTOOLKIT_BULK } from './workflows/tcrtoolkit-bulk.nf'
+include { TCRTOOLKIT } from './workflows/tcrtoolkit.nf'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -24,7 +24,7 @@ include { TCRTOOLKIT_BULK } from './workflows/tcrtoolkit-bulk.nf'
 */
 
 workflow {
-    TCRTOOLKIT_BULK()
+    TCRTOOLKIT()
 }
 
 /*
