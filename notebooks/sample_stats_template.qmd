@@ -67,28 +67,17 @@ print('Date and time:         ' + str(datetime.datetime.now()))
 # 4. Loading data
 
 ## reading combined repertoire statistics
-df = pd.read_csv(sample_stats_csv, sep=',', header=None, 
-                 names=['sample_id', 'patient_id', 'timepoint', 'origin',
-                        'num_clones', 'num_TCRs', 'simpson_index', 'simpson_index_corrected', 'clonality',
-                        'num_prod', 'num_nonprod', 'pct_prod', 'pct_nonprod',
-                        'productive_cdr3_avg_len', 'num_convergent', 'ratio_convergent'])
+df = pd.read_csv(sample_stats_csv, sep=',')
 # print('-- Imported sample_stats_csv as `df`...')
 
 ## reading sample metadata
 meta = pd.read_csv(sample_table, sep=',', header=None, index_col=None,
-                   names=['sample_id', 'file', 'patient_id', 'timepoint', 'origin'])
+                   names=['sample', 'file', 'subject_id', 'timepoint', 'origin'])
 # print('-- Imported sample_table as `meta`...')
 
 ## reading V gene family usage 
-v_family = pd.read_csv(v_family_csv, sep=',', header=None, index_col=None,
-                       names=['patient_id', 'timepoint', 'origin', 'TCRBV01', 
-                              'TCRBV02', 'TCRBV03', 'TCRBV04', 'TCRBV05', 'TCRBV06',
-                              'TCRBV07', 'TCRBV08', 'TCRBV09', 'TCRBV10', 'TCRBV11',
-                              'TCRBV12', 'TCRBV13', 'TCRBV14', 'TCRBV15', 'TCRBV16',
-                              'TCRBV17', 'TCRBV18', 'TCRBV19', 'TCRBV20', 'TCRBV21',
-                              'TCRBV22', 'TCRBV23', 'TCRBV24', 'TCRBV25', 'TCRBV26',
-                              'TCRBV27', 'TCRBV28', 'TCRBV29', 'TCRBV30'])
-v_family = v_family.sort_values(by=['patient_id', 'timepoint'])
+v_family = pd.read_csv(v_family_csv, sep=',')
+v_family = v_family.sort_values(by=['subject_id', 'timepoint'])
 ```
 
 # Sample level statistics {#sec-sample-level-stats}
@@ -106,7 +95,7 @@ fig = px.box(df,
              x = 'timepoint', 
              y='num_clones', 
              color='origin', 
-             points='all', hover_data=['sample_id'],
+             points='all', hover_data=['sample'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
@@ -120,7 +109,7 @@ fig = px.box(df,
              x = 'timepoint', 
              y='clonality', 
              color='origin', 
-             points='all', hover_data=['sample_id'],
+             points='all', hover_data=['sample'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
@@ -134,7 +123,7 @@ fig = px.box(df,
              x = 'timepoint', 
              y='simpson_index_corrected', 
              color='origin', 
-             points='all', hover_data=['sample_id'],
+             points='all', hover_data=['sample'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
@@ -152,7 +141,7 @@ fig = px.box(df,
              x = 'timepoint', 
              y='pct_prod', 
              color='origin', 
-             points='all', hover_data=['sample_id'],
+             points='all', hover_data=['sample'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
@@ -170,7 +159,7 @@ fig = px.box(df,
              x = 'timepoint', 
              y='productive_cdr3_avg_len', 
              color='origin', 
-             points='all', hover_data=['sample_id'],
+             points='all', hover_data=['sample'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
@@ -184,7 +173,7 @@ fig = px.box(df,
              x = 'timepoint', 
              y='ratio_convergent', 
              color='origin', 
-             points='all', hover_data=['sample_id'],
+             points='all', hover_data=['sample'],
              category_orders={'timepoint': timepts})
 fig.show()
 ```
@@ -210,16 +199,16 @@ where $N_{k}$ is the number of TCRs that use the $k$ th V gene, and T is the tot
 colors = ["#fafa70","#fdef6b","#ffe566","#ffda63","#ffd061","#ffc660","#ffbb5f","#fdb15f","#fba860","#f79e61","#f39562","#ef8c63","#e98365","#e37b66","#dd7367","#d66b68","#ce6469","#c65e6a","#bd576b","#b4526b","#ab4c6b","#a1476a","#974369","#8c3e68","#823a66","#773764","#6d3361","#62305e","#572c5a","#4d2956"]
 
 ## calculate calulate proportions and add to v_family_long
-v_family_long = pd.melt(v_family, id_vars=['patient_id', 'timepoint', 'origin'], value_vars=v_family.columns[3:], var_name='v_gene', value_name='count')
-v_family_long['proportion'] = v_family_long.groupby(['patient_id', 'timepoint', 'origin'])['count'].transform(lambda x: x / x.sum())
+v_family_long = pd.melt(v_family, id_vars=['subject_id', 'timepoint', 'origin'], value_vars=v_family.columns[3:], var_name='v_gene', value_name='count')
+v_family_long['proportion'] = v_family_long.groupby(['subject_id', 'timepoint', 'origin'])['count'].transform(lambda x: x / x.sum())
 
 ## add in the total number of v genes for each sample
-total_v_genes = v_family_long.groupby(['patient_id', 'timepoint', 'origin'])['count'].sum().reset_index()
-total_v_genes.columns = ['patient_id', 'timepoint', 'origin', 'total_v_genes']
-v_family_long = pd.merge(v_family_long, total_v_genes, on=['patient_id', 'timepoint', 'origin'])
+total_v_genes = v_family_long.groupby(['subject_id', 'timepoint', 'origin'])['count'].sum().reset_index()
+total_v_genes.columns = ['subject_id', 'timepoint', 'origin', 'total_v_genes']
+v_family_long = pd.merge(v_family_long, total_v_genes, on=['subject_id', 'timepoint', 'origin'])
 
-for patient in v_family_long.patient_id.unique().tolist():
-    current = v_family_long[v_family_long.patient_id == patient]
+for patient in v_family_long.subject_id.unique().tolist():
+    current = v_family_long[v_family_long.subject_id == patient]
     fig = go.Figure()
     fig.update_layout(
         template="simple_white",

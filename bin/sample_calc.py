@@ -2,7 +2,7 @@
 """
 Description: this script calculates the clonality of a TCR repertoire
 
-@author: Domenick Braccia
+@author: Dylan Tamayo, Domenick Braccia
 @contributor: elhanaty
 """
 
@@ -14,8 +14,41 @@ from scipy.stats import entropy
 import numpy as np
 import csv
 import re
+import json
 
-def calc_sample_stats(sample_meta, counts):
+def extract_trb_family(allele):
+    if pd.isna(allele):
+        return None
+    match = re.match(r'(TRB[V|D|J])(\d+)', allele)
+    return f"{match.group(1)}{match.group(2)}" if match else None
+
+def compute_gene_family_table(counts, col_name, all_families, sample_meta):
+    fam_col = f"{col_name}FamilyName"
+    counts[fam_col] = counts[col_name].apply(extract_trb_family)
+    fam_df = counts[fam_col].value_counts(dropna=False).to_frame().T.sort_index(axis=1)
+    fam_df = fam_df.reindex(columns=all_families, fill_value=0)
+
+    for col in ['origin', 'timepoint', 'subject_id']:
+        fam_df.insert(0, col, sample_meta[col])
+
+    return fam_df
+
+def calc_gene_family(counts, gene_column, family_prefix, max_index, output_file, meta_df):
+    # Build list of all possible family names
+    all_fams = [f'{family_prefix}{i}' for i in range(1, max_index + 1)]
+
+    # Count usage
+    fam_df = counts[gene_column].apply(extract_trb_family).value_counts(dropna=False).to_frame().T
+
+    # Reindex to include all families
+    fam_df = pd.DataFrame([fam_df.reindex(columns=all_fams, fill_value=0).iloc[0]]).reset_index(drop=True)
+
+    # Add metadata columns
+    fam_df = pd.concat([meta_df, fam_df], axis=1)
+
+    fam_df.to_csv(output_file, header=True, index=False)
+
+def calc_sample_stats(meta_df, counts, output_file):
     """Calculate sample level statistics of TCR repertoire."""
 
     ## first pass stats
@@ -54,72 +87,30 @@ def calc_sample_stats(sample_meta, counts):
     ## calculate ratio of convergent TCRs to total TCRs
     ratio_convergent = num_convergent/len(aas)
 
-    ## add in patient meta_data such as responder status to sample_stats.csv
-    # read in metadata file
-    # meta_data = pd.read_csv(args.meta_data, sep=',', header=0)
+    row_data = {
+        'num_clones': num_clones,
+        'num_TCRs': num_TCRs,
+        'simpson_index': simpson_index,
+        'simpson_index_corrected': simpson_index_corrected,
+        'clonality': clonality,
+        'num_prod': num_prod,
+        'num_nonprod': num_nonprod,
+        'pct_prod': pct_prod,
+        'pct_nonprod': pct_nonprod,
+        'productive_cdr3_avg_len': productive_cdr3_avg_len,
+        'num_convergent': num_convergent,
+        'ratio_convergent': ratio_convergent
+    }
 
-    # filter out metadata for the current sample
-    # current_meta = meta_data[meta_data['patient_id'] == sample_meta[1]]
+    # Convert to single-row dataframe
+    df_stats = pd.DataFrame([row_data])
 
-    # write above values to csv file
-    with open('sample_stats.csv', 'w') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow([sample_meta[0], sample_meta[1], sample_meta[2], sample_meta[3],
-                         num_clones, num_TCRs, simpson_index, simpson_index_corrected, clonality,
-                         num_prod, num_nonprod, pct_prod, pct_nonprod,
-                         productive_cdr3_avg_len, num_convergent, ratio_convergent])
+    # Add metadata columns
+    df_stats = pd.concat([meta_df, df_stats], axis=1)
 
-    # store v_family gene usage in a dataframe
-    def extract_trb_family(allele):
-        if pd.isna(allele):
-            return None
-        match = re.match(r'(TRB[V|D|J])(\d+)', allele)
-        return f"{match.group(1)}{match.group(2)}" if match else None
+    # Save to CSV
+    df_stats.to_csv(output_file, header=True, index=False)
 
-    # Apply to each column
-    counts['vFamilyName'] = counts['v_call'].apply(extract_trb_family)
-    counts['dFamilyName'] = counts['d_call'].apply(extract_trb_family)
-    counts['jFamilyName'] = counts['j_call'].apply(extract_trb_family)
-
-    # Compute gene usage frequency per family
-    v_family = counts['vFamilyName'].value_counts(dropna=False).to_frame().T.sort_index(axis=1)
-    d_family = counts['dFamilyName'].value_counts(dropna=False).to_frame().T.sort_index(axis=1)
-    j_family = counts['jFamilyName'].value_counts(dropna=False).to_frame().T.sort_index(axis=1)
-
-    # generate a list of all possible columns names from TRBV1-TRBV30
-    all_v_fam = [f'TRBV{i}' for i in range(1, 31)]
-
-    # generate a list of all possible columns names from TRBD1-TRBD2
-    all_d_fam = [f'TRBD{i}' for i in range(1, 3)]
-
-    # generate a list of all possible columns names from TRBJ1-TRBJ2
-    all_j_fam = [f'TRBJ{i}' for i in range(1, 3)]
-
-    # add missing columns to v_family dataframe by reindexing
-    v_family_reindex = v_family.reindex(columns=all_v_fam, fill_value=0)
-    d_family_reindex = d_family.reindex(columns=all_d_fam, fill_value=0)
-    j_family_reindex = j_family.reindex(columns=all_j_fam, fill_value=0)
-
-    # add sample_meta columns to v_family_reindex and make them the first three columns
-    v_family_reindex.insert(0, 'origin', sample_meta[3])
-    v_family_reindex.insert(0, 'timepoint', sample_meta[2])
-    v_family_reindex.insert(0, 'patient_id', sample_meta[1])
-    d_family_reindex.insert(0, 'origin', sample_meta[3])
-    d_family_reindex.insert(0, 'timepoint', sample_meta[2])
-    d_family_reindex.insert(0, 'patient_id', sample_meta[1])
-    j_family_reindex.insert(0, 'origin', sample_meta[3])
-    j_family_reindex.insert(0, 'timepoint', sample_meta[2])
-    j_family_reindex.insert(0, 'patient_id', sample_meta[1])
-
-    # Write v_family_reindex to csv file with no header and no index
-    v_family_reindex.to_csv('v_family.csv', header=False, index=False)
-    d_family_reindex.to_csv('d_family.csv', header=False, index=False)
-    j_family_reindex.to_csv('j_family.csv', header=False, index=False)
-
-    # # store dictionaries in a list and output to pickle file
-    # gene_usage = [v_family, d_family, j_family]     ## excluding v_genes, d_genes, j_genes
-    # with open('gene_usage_' + str(metadata[1] + '_' + str(metadata[2] + '_' + str(metadata[3]))) + '.pkl', 'wb') as f:
-    #     pickle.dump(gene_usage, f)
 
 def main():
     # initialize parser
@@ -129,7 +120,7 @@ def main():
     parser.add_argument('-s', '--sample_meta', 
                         metavar='sample_meta', 
                         type=str, 
-                        help='sample metadata passed in through samples CSV file')
+                        help='sample metadata passed in as json format')
     parser.add_argument('-c', '--count_table', 
                         metavar='count_table', 
                         type=argparse.FileType('r'), 
@@ -138,12 +129,28 @@ def main():
     args = parser.parse_args() 
 
     ## convert metadata to list
-    sample_meta = args.sample_meta[1:-1].split(', ')
+    sample_meta = json.loads(args.sample_meta)
 
     # Read in the counts file
     counts = pd.read_csv(args.count_table, sep='\t', header=0)
 
-    calc_sample_stats(sample_meta, counts)
+    # Build metadata row from selected keys
+    meta_keys = ['subject_id', 'timepoint', 'origin']
+    meta_row = {k: sample_meta[k] for k in meta_keys}
+    meta_df = pd.DataFrame([meta_row])
+
+    sample = sample_meta['sample']
+
+    calc_gene_family(counts, 'v_call', 'TRBV', 30, f'vdj/v_family_{sample}.csv', meta_df)
+    calc_gene_family(counts, 'd_call', 'TRBD', 2, f'vdj/d_family_{sample}.csv', meta_df)
+    calc_gene_family(counts, 'j_call', 'TRBJ', 2, f'vdj/j_family_{sample}.csv', meta_df)
+
+    # Build metadata row from selected keys
+    meta_keys = ['sample', 'subject_id', 'timepoint', 'origin']
+    meta_row = {k: sample_meta[k] for k in meta_keys}
+    meta_df = pd.DataFrame([meta_row])
+    
+    calc_sample_stats(meta_df, counts, f'stats/sample_stats_{sample}.csv')
 
 if __name__ == "__main__":
     main()
