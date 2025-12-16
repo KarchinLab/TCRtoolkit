@@ -28,30 +28,20 @@ process GIANA_CALC {
         > giana.log 2>&1
 
     # Insert header after GIANA comments
-    python3 - <<EOF
-    input_file = "giana_RotationEncodingBL62.txt"
-    concat_header_file = "${concat_cdr3}"
+    insert=\$(head -n 1 "${concat_cdr3}")
+    insert=\$(echo "\$insert" | awk -F'\t' 'BEGIN{OFS="\t"} {
+        out = \$1 OFS "cluster"
+        for (i=2; i<=NF; i++) {
+            out = out OFS \$i
+        }
+        print out
+    }')
 
-    with open(concat_header_file, 'r', encoding='utf-8') as f:
-        header = f.readline().strip().split('\\t')
-    header.insert(1, "cluster")
-    header_line = '\\t'.join(header)
-
-    with open(input_file, 'r', encoding='utf-8') as infile:
-        lines = infile.readlines()
-
-    with open(input_file, 'w', encoding='utf-8') as outfile:
-        inserted = False
-        for line in lines:
-            if line.startswith("##"):
-                outfile.write(line)
-            elif not inserted:
-                outfile.write(header_line + '\\n')
-                outfile.write(line)
-                inserted = True
-            else:
-                outfile.write(line)
-    EOF
+    awk -v insert="\$insert" '
+    /^##/ { print; next }
+    !inserted { print insert; inserted=1 }
+    { print }
+    ' giana_RotationEncodingBL62.txt > tmp && mv tmp giana_RotationEncodingBL62.txt
 
     mv giana_RotationEncodingBL62.txt_EncodingMatrix.txt giana_EncodingMatrix.txt
     """
