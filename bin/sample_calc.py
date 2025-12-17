@@ -22,18 +22,7 @@ def extract_trb_family(allele):
     match = re.match(r'(TRB[V|D|J])(\d+)', allele)
     return f"{match.group(1)}{match.group(2)}" if match else None
 
-def compute_gene_family_table(counts, col_name, all_families, sample_meta):
-    fam_col = f"{col_name}FamilyName"
-    counts[fam_col] = counts[col_name].apply(extract_trb_family)
-    fam_df = counts[fam_col].value_counts(dropna=False).to_frame().T.sort_index(axis=1)
-    fam_df = fam_df.reindex(columns=all_families, fill_value=0)
-
-    for col in ['origin', 'timepoint', 'subject_id']:
-        fam_df.insert(0, col, sample_meta[col])
-
-    return fam_df
-
-def calc_gene_family(counts, gene_column, family_prefix, max_index, output_file, meta_df):
+def calc_gene_family(sample_name, counts, gene_column, family_prefix, max_index, output_file):
     # Build list of all possible family names
     all_fams = [f'{family_prefix}{i}' for i in range(1, max_index + 1)]
 
@@ -43,12 +32,12 @@ def calc_gene_family(counts, gene_column, family_prefix, max_index, output_file,
     # Reindex to include all families
     fam_df = pd.DataFrame([fam_df.reindex(columns=all_fams, fill_value=0).iloc[0]]).reset_index(drop=True)
 
-    # Add metadata columns
-    fam_df = pd.concat([meta_df, fam_df], axis=1)
+    # Add sample column
+    fam_df.insert(0, 'sample', sample_name)
 
     fam_df.to_csv(output_file, header=True, index=False)
 
-def calc_sample_stats(meta_df, counts, output_file):
+def calc_sample_stats(sample_name, counts, output_file):
     """Calculate sample level statistics of TCR repertoire."""
 
     ## first pass stats
@@ -105,8 +94,8 @@ def calc_sample_stats(meta_df, counts, output_file):
     # Convert to single-row dataframe
     df_stats = pd.DataFrame([row_data])
 
-    # Add metadata columns
-    df_stats = pd.concat([meta_df, df_stats], axis=1)
+    # Add sample column
+    df_stats.insert(0, 'sample', sample_name)
 
     # Save to CSV
     df_stats.to_csv(output_file, header=True, index=False)
@@ -117,10 +106,10 @@ def main():
     parser = argparse.ArgumentParser(description='Calculate clonality of a TCR repertoire')
 
     # add arguments
-    parser.add_argument('-s', '--sample_meta', 
-                        metavar='sample_meta', 
+    parser.add_argument('-s', '--sample_name', 
+                        metavar='sample_name', 
                         type=str, 
-                        help='sample metadata passed in as json format')
+                        help='sample name')
     parser.add_argument('-c', '--count_table', 
                         metavar='count_table', 
                         type=argparse.FileType('r'), 
@@ -128,29 +117,16 @@ def main():
 
     args = parser.parse_args() 
 
-    ## convert metadata to list
-    sample_meta = json.loads(args.sample_meta)
+    sample = args.sample_name
 
     # Read in the counts file
-    counts = pd.read_csv(args.count_table, sep='\t', header=0)
+    counts = pd.read_csv(args.count_table, sep='\t')
 
-    # Build metadata row from selected keys
-    meta_keys = ['subject_id', 'timepoint', 'origin']
-    meta_row = {k: sample_meta[k] for k in meta_keys}
-    meta_df = pd.DataFrame([meta_row])
-
-    sample = sample_meta['sample']
-
-    calc_gene_family(counts, 'v_call', 'TRBV', 30, f'vdj/v_family_{sample}.csv', meta_df)
-    calc_gene_family(counts, 'd_call', 'TRBD', 2, f'vdj/d_family_{sample}.csv', meta_df)
-    calc_gene_family(counts, 'j_call', 'TRBJ', 2, f'vdj/j_family_{sample}.csv', meta_df)
-
-    # Build metadata row from selected keys
-    meta_keys = ['sample', 'subject_id', 'timepoint', 'origin']
-    meta_row = {k: sample_meta[k] for k in meta_keys}
-    meta_df = pd.DataFrame([meta_row])
+    calc_gene_family(sample, counts, 'v_call', 'TRBV', 30, f'vdj/v_family_{sample}.csv')
+    calc_gene_family(sample, counts, 'd_call', 'TRBD', 2, f'vdj/d_family_{sample}.csv')
+    calc_gene_family(sample, counts, 'j_call', 'TRBJ', 2, f'vdj/j_family_{sample}.csv')
     
-    calc_sample_stats(meta_df, counts, f'stats/sample_stats_{sample}.csv')
+    calc_sample_stats(sample, counts, f'stats/sample_stats_{sample}.csv')
 
 if __name__ == "__main__":
     main()

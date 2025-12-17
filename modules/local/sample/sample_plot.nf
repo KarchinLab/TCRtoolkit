@@ -13,7 +13,7 @@ process SAMPLE_PLOT {
     output:
     path 'sample_stats.html'
 
-    script:    
+    script:
     """
     ## copy quarto notebook to output directory
     cp $sample_stats_template sample_stats.qmd
@@ -26,6 +26,10 @@ process SAMPLE_PLOT {
         -P sample_table:$sample_table \
         -P sample_stats_csv:$sample_stats_csv \
         -P v_family_csv:$v_family_csv \
+        -P samplechart_x_col:${params.samplechart_x_col} \
+        -P samplechart_color_col:${params.samplechart_color_col} \
+        -P vgene_subject_col:${params.vgene_subject_col} \
+        -P vgene_x_cols:${params.vgene_x_cols} \
         --to html
     """
 
