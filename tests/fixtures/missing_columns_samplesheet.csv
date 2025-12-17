@@ -1,0 +1,3 @@
+sample,file
+Patient01_Base,tests/fixtures/data/PD1_Patient01_Base.tsv
+Patient02_Base,tests/fixtures/data/PD1_Patient02_Base.tsv

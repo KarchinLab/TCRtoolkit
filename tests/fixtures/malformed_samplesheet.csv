@@ -1,0 +1,4 @@
+sample,subject_id,timepoint,origin,file
+Patient01_Base,Patient01,Base,tumor,tests/fixtures/data/PD1_Patient01_Base.tsv
+This is not a valid CSV line
+Patient02_Base,Patient02,Base
