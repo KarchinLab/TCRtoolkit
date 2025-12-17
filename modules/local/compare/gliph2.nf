@@ -18,15 +18,14 @@ process GLIPH2_TURBOGLIPH {
     
     script:
     """
-    # R script starts here
-    cat > run_gliph2.R <<EOF
+    Rscript - <<EOF
     #!/usr/bin/env Rscript
 
     library(turboGliph)
 
     # During testing, including TRBJ column was causing issues in clustering step. Removing and reinserting afterwards.
     df <- read.csv("$concat_cdr3", sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
-    # df2 <- subset(df, select = c('CDR3b', 'TRBV', 'patient', 'counts'))
+    df['patient'] <- df['sample']
 
     result <- turboGliph::gliph2(
         cdr3_sequences = df,
@@ -40,13 +39,11 @@ process GLIPH2_TURBOGLIPH {
     )
 
     df3 <- read.csv('cluster_member_details.txt', sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
-    df3 <- merge(df3, df[, c("CDR3b", "TRBV", "patient", "TRBJ", 'counts')], by = c("CDR3b", "TRBV", "patient", 'counts'), all.x = TRUE)
+    df3['sample'] <- df3['patient']
+    df3 <- merge(df3, df[, c("CDR3b", "TRBV", "sample", 'counts')], by = c("CDR3b", "TRBV", "sample", 'counts'), all.x = TRUE)
+    df3 <- df3[, c('CDR3b', 'TRBV', 'TRBJ', 'counts', 'sample', 'tag', 'seq_ID', 'ultCDR3b')]
     write.table(df3, "cluster_member_details.txt", sep = "\t", row.names = FALSE, quote = FALSE)
-
     EOF
-
-    # Run the R script
-    Rscript run_gliph2.R
 
     # Rename local_similarities file to standardize output name
     input_file="local_similarities_*.txt"

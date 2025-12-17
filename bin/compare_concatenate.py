@@ -29,18 +29,12 @@ def main():
         # Read the TSV file into a dataframe
         file_path = str(row['file'])
         df = pd.read_csv(file_path, sep="\t", header=0)
-        
-        # Get metadata
-        subject_id = row['subject_id']
-        timepoint = row['timepoint']
-        origin = row['origin']
-            
+
         # Add patient column
-        df['patient'] = f"{subject_id}:{timepoint}_{origin}"
         df['sample'] = row['sample']
-        
+
         # Select relevant columns
-        df = df[['junction_aa', 'v_call', 'j_call', 'duplicate_count', 'patient', 'sample']]
+        df = df[['junction_aa', 'v_call', 'j_call', 'duplicate_count', 'sample']]
         dfs.append(df)
 
 
