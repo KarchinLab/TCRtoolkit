@@ -74,7 +74,7 @@ print('Date and time:         ' + str(datetime.datetime.now()))
 # 4. Loading data
 ## reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
-meta_cols = meta.columns.tolist()[0:-1]
+meta_cols = meta.columns.tolist()
 
 ## reading combined repertoire statistics
 df = pd.read_csv(sample_stats_csv, sep=',')
@@ -207,7 +207,7 @@ where $N_{k}$ is the number of TCRs that use the $k$ th V gene, and T is the tot
 colors = ["#fafa70","#fdef6b","#ffe566","#ffda63","#ffd061","#ffc660","#ffbb5f","#fdb15f","#fba860","#f79e61","#f39562","#ef8c63","#e98365","#e37b66","#dd7367","#d66b68","#ce6469","#c65e6a","#bd576b","#b4526b","#ab4c6b","#a1476a","#974369","#8c3e68","#823a66","#773764","#6d3361","#62305e","#572c5a","#4d2956"]
 vgene_x_cols = vgene_x_cols.split(',')
 
-## calculate calulate proportions and add to v_family_long
+## calculate proportions and add to v_family_long
 v_family_long = pd.melt(v_family,
                         id_vars=meta_cols,
                         value_vars=[c for c in v_family.columns if c.startswith('TRBV')],
