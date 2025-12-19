@@ -59,6 +59,13 @@ from matplotlib.colors import LinearSegmentedColormap
 import plotly.express as px
 import plotly.graph_objects as go
 
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="plotly"
+)
+
 # 2. Print pipeline parameters
 
 print('Project Name:          ' + project_name)
@@ -107,7 +114,8 @@ def samplechart(df, y_col):
         x=samplechart_x_col, 
         y=y_col, 
         color=samplechart_color_col, 
-        points='all', hover_data=['sample'],
+        points='all',
+        hover_data='sample',
         category_orders={f'{samplechart_x_col}': x_category}
     )
 
@@ -230,42 +238,86 @@ for subject in subjects:
     fig = go.Figure()
     fig.update_layout(
         template="simple_white",
-        title_text=f"Subject: {subject}",
+        title_text=f"{vgene_subject_col}: {subject}",
         xaxis=dict(title_text=f"{', '.join(vgene_x_cols)}"),
         yaxis=dict(title_text="proportion"),
         barmode="stack",
+        margin=dict(b=80, r=115),
+        legend=dict(
+            orientation="v",
+            x=1.02,
+            y=1,
+            yanchor="top",
+            itemsizing="constant",
+            traceorder="reversed"
+        )
     )
+
+    fig.update_xaxes(
+        automargin=True,
+        title_standoff=30
+    )
+
+    if len(vgene_x_cols) == 1:
+        x_vals = current[vgene_x_cols[0]]
+    else:
+        x_vals = current[vgene_x_cols].astype(str).agg('_'.join, axis=1)
+    summary = (
+        current
+        .assign(x=x_vals)
+        .drop_duplicates(subset=meta_cols)
+        .groupby('x', as_index=False)
+        .agg(
+            total_v_genes=('total_v_genes', 'sum'),
+        )
+    )
+    y_df = (
+        current
+        .assign(x=x_vals)
+        .groupby('x', as_index=False)
+        .agg(
+            y_top=('proportion', 'sum')
+        )
+    )
+    summary = y_df.merge(summary, on='x')
 
     for g, c in zip(current.v_gene.unique(), colors):
         plot_df = current[current.v_gene == g]
+        if len(vgene_x_cols) == 1:
+            x = plot_df[vgene_x_cols[0]]
+        else:
+            x = [plot_df[col] for col in vgene_x_cols]
         fig.add_trace(
             go.Bar(
-                x=[plot_df[col] for col in vgene_x_cols],
+                x=x,
                 y=plot_df['proportion'],
                 name=g,
                 marker_color=c,
                 legendgroup=g,
-                text=plot_df['total_v_genes'] if g == 'TRBV30' else None,
-                textposition='outside' if g == 'TRBV30' else None,
-            )
-        )
-        
-        fig.update_layout(
-            margin=dict(b=80, r=250),
-            legend=dict(
-                orientation="v",
-                x=1.02,
-                y=1,
-                yanchor="top",
-                itemsizing="constant",
-                traceorder="reversed"
+
+                customdata=plot_df[['sample']],
+                hovertemplate=(
+                    "<b>V gene:</b> %{fullData.name}<br>"
+                    "<b>Sample:</b> %{customdata[0]}<br>"
+                    "<b>Proportion:</b> %{y}<br>"
+                    "<extra></extra>"
+                ),
+
+                text=plot_df['total_v_genes'] if ((g == 'TRBV30') and (len(vgene_x_cols) != 1)) else None,
+                textposition='outside',
             )
         )
 
-        fig.update_xaxes(
-            automargin=True,
-            title_standoff=30
-        )
+    if len(vgene_x_cols) == 1:
+        for _, row in summary.iterrows():
+            fig.add_annotation(
+                x=row['x'],
+                    y=row['y_top'] + 0.02,
+                    text=str(row['total_v_genes']),
+                    showarrow=False,
+                    yanchor='bottom',
+                    font=dict(size=12)
+            )
 
     fig.show()
 ```
