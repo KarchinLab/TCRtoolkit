@@ -31,14 +31,21 @@ Thank you for using TCRtoolkit! This report is generated from sample data and me
 #| echo: false
 
 workflow_cmd='<command used to run the pipeline>'
-project_name='path/to/project_name'
-project_dir='path/to/project_dir'
-sample_table='path/to/sample_table.csv'
-sample_stats_csv='path/to/sample_stats.csv'
-v_family_csv='path/to/v_family.csv'
+project_name='<path/to/project_name>'
+project_dir='<path/to/project_dir>'
+sample_table='<path/to/sample_table.csv>'
+sample_stats_csv='<path/to/sample_stats.csv>'
+v_family_csv='<path/to/v_family.csv>'
+
+samplechart_x_col='<x column for section 2>'
+samplechart_color_col='<colors for section 2>'
+vgene_subject_col='<subject column for section 3>'
+vgene_x_cols='<x columns for section 3>'
 ```
 
 ```{python}
+#| code-fold: true
+
 # 1. Load Packages
 from IPython.display import Image
 import os
@@ -51,6 +58,13 @@ import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
 import plotly.express as px
 import plotly.graph_objects as go
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="plotly"
+)
 
 # 2. Print pipeline parameters
 
@@ -65,19 +79,20 @@ print('Date and time:         ' + str(datetime.datetime.now()))
 # TicToc = TicTocGenerator()
 
 # 4. Loading data
+## reading sample metadata
+meta = pd.read_csv(sample_table, sep=',')
+meta_cols = meta.columns.tolist()
 
 ## reading combined repertoire statistics
 df = pd.read_csv(sample_stats_csv, sep=',')
-# print('-- Imported sample_stats_csv as `df`...')
-
-## reading sample metadata
-meta = pd.read_csv(sample_table, sep=',', header=None, index_col=None,
-                   names=['sample', 'file', 'subject_id', 'timepoint', 'origin'])
-# print('-- Imported sample_table as `meta`...')
+df = pd.merge(df, meta, on='sample', how='left')
+df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
 
 ## reading V gene family usage 
 v_family = pd.read_csv(v_family_csv, sep=',')
-v_family = v_family.sort_values(by=['subject_id', 'timepoint'])
+v_family = pd.merge(v_family, meta, on='sample', how='left')
+v_family = v_family[meta_cols + [c for c in v_family.columns if c not in meta_cols]]
+v_family = v_family.sort_values(by=[vgene_subject_col])
 ```
 
 # Sample level statistics {#sec-sample-level-stats}
@@ -86,46 +101,57 @@ Below are plots showing basic T cell repertoire statistics. Each plot has a desc
 
 Version 3 of these plots features plotly express interactive plots. This version is exploratory and may be updated in the future.
 
+```{python}
+#| code-fold: true
+
+
+x_category = df[samplechart_x_col].unique().tolist()
+x_category.sort()
+
+def samplechart(df, y_col):
+    fig = px.box(
+        df, 
+        x=samplechart_x_col, 
+        y=y_col, 
+        color=samplechart_color_col, 
+        points='all',
+        hover_data='sample',
+        category_orders={f'{samplechart_x_col}': x_category}
+    )
+
+    fig.update_layout(
+        margin=dict(b=80)
+    )
+
+    fig.show()
+```
+
 ## Number of clones
 
 ```{python}
-timepts = df.timepoint.unique().tolist()
-timepts.sort()
-fig = px.box(df, 
-             x = 'timepoint', 
-             y='num_clones', 
-             color='origin', 
-             points='all', hover_data=['sample'],
-             category_orders={'timepoint': timepts})
-fig.show()
+#| code-fold: true
+
+samplechart(df, y_col='num_clones')
 ```
 
-**Figure 1. Number of clones across timepoints.** A clone is defined as a T cell with a unique CDR3 amino acid sequence. The number of clones is shown on the y-axis and 'origin_timepoint' is shown on the x-axis. 
+**Figure 1. Number of clones across sample groupings.** A clone is defined as a T cell with a unique CDR3 amino acid sequence. The number of clones is shown on the y-axis. The x-axis represents sample groupings defined by user-specified metadata fields (eg. origin, timepoint).
 
 ## Clonality
 
 ```{python}
-fig = px.box(df, 
-             x = 'timepoint', 
-             y='clonality', 
-             color='origin', 
-             points='all', hover_data=['sample'],
-             category_orders={'timepoint': timepts})
-fig.show()
+#| code-fold: true
+
+samplechart(df, y_col='clonality')
 ```
 
-**Figure 2. The clonality of samples across timepoints.** Clonality is a measure of T cell clonal expansion and reflects the degree to which the sample is dominated by 1 or more T cell clones. Clonality is calculated via: $$Clonality = \frac {1-H} {\log_{2} N} \quad\text{,}\quad H = -\sum\limits_{i=1}^N p_i \log_{2}{p_i}$$ where $H$ is the Shannon entropy of a given sample, $N$ is the number of unique TCRs in the sample, and $p_i$ is the frequency of the $i$ th unique TCR in the sample. 
+**Figure 2. The clonality of samples across sample groupings.** Clonality is a measure of T cell clonal expansion and reflects the degree to which the sample is dominated by 1 or more T cell clones. Clonality is calculated via: $$Clonality = \frac {1-H} {\log_{2} N} \quad\text{,}\quad H = -\sum\limits_{i=1}^N p_i \log_{2}{p_i}$$ where $H$ is the Shannon entropy of a given sample, $N$ is the number of unique TCRs in the sample, and $p_i$ is the frequency of the $i$ th unique TCR in the sample. 
 
 ## Simpson Index
 
 ```{python}
-fig = px.box(df, 
-             x = 'timepoint', 
-             y='simpson_index_corrected', 
-             color='origin', 
-             points='all', hover_data=['sample'],
-             category_orders={'timepoint': timepts})
-fig.show()
+#| code-fold: true
+
+samplechart(df, y_col='simpson_index_corrected')
 ```
 
 **Figure 3. Corrected Simpson Index.** The Simpson Index is a measure of diversity that takes into account the number of clones and the relative abundance of each clone in a sample. The corrected Simpson Index, $D$, is calculated as: 
@@ -137,13 +163,9 @@ Where $N$ is the number of unique TCRs in the sample, $p_i$ is the frequency of 
 ## Percent of productive TCRs
 
 ```{python}
-fig = px.box(df, 
-             x = 'timepoint', 
-             y='pct_prod', 
-             color='origin', 
-             points='all', hover_data=['sample'],
-             category_orders={'timepoint': timepts})
-fig.show()
+#| code-fold: true
+
+samplechart(df, y_col='pct_prod')
 ```
 
 **Figure 4. Percent of productive TCRs.** A productive TCR is a DNA/RNA sequence that can be translated into a protein sequence, i.e. it does not contain a premature stop codon or an out of frame rearrangement. The percent of productive TCRs is calculated as: 
@@ -155,13 +177,9 @@ where $P$ is the number of productive TCRs and $N$ is the total number of TCRs i
 ## Average productive CDR3 Length
 
 ```{python}
-fig = px.box(df, 
-             x = 'timepoint', 
-             y='productive_cdr3_avg_len', 
-             color='origin', 
-             points='all', hover_data=['sample'],
-             category_orders={'timepoint': timepts})
-fig.show()
+#| code-fold: true
+
+samplechart(df, y_col='productive_cdr3_avg_len')
 ```
 
 **Figure 5. Average Productive CDR3 Length** The average length of the CDR3 region of the TCR for productive clones. The CDR3 region is the most variable region of the TCR and is the region that determines antigen specificity.
@@ -169,13 +187,9 @@ fig.show()
 ## TCR Convergence
 
 ```{python}
-fig = px.box(df, 
-             x = 'timepoint', 
-             y='ratio_convergent', 
-             color='origin', 
-             points='all', hover_data=['sample'],
-             category_orders={'timepoint': timepts})
-fig.show()
+#| code-fold: true
+
+samplechart(df, y_col='ratio_convergent')
 ```
 
 **Figure 6. TCR Convergence** The ratio of convergent TCRs to total TCRs. A convergent TCR is a TCR that is generated via 2 or more unique nucleotide sequences via codon degeneracy. 
@@ -195,44 +209,115 @@ $$
 where $N_{k}$ is the number of TCRs that use the $k$ th V gene, and T is the total number of TCRs in the sample.
 
 ```{python}
+#| code-fold: true
+
 ## code adapted from https://www.moritzkoerber.com/posts/plotly-grouped-stacked-bar-chart/
 colors = ["#fafa70","#fdef6b","#ffe566","#ffda63","#ffd061","#ffc660","#ffbb5f","#fdb15f","#fba860","#f79e61","#f39562","#ef8c63","#e98365","#e37b66","#dd7367","#d66b68","#ce6469","#c65e6a","#bd576b","#b4526b","#ab4c6b","#a1476a","#974369","#8c3e68","#823a66","#773764","#6d3361","#62305e","#572c5a","#4d2956"]
+vgene_x_cols = vgene_x_cols.split(',')
 
-## calculate calulate proportions and add to v_family_long
-v_family_long = pd.melt(v_family, id_vars=['subject_id', 'timepoint', 'origin'], value_vars=v_family.columns[3:], var_name='v_gene', value_name='count')
-v_family_long['proportion'] = v_family_long.groupby(['subject_id', 'timepoint', 'origin'])['count'].transform(lambda x: x / x.sum())
+## calculate proportions and add to v_family_long
+v_family_long = pd.melt(v_family,
+                        id_vars=meta_cols,
+                        value_vars=[c for c in v_family.columns if c.startswith('TRBV')],
+                        var_name='v_gene',
+                        value_name='count')
+v_family_long['proportion'] = v_family_long.groupby(meta_cols)['count'].transform(lambda x: x / x.sum())
 
 ## add in the total number of v genes for each sample
-total_v_genes = v_family_long.groupby(['subject_id', 'timepoint', 'origin'])['count'].sum().reset_index()
-total_v_genes.columns = ['subject_id', 'timepoint', 'origin', 'total_v_genes']
-v_family_long = pd.merge(v_family_long, total_v_genes, on=['subject_id', 'timepoint', 'origin'])
+total_v_genes = v_family_long.groupby(meta_cols)['count'].sum().reset_index().rename(columns={'count': 'total_v_genes'})
+v_family_long = v_family_long.merge(total_v_genes, on=meta_cols)
 
-for patient in v_family_long.subject_id.unique().tolist():
-    current = v_family_long[v_family_long.subject_id == patient]
+subjects = (
+    v_family_long[vgene_subject_col]
+    .dropna()
+    .unique()
+)
+
+for subject in subjects:
+    current = v_family_long[v_family_long[vgene_subject_col] == subject]
     fig = go.Figure()
     fig.update_layout(
         template="simple_white",
-        title_text=f"Patient: {patient}",
-        xaxis=dict(title_text="timepoint"),
+        title_text=f"{vgene_subject_col}: {subject}",
+        xaxis=dict(title_text=f"{', '.join(vgene_x_cols)}"),
         yaxis=dict(title_text="proportion"),
         barmode="stack",
+        margin=dict(b=80, r=115),
+        legend=dict(
+            orientation="v",
+            x=1.02,
+            y=1,
+            yanchor="top",
+            itemsizing="constant",
+            traceorder="reversed"
+        )
     )
+
+    fig.update_xaxes(
+        automargin=True,
+        title_standoff=30
+    )
+
+    if len(vgene_x_cols) == 1:
+        x_vals = current[vgene_x_cols[0]]
+    else:
+        x_vals = current[vgene_x_cols].astype(str).agg('_'.join, axis=1)
+    summary = (
+        current
+        .assign(x=x_vals)
+        .drop_duplicates(subset=meta_cols)
+        .groupby('x', as_index=False)
+        .agg(
+            total_v_genes=('total_v_genes', 'sum'),
+        )
+    )
+    y_df = (
+        current
+        .assign(x=x_vals)
+        .groupby('x', as_index=False)
+        .agg(
+            y_top=('proportion', 'sum')
+        )
+    )
+    summary = y_df.merge(summary, on='x')
 
     for g, c in zip(current.v_gene.unique(), colors):
         plot_df = current[current.v_gene == g]
-        if g == 'TRBV30':
-            fig.add_trace(
-                go.Bar(x=[plot_df.timepoint, plot_df.origin], 
-                       y=plot_df.proportion, name=g, marker_color=c,
-                       text=plot_df['total_v_genes'], textposition='outside'
-                      )
-                )
+        if len(vgene_x_cols) == 1:
+            x = plot_df[vgene_x_cols[0]]
         else:
-            fig.add_trace(
-                go.Bar(x=[plot_df.timepoint, plot_df.origin], 
-                       y=plot_df.proportion, name=g, marker_color=c
-                       )
+            x = [plot_df[col] for col in vgene_x_cols]
+        fig.add_trace(
+            go.Bar(
+                x=x,
+                y=plot_df['proportion'],
+                name=g,
+                marker_color=c,
+                legendgroup=g,
+
+                customdata=plot_df[['sample']],
+                hovertemplate=(
+                    "<b>V gene:</b> %{fullData.name}<br>"
+                    "<b>Sample:</b> %{customdata[0]}<br>"
+                    "<b>Proportion:</b> %{y}<br>"
+                    "<extra></extra>"
+                ),
+
+                text=plot_df['total_v_genes'] if ((g == 'TRBV30') and (len(vgene_x_cols) != 1)) else None,
+                textposition='outside',
+            )
         )
+
+    if len(vgene_x_cols) == 1:
+        for _, row in summary.iterrows():
+            fig.add_annotation(
+                x=row['x'],
+                    y=row['y_top'] + 0.02,
+                    text=str(row['total_v_genes']),
+                    showarrow=False,
+                    yanchor='bottom',
+                    font=dict(size=12)
+            )
 
     fig.show()
 ```
