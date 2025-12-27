@@ -34,6 +34,7 @@ workflow RESOLVE_SAMPLESHEET {
         .set { resolved_header }
 
     SAMPLESHEET_RESOLVE(
+            samplesheet_utf8,
             resolved_rows,
             resolved_header
         )
