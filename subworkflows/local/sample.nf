@@ -61,13 +61,11 @@ workflow SAMPLE {
     )
 
     TCRDIST3_MATRIX.out.max_matrix_value
-        .map { it.text.trim().toDouble() }
+        .map { tcrdist_xmax -> tcrdist_xmax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
         .set { global_x_max_value }
-
-    // Use `global_max_value` in downstream processes or print it
-    global_x_max_value.view { "Global x max matrix value: $it" }
+    global_x_max_value.view { global_xmax -> "Global x max matrix value: $global_xmax" }
 
     TCRDIST3_HISTOGRAM_CALC( 
         TCRDIST3_MATRIX.out.tcrdist_output,
@@ -77,13 +75,11 @@ workflow SAMPLE {
     )
 
     TCRDIST3_HISTOGRAM_CALC.out.max_histogram_count
-        .map { it.text.trim().toDouble() }
+        .map { tcrdist_ymax -> tcrdist_ymax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
         .set { global_y_max_value }
-
-    // Use `global_max_value` in downstream processes or print it
-    global_y_max_value.view { "Global y max matrix value: $it" }
+    global_y_max_value.view { global_ymax -> "Global y max matrix value: $global_ymax" }
 
     TCRDIST3_HISTOGRAM_PLOT( 
         TCRDIST3_HISTOGRAM_CALC.out.histogram_data,
@@ -93,27 +89,27 @@ workflow SAMPLE {
     OLGA_PGEN_CALC ( sample_map )
 
     OLGA_PGEN_CALC.out.olga_xmin
-        .map { it.text.trim().toDouble() }
+        .map { xmin -> xmin.text.trim().toDouble() }
         .collect()
         .map { values -> values.min() }
         .set { olga_x_min_value }
-    olga_x_min_value.view { "Olga x min matrix value: $it" }
+    olga_x_min_value.view { olga_xmin -> "Olga x min matrix value: $olga_xmin" }
 
     OLGA_PGEN_CALC.out.olga_xmax
-        .map { it.text.trim().toDouble() }
+        .map { xmax -> xmax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
         .set { olga_x_max_value }
-    olga_x_max_value.view { "Olga x max matrix value: $it" }
+    olga_x_max_value.view { olga_xmax -> "Olga x max matrix value: $olga_xmax" }
 
     OLGA_HISTOGRAM_CALC ( OLGA_PGEN_CALC.out.olga_pgen, olga_x_min_value, olga_x_max_value )
 
     OLGA_HISTOGRAM_CALC.out.olga_ymax
-        .map { it.text.trim().toDouble() }
+        .map { ymax -> ymax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
         .set { olga_y_max_value }
-    olga_y_max_value.view { "Olga y max matrix value: $it" }
+    olga_y_max_value.view { olga_ymax -> "Olga y max matrix value: $olga_ymax" }
 
     OLGA_HISTOGRAM_PLOT( OLGA_HISTOGRAM_CALC.out.olga_histogram, olga_y_max_value )
 

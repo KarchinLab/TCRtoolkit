@@ -30,7 +30,6 @@ Thank you for using TCRtoolkit! This report is generated from sample data and me
 #Default inputs are overwritten at the command line in `modules/local/plot_gliph2.nf`
 workflow_cmd='<command used to run the pipeline>'
 project_name='path/to/project_name'
-project_dir='path/to/project_dir'
 clusters='path/to/{project_name}_cluster.csv'
 cluster_stats='path/to/{project_name}_cluster.txt'
 ```
@@ -54,5 +53,4 @@ import seaborn as sns
 print('Pipeline information and parameters:' + '\n')
 print('Project Name:          ' + project_name)
 print('Workflow command:      ' + workflow_cmd)
-print('Pipeline Directory:    ' + project_dir)
 print('Date and time:         ' + str(datetime.datetime.now()))

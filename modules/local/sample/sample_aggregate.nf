@@ -15,7 +15,7 @@ process SAMPLE_AGGREGATE {
     python3 <<EOF
     import pandas as pd
 
-    input_files = [${csv_files.collect { '"' + it.getName() + '"' }.join(', ')}]
+    input_files = [${csv_files.collect { input_file -> '"' + input_file.getName() + '"' }.join(', ')}]
     dfs = [pd.read_csv(f) for f in input_files]
     merged = pd.concat(dfs, axis=0, ignore_index=True)
     merged.to_csv("${output_file}", index=False)
