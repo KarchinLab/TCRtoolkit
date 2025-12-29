@@ -11,7 +11,6 @@ process TCRDIST3_MATRIX {
 
 
     memory {
-        size -> count_table.size()
         count_table.size() > 26 * 1024**2 ? 512.GB * task.attempt:
         count_table.size() > 20 * 1024**2 ? 256.GB * task.attempt:
         count_table.size() > 10 * 1024**2 ? 128.GB * task.attempt:
