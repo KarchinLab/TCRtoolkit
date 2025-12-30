@@ -1,7 +1,6 @@
 process OLGA_PGEN_CALC {
     tag "${sample_meta.sample}"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     tuple val(sample_meta), path(count_table)
@@ -56,7 +55,6 @@ process OLGA_PGEN_CALC {
 process OLGA_HISTOGRAM_CALC {
     tag "${sample_meta.sample}"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     tuple val(sample_meta), path(olga_pgen)
@@ -113,7 +111,6 @@ process OLGA_HISTOGRAM_CALC {
 process OLGA_HISTOGRAM_PLOT {
     tag "${sample_meta.sample}"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     tuple val(sample_meta), path(olga_histogram)
@@ -172,7 +169,6 @@ process OLGA_HISTOGRAM_PLOT {
 
 process OLGA_WRITE_MAX {
     label 'process_single'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     val olga_global_xmin

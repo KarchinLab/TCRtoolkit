@@ -1,7 +1,6 @@
 process SAMPLESHEET_CHECK {
     tag "${samplesheet}"
     label 'process_single'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path samplesheet

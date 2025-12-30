@@ -1,7 +1,6 @@
 process SAMPLE_AGGREGATE {
     tag "${output_file}"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path csv_files

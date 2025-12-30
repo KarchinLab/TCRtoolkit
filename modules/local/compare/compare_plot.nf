@@ -1,6 +1,5 @@
 process COMPARE_PLOT {
     label 'process_single'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path sample_utf8
