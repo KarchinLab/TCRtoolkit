@@ -1,21 +1,43 @@
-FROM condaforge/miniforge3:24.9.2-0
+FROM mambaorg/micromamba:1.5.8
 
-# Copy the environment file into /tmp
-COPY env.yml /tmp/env.yml
-
-# Install system dependencies
-RUN apt-get update \
-    && apt-get install -y \
-    build-essential \
-    curl \
-    gcc \
-    g++ \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Ensure we run as root for apt
+USER root
 
 # Update the conda base environment with required packages
+COPY env.yml /tmp/env.yml
 WORKDIR /tmp
-RUN conda env update -n base --file env.yml
+
+RUN apt-get update && apt-get install -y \
+        # runtime CLIs (KEEP)
+        curl \
+        wget \
+        git \
+        unzip \
+        zip \
+        jq \
+        \
+        # build-only deps (REMOVE LATER)
+        build-essential \
+        gcc \
+        g++ \
+    && micromamba install -y -n base -f /tmp/env.yml \
+    && micromamba clean -afy \
+    \
+    # R packages (need compilers)
+    && micromamba run -n base Rscript -e "remotes::install_github('HetzDra/turboGliph')" \
+    && micromamba run -n base Rscript -e "remotes::install_github('kalaga27/tcrpheno')" \
+    \
+    # R cleanup
+    && rm -rf /tmp/Rtmp* /root/.cache/R \
+    \
+    # REMOVE build deps ONLY
+    && apt-get purge -y \
+        build-essential \
+        gcc \
+        g++ \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install GIANA, patch shebang, symlink for PATH command availability
 RUN git init /opt/GIANA && \
@@ -29,26 +51,20 @@ RUN git init /opt/GIANA && \
 
 # Install quarto
 RUN mkdir -p /opt/quarto/1.6.42 \
-    && curl -o quarto.tar.gz -L \
+    && curl -o /tmp/quarto.tar.gz -L \
         "https://github.com/quarto-dev/quarto-cli/releases/download/v1.6.42/quarto-1.6.42-linux-amd64.tar.gz" \
     && tar -zxvf quarto.tar.gz \
         -C "/opt/quarto/1.6.42" \
         --strip-components=1 \
-    && rm quarto.tar.gz 
+    && rm /tmp/quarto.tar.gz 
 
-# Install R package not available via conda
-RUN Rscript -e "remotes::install_github('HetzDra/turboGliph')"
-RUN Rscript -e "remotes::install_github('kalaga27/tcrpheno')"
-
-# Install VDJmatch
+# Install VDJmatch and symlink
 RUN mkdir -p /opt/vdjmatch/1.3.1 \
     && curl -L -o vdjmatch.zip \
         "https://github.com/antigenomics/vdjmatch/releases/download/1.3.1/vdjmatch-1.3.1.zip" \
     && unzip vdjmatch.zip -d /opt/vdjmatch/1.3.1 \
-    && rm vdjmatch.zip
-
-# symlink VDJmatch
-RUN ln -s /opt/vdjmatch/1.3.1/vdjmatch-1.3.1/vdjmatch-1.3.1.jar /usr/local/bin/vdjmatch.jar
+    && rm vdjmatch.zip \
+    && ln -s /opt/vdjmatch/1.3.1/vdjmatch-1.3.1/vdjmatch-1.3.1.jar /usr/local/bin/vdjmatch.jar
 
 # Add to PATH
 ENV PATH="/opt/quarto/1.6.42/bin:${PATH}"
