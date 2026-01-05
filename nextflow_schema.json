@@ -46,13 +46,14 @@
         "max_memory": {
           "type": "string",
           "default": "768.GB",
-          "pattern": "^\\d+(\\.\\d+)?\\.?\\s*(K|M|G|T)?B$",
+          "pattern": "^\\d+(?:\\.\\d+|\\.)?\\s*(?:[KMGT]?B|[KMGT])$",
           "description": "Maximum memory for any process.",
           "fa_icon": "fas fa-memory"
         },
         "max_time": {
           "type": "string",
           "default": "48.h",
+          "pattern": "^\\d+(\\.\\d+)?\\s*(s|m|h|d)$",
           "description": "Maximum walltime for any job.",
           "fa_icon": "far fa-clock"
         }

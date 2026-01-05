@@ -2,19 +2,19 @@ process TCRDIST3_MATRIX {
     tag "${sample_meta.sample}"
 
     cpus {
-            task.memory > 256.GB ? 16 * task.attempt:
-            task.memory >  64.GB ?  8 * task.attempt:
-            task.memory >   4.GB ?  4 * task.attempt:
+            task.memory > 256.GB ? 16 * task.attempt :
+            task.memory >  64.GB ?  8 * task.attempt :
+            task.memory >   4.GB ?  4 * task.attempt :
                                     2 * task.attempt
     }
 
 
     memory {
-        count_table.size() > 26 * 1024**2 ? 512.GB * task.attempt:
-        count_table.size() > 20 * 1024**2 ? 256.GB * task.attempt:
-        count_table.size() > 10 * 1024**2 ? 128.GB * task.attempt:
-        count_table.size() >  4 * 1024**2 ?  64.GB * task.attempt:
-        count_table.size() >  2 * 1024**2 ?  16.GB * task.attempt:
+        count_table.size() > 26 * 1024**2 ? 512.GB * task.attempt :
+        count_table.size() > 20 * 1024**2 ? 256.GB * task.attempt :
+        count_table.size() > 10 * 1024**2 ? 128.GB * task.attempt :
+        count_table.size() >  4 * 1024**2 ?  64.GB * task.attempt :
+        count_table.size() >  2 * 1024**2 ?  16.GB * task.attempt :
                                               4.GB * task.attempt
     }
 

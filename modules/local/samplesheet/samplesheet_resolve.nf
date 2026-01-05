@@ -17,7 +17,9 @@ ${resolved_rows.join('\n')}
 EOF
 
 # Emit header
-echo "${resolved_header}" > samplesheet_resolved.csv
+cat << 'EOF' > samplesheet_resolved.csv
+${resolved_header}
+EOF
 
 # Two-pass awk:
 #  - pass 1: read original samplesheet, store sample order

@@ -24,8 +24,8 @@ RUN apt-get update && apt-get install -y \
     && micromamba clean -afy \
     \
     # R packages (need compilers)
-    && micromamba run -n base Rscript -e "remotes::install_github('HetzDra/turboGliph')" \
-    && micromamba run -n base Rscript -e "remotes::install_github('kalaga27/tcrpheno')" \
+    && micromamba run -n base Rscript -e "remotes::install_github('HetzDra/turboGliph@2a5264b')" \
+    && micromamba run -n base Rscript -e "remotes::install_github('kalaga27/tcrpheno@56f9372')" \
     \
     # R cleanup
     && rm -rf /tmp/Rtmp* /root/.cache/R \
@@ -53,7 +53,7 @@ RUN git init /opt/GIANA && \
 RUN mkdir -p /opt/quarto/1.6.42 \
     && curl -o /tmp/quarto.tar.gz -L \
         "https://github.com/quarto-dev/quarto-cli/releases/download/v1.6.42/quarto-1.6.42-linux-amd64.tar.gz" \
-    && tar -zxvf quarto.tar.gz \
+    && tar -zxvf /tmp/quarto.tar.gz \
         -C "/opt/quarto/1.6.42" \
         --strip-components=1 \
     && rm /tmp/quarto.tar.gz 
