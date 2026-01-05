@@ -53,7 +53,7 @@
         "max_time": {
           "type": "string",
           "default": "48.h",
-          "pattern": "^\\d+(\\.\\d+)?\\s*(s|m|h|d)$",
+          "pattern": "^\\d+(?:\\.\\d+|\\.)?\\s*(s|m|h|d)$",
           "description": "Maximum walltime for any job.",
           "fa_icon": "far fa-clock"
         }
