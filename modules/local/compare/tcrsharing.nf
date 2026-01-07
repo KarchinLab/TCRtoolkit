@@ -1,6 +1,5 @@
 process TCRSHARING_CALC {
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path concat_cdr3
@@ -73,7 +72,6 @@ process TCRSHARING_CALC {
 
 process TCRSHARING_HISTOGRAM {
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path shared_cdr3
@@ -114,7 +112,6 @@ process TCRSHARING_HISTOGRAM {
 
 process TCRSHARING_SCATTERPLOT {
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path shared_cdr3

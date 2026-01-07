@@ -32,7 +32,6 @@ Thank you for using TCRtoolkit! This report is generated from sample data and me
 
 workflow_cmd='<command used to run the pipeline>'
 project_name='<path/to/project_name>'
-project_dir='<path/to/project_dir>'
 sample_table='<path/to/sample_table.csv>'
 sample_stats_csv='<path/to/sample_stats.csv>'
 v_family_csv='<path/to/v_family.csv>'
@@ -70,15 +69,9 @@ warnings.filterwarnings(
 
 print('Project Name:          ' + project_name)
 print('Workflow command:      ' + workflow_cmd)
-print('Pipeline Directory:    ' + project_dir)
 print('Date and time:         ' + str(datetime.datetime.now()))
 
-# 3. Importing custom plotting functions
-# sys.path.append(project_dir + '/bin/')
-# from utils import TicTocGenerator, tic, toc
-# TicToc = TicTocGenerator()
-
-# 4. Loading data
+# 3. Loading data
 ## reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
 meta_cols = meta.columns.tolist()

@@ -1,7 +1,6 @@
 process SAMPLE_AGGREGATE {
     tag "${output_file}"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path csv_files
@@ -12,13 +11,16 @@ process SAMPLE_AGGREGATE {
 
     script:
     """
-    python3 <<EOF
+    cat > aggregate.py <<EOF
+    import sys
     import pandas as pd
 
-    input_files = [${csv_files.collect { '"' + it.getName() + '"' }.join(', ')}]
+    input_files = sys.argv[1:]
     dfs = [pd.read_csv(f) for f in input_files]
     merged = pd.concat(dfs, axis=0, ignore_index=True)
     merged.to_csv("${output_file}", index=False)
     EOF
+
+    python3 aggregate.py ${csv_files}
     """
 }
