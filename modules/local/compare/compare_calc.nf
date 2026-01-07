@@ -1,6 +1,6 @@
 process COMPARE_CALC {
     label 'process_single'
-
+    
     input:
     path sample_utf8
     path all_sample_files

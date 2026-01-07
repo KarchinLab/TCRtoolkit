@@ -20,7 +20,7 @@ include { GIANA_CALC    } from '../../modules/local/compare/giana'
 
 workflow COMPARE {
 
-    // println("Welcome to the BULK TCRSEQ pipeline! -- COMPARE ")
+    // println("Welcome to the TCRSEQ pipeline! -- COMPARE ")
 
     take:
     samplesheet_resolved

@@ -23,7 +23,6 @@ process COMPARE_PLOT {
     quarto render compare_stats.qmd \
         -P project_name:$project_name \
         -P workflow_cmd:'$workflow.commandLine' \
-        -P project_dir:$projectDir \
         -P jaccard_mat:$jaccard_mat \
         -P sorensen_mat:$sorensen_mat \
         -P morisita_mat:$morisita_mat \

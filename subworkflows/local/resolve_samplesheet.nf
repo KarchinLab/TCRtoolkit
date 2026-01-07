@@ -28,12 +28,13 @@ workflow RESOLVE_SAMPLESHEET {
         .splitCsv(header: true, sep: ',')
         .first()
         .map { row -> 
-            def header = row.keySet().findAll { it != 'file' } + ['file']
+            def header = row.keySet().findAll { header_col -> header_col != 'file' } + ['file']
             return header.join(',')  // <-- convert to string
         }
         .set { resolved_header }
 
     SAMPLESHEET_RESOLVE(
+            samplesheet_utf8,
             resolved_rows,
             resolved_header
         )

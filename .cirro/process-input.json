@@ -9,5 +9,9 @@
     "local_min_OVE": "$.params.dataset.paramJson.local_min_OVE",
     "local_min_pvalue": "$.params.dataset.paramJson.local_min_pvalue",
     "outdir": "$.params.dataset.s3|/data/",
-    "p_depth": "$.params.dataset.paramJson.p_depth"
+    "p_depth": "$.params.dataset.paramJson.p_depth",
+    "samplechart_x_col": "$.params.dataset.paramJson.samplechart_x_col",
+    "samplechart_color_col": "$.params.dataset.paramJson.samplechart_color_col",
+    "vgene_subject_col": "$.params.dataset.paramJson.vgene_subject_col",
+    "vgene_x_cols": "$.params.dataset.paramJson.vgene_x_cols"
 }

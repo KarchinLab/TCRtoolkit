@@ -30,7 +30,6 @@ Thank you for using TCRtoolkit! This report is generated from sample data and me
 #Default inputs are overwritten at the command line in `modules/local/plot_sample.nf`
 workflow_cmd='<command used to run the pipeline>'
 project_name='path/to/project_name'
-project_dir='path/to/project_dir'
 jaccard_mat='path/to/jaccard_mat.csv'
 sorensen_mat='path/to/sorensen_mat.csv'
 morisita_mat='path/to/morisita_mat.csv'
@@ -57,43 +56,18 @@ import seaborn as sns
 print('Pipeline information and parameters:' + '\n')
 print('Project Name:          ' + project_name)
 print('Workflow command:      ' + workflow_cmd)
-print('Pipeline Directory:    ' + project_dir)
 print('Date and time:         ' + str(datetime.datetime.now()))
 
-# 3. Importing custom plotting functions
-## Plotting functions are defined in `bin/utils.py`.
-# sys.path.append(project_dir + '/bin/')
-# source_file = os.path.join(project_dir, 'bin', 'utils.py')
-# destination_file = os.path.join(os.getcwd(), 'utils.py')
-# shutil.copyfile(source_file, destination_file)
-# from utils import TicTocGenerator, tic, toc
-# TicToc = TicTocGenerator()
-
-# 4. Importing similarity data
-## 4a. jaccard similarity matrix
+# 3. Importing similarity data
+## 3a. jaccard similarity matrix
 jaccard_df = pd.read_csv(jaccard_mat, sep=',', header=0, index_col=0)
 
-## 4b. sorensen similarity matrix
+## 3b. sorensen similarity matrix
 sorensen_df = pd.read_csv(sorensen_mat, sep=',', header=0, index_col=0)
 
-## 4c. morisita similarity matrix
+## 3c. morisita similarity matrix
 morisita_df = pd.read_csv(morisita_mat, sep=',', header=0, index_col=0)
 
-## 4d. jensen-shannon matrix
-# jsd_df = pd.read_csv(jsd_mat, sep=',', header=0, index_col=0)
-
-# 5. Importing sample level counts
-# sample_utf8 = pd.read_csv(sample_utf8, sep=',', header=0, index_col=0)
-# files = sample_utf8['file']
-# dfs = {}
-# for file in files:
-#     # load data
-#     df = pd.read_csv(file, sep='\t', header=0)
-
-#     # Rename columns
-#     df = df.rename(columns={'count (templates/reads)': 'read_count', 'frequencyCount (%)': 'frequency'})
-#     sample_id = os.path.basename(file).split('.')[0]
-#     dfs[sample_id] = df
 ```
 
 # Analysis

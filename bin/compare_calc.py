@@ -1,133 +1,150 @@
 #!/usr/bin/env python3
 """
-Description: this script calculates overlap measures between TCR repertoires
-
-@author: Domenick Braccia
+Description: Calculate overlap measures between TCR repertoires
+Author: Dylan Tamayo, Domenick Braccia
 """
 
 import argparse
 import pandas as pd
 import numpy as np
-import os
-import sys
-import csv
-from scipy.stats import entropy
-from utils import jaccard_index, sorensen_index, morisita_horn_index #, jensen_shannon_distance
 
-print('-- ENTERED compare_calc.py--')
-print('-- THE TIME IS: --' + str(pd.Timestamp.now()))
+# -------------------------
+# Similarity functions
+# -------------------------
+def jaccard_index(set1, set2):
+    union = len(set1 | set2)
+    return len(set1 & set2) / union if union else 0.0
 
-# initialize parser
-parser = argparse.ArgumentParser(description='Calculate clonality of a TCR repertoire')
 
-# add arguments
-parser.add_argument('-s', '--sample_utf8', 
-                    metavar='sample_utf8', 
-                    type=str, 
-                    help='sample CSV file initially passed to nextflow run command')
-# parser.add_argument('-m', '--meta_data',
-#                     metavar='meta_data',
-#                     type=str,
-#                     help='metadata CSV file initially passed to nextflow run command')
+def sorensen_index(set1, set2):
+    denom = len(set1) + len(set2)
+    return (2 * len(set1 & set2) / denom) if denom else 0.0
 
-args = parser.parse_args() 
 
-## Read in sample table CSV file
-## convert metadata to list
-s = args.sample_utf8
-sample_utf8 = pd.read_csv(args.sample_utf8, sep=',', header=0)
-print('sample_utf8 looks like this: ' + str(sample_utf8))
-print('sample_utf8 columns: \n')
-print(sample_utf8.columns)
+def morisita_horn_index(counts1, counts2):
+    X = counts1.sum()
+    Y = counts2.sum()
 
-# Read in metadata table CSV file
-# meta_data = pd.read_csv(args.meta_data, sep=',', header=0)
-# print('meta_data looks like this: ' + str(meta_data))
-# print('meta_data columns: \n')
-# print(meta_data.columns)
+    if X == 0 or Y == 0:
+        return 0.0
 
-# Import TCR count tables into dictionary of dataframes
-files = sample_utf8['file']
-dfs = {}
-for file in files:
-    # load data
-    df = pd.read_csv(file, sep='\t', header=0)
-    dfs[file] = df
+    prod_sum = np.sum(counts1 * counts2)
+    lambda1 = np.sum(counts1 ** 2) / (X ** 2)
+    lambda2 = np.sum(counts2 ** 2) / (Y ** 2)
 
-print('number of files in dfs: ' + str(len(dfs)))
+    return (2 * prod_sum) / ((lambda1 + lambda2) * X * Y)
 
-## calculate the jaccard index between each sample pair in dfs and store in an nxn matrix and write to file
-samples = list(dfs.keys())
+if __name__ == "__main__":
+    # -------------------------
+    # Argument parsing
+    # -------------------------
+    parser = argparse.ArgumentParser(
+        description="Calculate overlap metrics for TCR repertoires"
+    )
+    parser.add_argument(
+        "-s", "--sample_utf8",
+        required=True,
+        help="Samplesheet CSV passed from Nextflow"
+    )
+    args = parser.parse_args()
 
-print('- calculating jaccard index... -')
-jaccard_mat = np.zeros((len(samples), len(samples)))
-for i, sample1 in enumerate(samples):
-    for j, sample2 in enumerate(samples):
-        # calculate jaccard index
-        value = jaccard_index(dfs[sample1]['junction_aa'], dfs[sample2]['junction_aa'])
-        # store in numpy array
-        jaccard_mat[i, j] = value
 
-# define column and index names
-sample_names= [os.path.basename(sample).split('.')[0] for sample in samples]
-jaccard_df = pd.DataFrame(jaccard_mat, columns=sample_names, index=sample_names)
+    # -------------------------
+    # Load samplesheet
+    # -------------------------
+    sample_df = pd.read_csv(args.sample_utf8)
 
-# save jacard_df to csv
-jaccard_df.to_csv('jaccard_mat.csv', index=True, header=True)
+    samples = sample_df["sample"].tolist()
+    files = sample_df["file"].tolist()
+    n = len(samples)
 
-## calculate the sorensen index between each sample pair in dfs and store in an nxn matrix and write to file
-print('- calculating sorensen index... -')
-sorensen_mat = np.zeros((len(samples), len(samples)))
-for i, sample1 in enumerate(samples):
-    for j, sample2 in enumerate(samples):
-        # calculate sorensen index
-        value = sorensen_index(dfs[sample1]['junction_aa'], dfs[sample2]['junction_aa'])
-        # store in numpy array
-        sorensen_mat[i, j] = value
+    print(f"Loaded {n} samples")
 
-# define column and index names
-sorensen_df = pd.DataFrame(sorensen_mat, columns=sample_names, index=sample_names)
+    # -------------------------
+    # Preload data structures
+    # -------------------------
+    junction_sets = {}
+    count_vectors = {}
 
-# save sorensen_df to csv
-sorensen_df.to_csv('sorensen_mat.csv', index=True, header=True)
+    for sample, file in zip(samples, files):
+        df = pd.read_csv(file, sep="\t", usecols=["junction_aa", "duplicate_count"])
+        df = df.dropna(subset=["junction_aa"])
 
-## calculate the morisita index between each sample pair in dfs and store in an nxn matrix and write to file
-print('- calculating morisita index... -')
-morisita_mat = np.zeros((len(samples), len(samples)))
-for i in range(len(samples)):
-    print('-- on sample ' + str(i) + ' --')
-    for j in range(i+1):
-        # calculate morisita index
-        value = morisita_horn_index(dfs, samples[i], samples[j])
-        # store in numpy array
-        morisita_mat[i, j] = value
+        # Set for presence/absence metrics
+        junction_sets[sample] = set(df["junction_aa"])
 
-# Copy the lower triangle to the upper triangle
-morisita_mat = morisita_mat + morisita_mat.T - np.diag(morisita_mat.diagonal())
+        # Counts for Morisita–Horn
+        count_vectors[sample] = (
+            df.groupby("junction_aa")["duplicate_count"]
+            .sum()
+        )
 
-# define column and index names
-morisita_df = pd.DataFrame(morisita_mat, columns=sample_names, index=sample_names)
 
-# save morisita_df to csv
-morisita_df.to_csv('morisita_mat.csv', index=True, header=True)
+    # -------------------------
+    # Align count vectors across union space
+    # -------------------------
+    all_junctions = sorted(
+        set().union(*junction_sets.values())
+    )
 
-## calculate jensen shannon distance between each sample pair in dfs and store in an nxn matrix and write to file
-# print('- calculating jensen shannon distance... -')
-# jsd_mat = np.zeros((len(samples), len(samples)))
-# for i, sample1 in enumerate(samples):
-#     for j, sample2 in enumerate(samples):
-#         # calculate jensen shannon distance
-#         value = jensen_shannon_distance(dfs[sample1][['junction_aa', 'duplicate_count']], dfs[sample2][['junction_aa', 'duplicate_count']])
-#         # store in numpy array
-#         jsd_mat[i, j] = value
+    for sample in samples:
+        count_vectors[sample] = (
+            count_vectors[sample]
+            .reindex(all_junctions, fill_value=0)
+            .to_numpy()
+        )
 
-# # Copy the lower triangle to the upper triangle
-# jsd_mat = jsd_mat + jsd_mat.T - np.diag(jsd_mat.diagonal())
 
-# # define column and index names
-# jsd_df = pd.DataFrame(jsd_mat, columns=sample_names, index=sample_names)
+    # -------------------------
+    # Initialize matrices
+    # -------------------------
+    jaccard_mat = np.zeros((n, n))
+    sorensen_mat = np.zeros((n, n))
+    morisita_mat = np.zeros((n, n))
 
-# # save jsd_df to csv
-# jsd_df.to_csv('jsd_mat.csv', index=True, header=True)
 
-## ========================================================================== ##
+    # -------------------------
+    # Compute upper triangle only
+    # -------------------------
+    print("Calculating overlap metrics...")
+
+    for i in range(n):
+        s1 = samples[i]
+        set1 = junction_sets[s1]
+        counts1 = count_vectors[s1]
+
+        # Diagonal
+        jaccard_mat[i, i] = 1.0
+        sorensen_mat[i, i] = 1.0
+        morisita_mat[i, i] = 1.0
+
+        for j in range(i + 1, n):
+            s2 = samples[j]
+
+            j_val = jaccard_index(set1, junction_sets[s2])
+            s_val = sorensen_index(set1, junction_sets[s2])
+            m_val = morisita_horn_index(counts1, count_vectors[s2])
+
+            jaccard_mat[i, j] = jaccard_mat[j, i] = j_val
+            sorensen_mat[i, j] = sorensen_mat[j, i] = s_val
+            morisita_mat[i, j] = morisita_mat[j, i] = m_val
+
+
+    # -------------------------
+    # Write outputs
+    # -------------------------
+    index_names = samples
+
+    pd.DataFrame(
+        jaccard_mat, index=index_names, columns=index_names
+    ).to_csv("jaccard_mat.csv")
+
+    pd.DataFrame(
+        sorensen_mat, index=index_names, columns=index_names
+    ).to_csv("sorensen_mat.csv")
+
+    pd.DataFrame(
+        morisita_mat, index=index_names, columns=index_names
+    ).to_csv("morisita_mat.csv")
+
+    print("Finished writing all matrices")

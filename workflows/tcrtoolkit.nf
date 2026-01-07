@@ -1,16 +1,3 @@
-/*
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    VALIDATE & PRINT PARAMETER SUMMARY
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-*/
-
-// Validate pipeline parameters
-def checkPathParamList = [ params.samplesheet]
-for (param in checkPathParamList) { if (param) { file(param, checkIfExists: true) } }
-
-// Check mandatory parameters
-if (params.samplesheet) { samplesheet = file(params.samplesheet) } else { exit 1, 'Samplesheet not specified. Please, provide a --samplesheet=/path/to/samplesheet.csv !' }
-if (params.outdir) { outdir = params.outdir } else { exit 1, 'Output directory not specified. Please, provide a --outdir=/path/to/outdir !' }
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -27,6 +14,7 @@ include { AIRR_CONVERT }        from '../subworkflows/local/airr_convert'
 include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
 include { COMPARE }             from '../subworkflows/local/compare'
+include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -35,9 +23,10 @@ include { COMPARE }             from '../subworkflows/local/compare'
 */
 
 
-workflow TCRTOOLKIT_BULK {
+workflow TCRTOOLKIT {
+    VALIDATE_PARAMS()
 
-    println("Running TCRTOOLKIT_BULK workflow...")
+    println("Running TCRTOOLKIT workflow...")
 
     // Split the workflow_level parameter into a list of levels
     def levels = params.workflow_level.toLowerCase().tokenize(',')
@@ -79,18 +68,6 @@ workflow TCRTOOLKIT_BULK {
             RESOLVE_SAMPLESHEET.out.all_sample_files)
     }
 }
-
-/*
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    COMPLETION EMAIL AND SUMMARY
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-*/
-
-// workflow.onComplete {
-
-//     log.info(workflow.success ? "Finished tcrtoolkit-bulk!" : "Please check your inputs.")
-
-// }
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

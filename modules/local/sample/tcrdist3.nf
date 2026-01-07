@@ -1,22 +1,21 @@
 process TCRDIST3_MATRIX {
     tag "${sample_meta.sample}"
 
-    cpus params.max_cpus
+    cpus {
+            task.memory > 256.GB ? 16 * task.attempt :
+            task.memory >  64.GB ?  8 * task.attempt :
+            task.memory >   4.GB ?  4 * task.attempt :
+                                    2 * task.attempt
+    }
+
+
     memory {
-        def sz = count_table.size()
-        def mb = 1024 * 1024
-        if (sz > 26 * mb)
-            return 512.GB * task.attempt
-        else if (sz > 20 * mb)
-            return 256.GB * task.attempt
-        else if (sz > 10 * mb)
-            return 128.GB * task.attempt
-        else if (sz > 4 * mb)
-            return 64.GB * task.attempt
-        else if (sz > 2 * mb)
-            return 16.GB * task.attempt
-        else
-            return 4.GB * task.attempt
+        count_table.size() > 26 * 1024**2 ? 512.GB * task.attempt :
+        count_table.size() > 20 * 1024**2 ? 256.GB * task.attempt :
+        count_table.size() > 10 * 1024**2 ? 128.GB * task.attempt :
+        count_table.size() >  4 * 1024**2 ?  64.GB * task.attempt :
+        count_table.size() >  2 * 1024**2 ?  16.GB * task.attempt :
+                                              4.GB * task.attempt
     }
 
     input:
@@ -32,7 +31,6 @@ process TCRDIST3_MATRIX {
 
     script:
     """
-    # Run tcrdist3 on input
     tcrdist3_matrix.py ${count_table} ${sample_meta.sample} ${matrix_sparsity} ${distance_metric} ${ref_db} ${task.cpus}
     """
 }

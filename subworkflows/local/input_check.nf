@@ -19,7 +19,7 @@ workflow INPUT_CHECK {
     samplesheet_utf8
         .splitCsv(header: true, sep: ',')
         .map { row ->
-            def meta = row.findAll { k, v -> k != 'file' }  // everything except the file column
+            def meta = row.findAll { k, _v -> k != 'file' }  // everything except the file column
             def file_obj = file(row.file)
             return [meta, file_obj]
         }
