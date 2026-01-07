@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
         unzip \
         zip \
         jq \
-        ps \
+        procps \
         \
         # build-only deps (REMOVE LATER)
         build-essential \
