@@ -2,7 +2,6 @@
 process SAMPLE_PLOT {
     tag "${sample_stats_csv}"
     label 'process_single'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
     
     input:
     path sample_table

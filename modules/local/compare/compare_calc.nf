@@ -1,7 +1,6 @@
 process COMPARE_CALC {
     label 'process_single'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
-    
+
     input:
     path sample_utf8
     path all_sample_files

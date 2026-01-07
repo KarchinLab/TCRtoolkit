@@ -1,6 +1,5 @@
 process GIANA_CALC {
     label 'process_medium'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     path concat_cdr3

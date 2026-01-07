@@ -1,6 +1,5 @@
 process SAMPLESHEET_RESOLVE {
     label 'process_single'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     val(resolved_rows)     // List of tab-separated strings
