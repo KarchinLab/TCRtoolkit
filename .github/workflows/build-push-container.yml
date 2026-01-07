@@ -5,6 +5,7 @@ name: build-push-container
 on:
   push:
     paths:
+      - '**/env.yml'
       - '**/Dockerfile'
       - '**/*.dockerfile'
       - '.github/workflows/build-push-container.yml'
