@@ -127,9 +127,4 @@ workflow SAMPLE {
 
     VDJDB_VDJMATCH (sample_map, VDJDB_GET.out.ref_db)
 
-    // emit:
-    // sample_stats_csv
-    // v_family_csv
-    // sample_meta_csv
-    // versions = SAMPLESHEET_CHECK.out.versions // channel: [ versions.yml ]
 }
