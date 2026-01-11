@@ -52,11 +52,13 @@ if __name__ == "__main__":
     # -------------------------
     # Load samplesheet
     # -------------------------
-    sample_df = pd.read_csv(args.sample_utf8)
+    sample_df = pd.read_csv(args.sample_utf8, index_col=None)
 
     # Basic hygiene: drop rows missing sample or file
     sample_df = sample_df.dropna(subset=["sample", "file"])
-
+    print(sample_df.head())
+    print(sample_df.columns.tolist())
+    
     samples = sample_df["sample"].tolist()
     files = sample_df["file"].tolist()
     n = len(samples)

@@ -17,7 +17,7 @@ include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 
 include { MAP_PHENOTYPES }      from '../subworkflows/local/map_phenotypes'
-include { RESOLVE_SAMPLESHEET as RESOLVE_SAMPLESHEET_PHENO } from '../subworkflows/local/resolve_samplesheet'
+include { RESOLVE_SAMPLESHEET_PHENO } from '../subworkflows/local/resolve_samplesheet_pheno'
 include { SAMPLE_PHENO } from '../subworkflows/local/sample_pheno'
 include { COMPARE_PHENO } from '../subworkflows/local/compare_pheno'
 
@@ -97,17 +97,16 @@ workflow TCRTOOLKIT {
     if (params.sobject_gex) {
 
         RESOLVE_SAMPLESHEET_PHENO(
-            ch_phenotype_samplesheet,
             ch_phenotype_files_transformed
         )
 
         if (levels.contains('sample')) {
-            SAMPLE_PHENO( ch_phenotype_files_transformed, RESOLVE_SAMPLESHEET_PHENO.out.samplesheet_resolved ) // ch_phenotype_samplesheet // RESOLVE_SAMPLESHEET_PHENO.out.samplesheet_resolved
+            SAMPLE_PHENO( ch_phenotype_files_transformed, ch_phenotype_samplesheet ) // ch_phenotype_samplesheet // RESOLVE_SAMPLESHEET_PHENO.out.samplesheet_resolved
         }
 
         if (levels.contains('compare')) {
             COMPARE_PHENO(
-                RESOLVE_SAMPLESHEET_PHENO.out.samplesheet_resolved,
+                ch_phenotype_samplesheet,
                 RESOLVE_SAMPLESHEET_PHENO.out.all_sample_files
             )
         }

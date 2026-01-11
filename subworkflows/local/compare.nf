@@ -27,8 +27,24 @@ workflow COMPARE {
     all_sample_files
 
     main:
+
     COMPARE_CALC( samplesheet_resolved,
                     all_sample_files )
+
+    COMPARE_CALC.out.jaccard_mat
+        .collectFile(name: 'jaccard_mat.csv', sort: true, 
+                     storeDir: "${params.outdir}/compare")
+        .set { jaccard_mat }
+
+    COMPARE_CALC.out.sorensen_mat
+        .collectFile(name: 'sorensen_mat.csv', sort: true, 
+                     storeDir: "${params.outdir}/compare")
+        .set { sorensen_mat }
+
+    COMPARE_CALC.out.morisita_mat
+        .collectFile(name: 'morisita_mat.csv', sort: true, 
+                     storeDir: "${params.outdir}/compare")
+        .set { morisita_mat }
 
     COMPARE_PLOT( samplesheet_resolved,
                   COMPARE_CALC.out.jaccard_mat,
@@ -65,7 +81,4 @@ workflow COMPARE {
         TCRSHARING_CALC.out.shared_cdr3
     )
 
-    // emit:
-    // compare_stats_html
-    // versions = SAMPLESHEET_CHECK.out.versions // channel: [ versions.yml ]
 }

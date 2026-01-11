@@ -5,7 +5,11 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { SAMPLE_CALC } from '../../modules/local/sample/sample_calc'
+include { SAMPLE_CALC as SAMPLE_CALC_PHENO } from '../../modules/local/sample/sample_calc'
+include { SAMPLE_AGGREGATE as SAMPLE_AGG_STAT_PHENO } from '../../modules/local/sample/sample_aggregate' 
+include { SAMPLE_AGGREGATE as SAMPLE_AGG_V_PHENO } from '../../modules/local/sample/sample_aggregate'
+include { SAMPLE_AGGREGATE as SAMPLE_AGG_D_PHENO } from '../../modules/local/sample/sample_aggregate'
+include { SAMPLE_AGGREGATE as SAMPLE_AGG_J_PHENO } from '../../modules/local/sample/sample_aggregate'
 // include { SAMPLE_PLOT } from '../../modules/local/sample/sample_plot'
 
 /*
@@ -24,27 +28,18 @@ workflow SAMPLE_PHENO {
 
     /////// =================== CALC SAMPLE ===================  ///////
 
-    SAMPLE_CALC( sample_map )
+    SAMPLE_CALC_PHENO( sample_map )
 
-    SAMPLE_CALC.out.sample_csv
-        .collectFile(name: 'sample_stats.csv', sort: true, 
-                     storeDir: "${params.outdir}/sample_phenotype")
-        .set { sample_stats_csv }
+    SAMPLE_CALC_PHENO.out.sample_csv.collect().set { sample_csv_files }
+    SAMPLE_CALC_PHENO.out.v_family_csv.collect().set { v_family_csv_files }
+    SAMPLE_CALC_PHENO.out.d_family_csv.collect().set { d_family_csv_files }
+    SAMPLE_CALC_PHENO.out.j_family_csv.collect().set { j_family_csv_files }
 
-    SAMPLE_CALC.out.v_family_csv
-        .collectFile(name: 'v_family.csv', sort: true,
-                     storeDir: "${params.outdir}/sample_phenotype")
-        .set { v_family_csv }
+    SAMPLE_AGG_STAT_PHENO(sample_csv_files, "sample_stats.csv")
+    SAMPLE_AGG_V_PHENO(v_family_csv_files, "v_family.csv")
+    SAMPLE_AGG_D_PHENO(d_family_csv_files, "d_family.csv")
+    SAMPLE_AGG_J_PHENO(j_family_csv_files, "j_family.csv")
 
-    SAMPLE_CALC.out.d_family_csv
-        .collectFile(name: 'd_family.csv', sort: true,
-                     storeDir: "${params.outdir}/sample_phenotype")
-        .set { d_family_csv }
-
-    SAMPLE_CALC.out.j_family_csv
-        .collectFile(name: 'j_family.csv', sort: true,
-                     storeDir: "${params.outdir}/sample_phenotype")
-        .set { j_family_csv }
 
     /////// =================== SAMPLE NOTEBOOK ===================  ///////
 
