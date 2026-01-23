@@ -65,7 +65,4 @@ workflow COMPARE {
         TCRSHARING_CALC.out.shared_cdr3
     )
 
-    // emit:
-    // compare_stats_html
-    // versions = SAMPLESHEET_CHECK.out.versions // channel: [ versions.yml ]
 }

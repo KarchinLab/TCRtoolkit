@@ -10,11 +10,13 @@
 //
 
 include { INPUT_CHECK }         from '../subworkflows/local/input_check'
-include { AIRR_CONVERT }        from '../subworkflows/local/airr_convert'
+include { CONVERT }             from '../subworkflows/local/convert'
 include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
+
+include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -42,19 +44,40 @@ workflow TCRTOOLKIT {
 
     // Checking input tables
     INPUT_CHECK( file(params.samplesheet) )
+    ch_samplesheet_utf8 = INPUT_CHECK.out.samplesheet_utf8
 
-    if (input_format in ['adaptive', 'cellranger']) {
-        AIRR_CONVERT( INPUT_CHECK.out.sample_map,
+    if (input_format == 'adaptive') {
+        CONVERT(
+            INPUT_CHECK.out.sample_map,
             input_format
+        )
+        .sample_map_converted
+        .set { sample_map_final }
+
+    } else if (input_format == 'cellranger') {
+        CONVERT(
+            INPUT_CHECK.out.sample_map,
+            input_format
+        )
+        .sample_map_converted
+        .set { sample_map_final }
+
+        if (params.sobject_gex) {
+            PSEUDOBULK_PHENOTYPE(
+                CONVERT.out.pseudobulk_phenotype_files,
+                INPUT_CHECK.out.samplesheet_utf8,
+                levels
             )
-            .sample_map_converted
-            .set { sample_map_final }
+        }
+
     } else {
         INPUT_CHECK.out.sample_map
             .set { sample_map_final }
     }
 
-    RESOLVE_SAMPLESHEET( INPUT_CHECK.out.samplesheet_utf8,
+    // --- Main Analysis ---
+
+    RESOLVE_SAMPLESHEET( ch_samplesheet_utf8,
         sample_map_final )
 
     // Running sample level analysis
