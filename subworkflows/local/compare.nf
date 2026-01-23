@@ -19,9 +19,6 @@ include { GIANA_CALC    } from '../../modules/local/compare/giana'
 */
 
 workflow COMPARE {
-
-    // println("Welcome to the TCRSEQ pipeline! -- COMPARE ")
-
     take:
     samplesheet_resolved
     all_sample_files
@@ -49,9 +46,11 @@ workflow COMPARE {
         params.threshold_vgene
     )
 
-    GLIPH2_TURBOGLIPH(
-        COMPARE_CONCATENATE.out.concat_cdr3
-    )
+    if(params.use_gliph2) {
+        GLIPH2_TURBOGLIPH(
+            COMPARE_CONCATENATE.out.concat_cdr3
+        )
+    }
 
     TCRSHARING_CALC(
         COMPARE_CONCATENATE.out.concat_cdr3
@@ -64,5 +63,4 @@ workflow COMPARE {
     TCRSHARING_SCATTERPLOT(
         TCRSHARING_CALC.out.shared_cdr3
     )
-
 }
