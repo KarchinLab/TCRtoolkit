@@ -4,7 +4,12 @@ import argparse
 import json
 import logging
 
+import numpy as np
 import pandas as pd
+import rpy2.robjects as ro
+from rpy2.robjects import r
+from rpy2.robjects import pandas2ri
+from rpy2.robjects.conversion import localconverter
 
 def configure_logging(args):
     """
@@ -143,29 +148,28 @@ def pseudobulk(input_df, basename, airr_schema):
 
 
 def add_phenotype_info(input_df, basename, sobject_gex):
-    import numpy as np
-    import pandas as pd
-    from rpy2.robjects import r
-    from rpy2.robjects import pandas2ri
-    import rpy2.robjects as ro
-    from rpy2.robjects.conversion import localconverter
-
     # Read Seurat Object
-    readRDS = r['readRDS']
-    seurat_obj = readRDS(sobject_gex)
-    # Extract and Convert Metadata into a pandas DataFrame
-    with localconverter(ro.default_converter + pandas2ri.converter):
-        cell_metadata_pd = ro.conversion.rpy2py(seurat_obj.slots['meta.data'])
+    # readRDS = r['readRDS']
+    # seurat_obj = readRDS(sobject_gex)
+    # # Extract and Convert Metadata into a pandas DataFrame
+    # with localconverter(ro.default_converter + pandas2ri.converter):
+    #     cell_metadata_pd = ro.conversion.rpy2py(seurat_obj.slots['meta.data'])
 
-    cell_metadata_pd["cell_id"] = cell_metadata_pd["library"] + "_" + cell_metadata_pd["cell_id"]
-    cell_metadata_pd = cell_metadata_pd.loc[:,["cell_id","phenotype"]]
-    cell_metadata_pd['phenotype'] = cell_metadata_pd['phenotype'].str.replace(' ', '_')
+    # cell_metadata_pd = cell_metadata_pd[[]]
+    # cell_metadata_pd["cell_id"] = cell_metadata_pd["library"] + "_" + cell_metadata_pd["cell_id"]
+    # cell_metadata_pd = cell_metadata_pd.loc[:,["cell_id","phenotype"]]
+    # cell_metadata_pd['phenotype'] = cell_metadata_pd['phenotype'].str.replace(' ', '_')
+
+    cell_metadata_pd = pd.read_csv(sobject_gex)
+    cell_metadata_pd['phenotype'] = cell_metadata_pd['sctype'].apply(lambda x: x.split('@')[-1])
+    cell_metadata_pd = cell_metadata_pd[['barcode', 'phenotype']]
 
     # ------ Fix TCR Barcodes ------ #
-    input_df["cell_id"] = basename + "_" + input_df["cell_id"]
+    input_df["barcode"] = basename + "_" + input_df["cell_id"]
 
     # ------ Merge ------ #
-    merged_df = pd.merge(input_df, cell_metadata_pd, on="cell_id", how="left")
+    merged_df = pd.merge(input_df, cell_metadata_pd, on="barcode", how="left")
+    merged_df.to_csv('merged_df.tsv', sep='\t', index=False)
     return merged_df
 
 def pseudobulk_phenotype(input_df, basename, airr_schema):
@@ -278,12 +282,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--phenotype",
-        action="store_true",
-        help="A boolean flag to indicate wether the pseudobulk approach will consider phenotype.",
-    )
-
-    parser.add_argument(
         "--sobject_gex",
         type=str,
         help="Path to Seurat Object, 'phenotype' should be a column in meta.data slot.",
@@ -309,7 +307,7 @@ if __name__ == "__main__":
     basename = args.basename
 
     # Pseudobulk by phenotype (if available)
-    if args.phenotype:
+    if args.sobject_gex:
         input_df = add_phenotype_info(input_df, basename, args.sobject_gex)  # Add single-cell phenotype info from Seurat Object.
         pseudobulk_phenotype(input_df, basename, airr_schema)
     else:

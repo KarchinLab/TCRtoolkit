@@ -10,16 +10,13 @@
 //
 
 include { INPUT_CHECK }         from '../subworkflows/local/input_check'
-include { AIRR_CONVERT }        from '../subworkflows/local/airr_convert'
+include { CONVERT }             from '../subworkflows/local/convert'
 include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 
-include { MAP_PHENOTYPES }      from '../subworkflows/local/map_phenotypes'
-include { RESOLVE_SAMPLESHEET_PHENO } from '../subworkflows/local/resolve_samplesheet_pheno'
-include { SAMPLE_PHENO } from '../subworkflows/local/sample_pheno'
-include { COMPARE_PHENO } from '../subworkflows/local/compare_pheno'
+include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -49,26 +46,28 @@ workflow TCRTOOLKIT {
     INPUT_CHECK( file(params.samplesheet) )
     ch_samplesheet_utf8 = INPUT_CHECK.out.samplesheet_utf8
 
-    // Initialize empty channels
-    ch_phenotype_files_transformed = Channel.empty() 
-    ch_phenotype_samplesheet = Channel.empty() 
+    if (input_format == 'adaptive') {
+        CONVERT(
+            INPUT_CHECK.out.sample_map,
+            input_format
+        )
+        .sample_map_converted
+        .set { sample_map_final }
 
-    if (input_format in ['adaptive', 'cellranger']) {
-        def sobject_gex_file = params.sobject_gex ? file(params.sobject_gex) : []
-
-        AIRR_CONVERT( INPUT_CHECK.out.sample_map,
-            input_format, sobject_gex_file
-            )
-            .sample_map_converted
-            .set { sample_map_final }
+    } else if (input_format == 'cellranger') {
+        CONVERT(
+            INPUT_CHECK.out.sample_map,
+            input_format
+        )
+        .sample_map_converted
+        .set { sample_map_final }
 
         if (params.sobject_gex) {
-            MAP_PHENOTYPES(
-                AIRR_CONVERT.out.pseudobulk_phenotype_files,
-                ch_samplesheet_utf8
+            PSEUDOBULK_PHENOTYPE(
+                CONVERT.out.pseudobulk_phenotype_files,
+                INPUT_CHECK.out.samplesheet_utf8,
+                levels
             )
-            ch_phenotype_files_transformed = MAP_PHENOTYPES.out.files_transformed
-            ch_phenotype_samplesheet = MAP_PHENOTYPES.out.samplesheet_pheno
         }
 
     } else {
@@ -91,27 +90,6 @@ workflow TCRTOOLKIT {
         COMPARE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
             RESOLVE_SAMPLESHEET.out.all_sample_files)
     }
-
-    // --- Phenotype Analysis ---
-
-    if (params.sobject_gex) {
-
-        RESOLVE_SAMPLESHEET_PHENO(
-            ch_phenotype_files_transformed
-        )
-
-        if (levels.contains('sample')) {
-            SAMPLE_PHENO( ch_phenotype_files_transformed, ch_phenotype_samplesheet ) // ch_phenotype_samplesheet // RESOLVE_SAMPLESHEET_PHENO.out.samplesheet_resolved
-        }
-
-        if (levels.contains('compare')) {
-            COMPARE_PHENO(
-                ch_phenotype_samplesheet,
-                RESOLVE_SAMPLESHEET_PHENO.out.all_sample_files
-            )
-        }
-    }
-    
 }
 
 /*

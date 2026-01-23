@@ -1,4 +1,4 @@
-process PSEUDOBULK_CELLRANGER_PHENOTYPE {
+process PSEUDOBULK_PHENOTYPE_CELLRANGER {
     tag "${sample_meta.sample}"
     label 'process_low'
     container "ghcr.io/karchinlab/tcrtoolkit:main"
@@ -12,14 +12,7 @@ process PSEUDOBULK_CELLRANGER_PHENOTYPE {
     tuple val(sample_meta), path("${sample_meta.sample}_*_pseudobulk_phenotype.tsv"), emit: "cellranger_pseudobulk_phenotype"
 
     script:
-    // Dynamically add phenotype arguments only if sobject_gex is provided (i.e., not null)
-    def phenotype_args = sobject_gex ? "--phenotype --sobject_gex ${sobject_gex}" : ""
-
     """
-    pseudobulk.py \\
-        ${count_table} \\
-        ${sample_meta.sample} \\
-        ${airr_schema} \\
-        ${phenotype_args}
+    pseudobulk.py ${count_table} ${sample_meta.sample} ${airr_schema} --sobject_gex ${sobject_gex}
     """
 }
