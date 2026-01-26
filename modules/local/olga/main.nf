@@ -1,44 +1,110 @@
-process OLGA_PGEN_CALC {
+process OLGA_CALCULATE{
+    label 'process_single'
+    publishDir enabled: false
+
+    input:
+    path cdr3_chunk
+
+    output:
+    path "pgen_${cdr3_chunk}", emit: pgen_chunk
+
+    script:
+    """
+    olga-compute_pgen --humanTRB -i ${cdr3_chunk} -o "pgen_${cdr3_chunk}"
+    """
+}
+
+process OLGA_CONCATENATE {
+    label 'process_single'
+
+    input:
+    path pgen_chunks
+
+    output:
+    path "olga_pgen.tsv", emit: cdr3_pgen
+
+    script:
+    """
+    printf "CDR3b\tpgen\tlog10_pgen\n" > olga_pgen.tsv
+    cat ${pgen_chunks} \
+        | awk -F'\t' -v OFS='\t' '
+            {
+            cdr3 = \$1
+            pgen = \$2
+            if (pgen == "NA" || pgen == "" || pgen == 0) {
+                print cdr3, pgen, "NA"
+            } else {
+                print cdr3, pgen, log(pgen)/log(10)
+            }
+            }
+        ' \
+        >> olga_pgen.tsv
+    """
+}
+
+process OLGA_MERGE {
+    label 'process_single'
+
+    input:
+    path sorted_concat_cdr3
+    path cdr3_pgen
+
+    output:
+    path "concatenated_cdr3_pgen.tsv", emit: concat_cdr3_pgen
+
+    script:
+    """
+    head -n 1 ${sorted_concat_cdr3} \
+        | sed 's/\$/\tpgen\tlog10_pgen/' \
+        > concatenated_cdr3_pgen.tsv
+    
+    join -t \$'\t' \
+        -1 1 -2 1 \
+        -a 1 \
+        -e "NA" \
+        -o auto \
+        <(tail -n +2 ${sorted_concat_cdr3}) \
+        <(tail -n +2 ${cdr3_pgen}) \
+    >> concatenated_cdr3_pgen.tsv
+    """
+}
+
+process OLGA_SAMPLE_MERGE {
     tag "${sample_meta.sample}"
     label 'process_low'
 
     input:
     tuple val(sample_meta), path(count_table)
+    path cdr3_pgen
 
     output:
-    tuple val(sample_meta), path("${sample_meta.sample}_tcr_pgen.tsv"), emit: "olga_pgen"
-    path "olga_xmin_value.txt", emit: 'olga_xmin'
-    path "olga_xmax_value.txt", emit: 'olga_xmax'
+    tuple val(sample_meta), path("${sample_meta.sample}_tcr_pgen.tsv"), emit: olga_pgen
+    path "olga_xmin_value.txt", emit: olga_xmin
+    path "olga_xmax_value.txt", emit: olga_xmax
 
     script:
     """
     # Extract vector of cdr3 aa, dropping null values
     python - <<EOF
-    import pandas as pd
-
-    df = pd.read_csv("${count_table}", sep="\t")
-    df = df.dropna(subset=["junction_aa"])
-    df = df["junction_aa"]
-    df.to_csv("output.tsv", sep="\t", index=False, header=False)
-    EOF
-
-
-    olga-compute_pgen --humanTRB -i output.tsv -o "${sample_meta.sample}_pgen.tsv"
-
-
-    python - <<EOF
     import numpy as np
     import pandas as pd
 
-    # Merge count and probability generation tables 
-    df1 = pd.read_csv("${count_table}", sep="\t")
-    df1 = df1.dropna(subset=["junction_aa"])
-    df2 = pd.read_csv('${sample_meta.sample}_pgen.tsv', sep='\t', header=None, usecols=[0, 1], names=['junction_aa', 'pgen'])
-    merged_df = pd.merge(df1, df2, on='junction_aa', how='left')
+    df = pd.read_csv("${count_table}", sep="\t")
+
+    pgen = pd.read_csv("${cdr3_pgen}", sep="\t")
+    pgen = pgen.rename(columns={"CDR3b": "junction_aa"})
+
+    print(pgen.head())
+    print(df.head())
+
+    merged_df = df.merge(
+        pgen,
+        on="junction_aa",
+        how="inner"
+    )[['sequence_id', 'junction_aa', 'pgen', 'log10_pgen', 'duplicate_count', 'duplicate_frequency_percent']]
     merged_df.to_csv("${sample_meta.sample}_tcr_pgen.tsv", sep="\t", index=False)
 
-    merged_df = merged_df[merged_df['pgen'] != 0]
-    log_probs = np.log10(merged_df['pgen'])
+    log_probs = merged_df['log10_pgen']
 
     left_bound = np.floor(np.min(log_probs))
     right_bound = np.ceil(np.max(log_probs))
@@ -62,8 +128,8 @@ process OLGA_HISTOGRAM_CALC {
     val olga_global_xmax
 
     output:
-    tuple val(sample_meta), path("${sample_meta.sample}_histogram_data.hdf5"), emit: "olga_histogram"
-    path "olga_ymax_value.txt", emit: 'olga_ymax'
+    tuple val(sample_meta), path("${sample_meta.sample}_histogram_data.hdf5"), emit: olga_histogram
+    path "olga_ymax_value.txt", emit: olga_ymax
 
     script:
     """

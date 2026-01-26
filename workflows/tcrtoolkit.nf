@@ -15,6 +15,7 @@ include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
+include { ANNOTATE }            from '../subworkflows/local/annotate'
 
 include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
 
@@ -80,15 +81,21 @@ workflow TCRTOOLKIT {
     RESOLVE_SAMPLESHEET( ch_samplesheet_utf8,
         sample_map_final )
 
+    ANNOTATE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
+        RESOLVE_SAMPLESHEET.out.all_sample_files )
+
     // Running sample level analysis
     if (levels.contains('sample')) {
-        SAMPLE( sample_map_final )
+        SAMPLE( sample_map_final ),
+        ANNOTATE.out.cdr3_pgen
     }
 
     // Running comparison analysis
     if (levels.contains('compare')) {
         COMPARE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
-            RESOLVE_SAMPLESHEET.out.all_sample_files)
+            RESOLVE_SAMPLESHEET.out.all_sample_files,
+            ANNOTATE.out.concat_cdr3_sorted,
+            ANNOTATE.out.cdr3_pgen)
     }
 }
 

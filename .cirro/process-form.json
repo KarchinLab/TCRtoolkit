@@ -17,6 +17,12 @@
                 "type": "boolean",
                 "value": true
             },
+            "olga_chunk_length": {
+                "default": 2000000,
+                "description": "Divide total CDR3 list into chunks of n length for processing by OLGA. Larger length = reduced parallelization",
+                "title": "olga_chunk_length",
+                "type": "int"
+            },
             "distance_metric": {
                 "default": "tcrdist",
                 "description": "Use default TCRdist3 or Levenshtein distance metric.",
