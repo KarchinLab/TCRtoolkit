@@ -64,6 +64,8 @@ workflow TCRTOOLKIT {
         .set { sample_map_final }
 
         if (params.sobject_gex) {
+            // Current SCRATCH-annotate gex input:
+            // data/SCRATCH_ANNOTATION:SCTYPE_STATE_ANNOTATION/data/project_T_Cells_annotation_object.RDS
             PSEUDOBULK_PHENOTYPE(
                 CONVERT.out.pseudobulk_phenotype_files,
                 INPUT_CHECK.out.samplesheet_utf8,
