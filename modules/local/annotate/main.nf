@@ -11,7 +11,7 @@ process ANNOTATE_CONCATENATE {
     script:
     """
     # Concatenate input Adaptive files and process metadata
-    compare_concatenate.py $samplesheet_utf8
+    compare_concatenate.py "${samplesheet_utf8}"
     """
 }
 
