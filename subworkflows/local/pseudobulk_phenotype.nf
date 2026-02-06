@@ -13,7 +13,7 @@ include { SAMPLE_PLOT as SAMPLE_PLOT_PHENO } from '../../modules/local/sample/sa
 
 include { COMPARE_CALC as COMPARE_CALC_PHENO } from '../../modules/local/compare/compare_calc'
 include { COMPARE_PLOT as COMPARE_PLOT_PHENO } from '../../modules/local/compare/compare_plot'
-include { COMPARE_CONCATENATE as COMPARE_CONCATENATE_PHENO } from '../../modules/local/compare/compare_concatenate'
+include { ANNOTATE_CONCATENATE as COMPARE_CONCATENATE_PHENO } from '../../modules/local/annotate'
 
 workflow PSEUDOBULK_PHENOTYPE {
     take:

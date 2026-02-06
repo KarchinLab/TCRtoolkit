@@ -1,7 +1,0 @@
-﻿sample_id,filename,individual,time,origin
-s1,s1.cvs,A,0,PBMC
-s2,s2.cvs,A,7,PBMC
-s3,s3.cvs,A,0,Tumor
-s4,s4.cvs,B,0,PBMC
-s5,s5.cvs,B,7,PBMC
-s6,s6.cvs,B,0,Tumor,unexpected

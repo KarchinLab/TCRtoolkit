@@ -7,8 +7,8 @@
 
 include { COMPARE_CALC  } from '../../modules/local/compare/compare_calc'
 include { COMPARE_PLOT  } from '../../modules/local/compare/compare_plot'
-include { COMPARE_CONCATENATE  } from '../../modules/local/compare/compare_concatenate'
 include { TCRSHARING_CALC; TCRSHARING_HISTOGRAM; TCRSHARING_SCATTERPLOT } from '../../modules/local/compare/tcrsharing'
+include { OLGA_MERGE as TCRSHARING_OLGA_MERGE } from '../../modules/local/olga'
 include { GLIPH2_TURBOGLIPH; GLIPH2_PLOT } from '../../modules/local/compare/gliph2'
 include { GIANA_CALC    } from '../../modules/local/compare/giana'
 
@@ -19,12 +19,11 @@ include { GIANA_CALC    } from '../../modules/local/compare/giana'
 */
 
 workflow COMPARE {
-
-    // println("Welcome to the TCRSEQ pipeline! -- COMPARE ")
-
     take:
     samplesheet_resolved
     all_sample_files
+    concat_cdr3_sorted
+    cdr3_pgen
 
     main:
     COMPARE_CALC( samplesheet_resolved,
@@ -39,22 +38,23 @@ workflow COMPARE {
                   all_sample_files
                   )
 
-    COMPARE_CONCATENATE( samplesheet_resolved,
-        all_sample_files )
-
     GIANA_CALC(
-        COMPARE_CONCATENATE.out.concat_cdr3,
+        concat_cdr3_sorted,
         params.threshold,
         params.threshold_score,
         params.threshold_vgene
     )
 
-    GLIPH2_TURBOGLIPH(
-        COMPARE_CONCATENATE.out.concat_cdr3
-    )
+    if(params.use_gliph2) {
+        GLIPH2_TURBOGLIPH(
+            concat_cdr3_sorted
+        )
+    }
+
+    TCRSHARING_OLGA_MERGE (concat_cdr3_sorted, cdr3_pgen)
 
     TCRSHARING_CALC(
-        COMPARE_CONCATENATE.out.concat_cdr3
+        TCRSHARING_OLGA_MERGE.out.concat_cdr3_pgen
     )
 
     TCRSHARING_HISTOGRAM(
@@ -64,5 +64,4 @@ workflow COMPARE {
     TCRSHARING_SCATTERPLOT(
         TCRSHARING_CALC.out.shared_cdr3
     )
-
 }
