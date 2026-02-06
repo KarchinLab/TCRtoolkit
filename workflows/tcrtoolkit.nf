@@ -88,8 +88,10 @@ workflow TCRTOOLKIT {
 
     // Running sample level analysis
     if (levels.contains('sample')) {
-        SAMPLE( sample_map_final ),
-        ANNOTATE.out.cdr3_pgen
+        SAMPLE(
+            sample_map_final,
+            ANNOTATE.out.cdr3_pgen
+        )
     }
 
     // Running comparison analysis
