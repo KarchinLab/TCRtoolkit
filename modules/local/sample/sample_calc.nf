@@ -17,12 +17,4 @@ process SAMPLE_CALC {
     """
     sample_calc.py -s '${sample_meta.sample}' -c ${count_table}
     """
-
-    stub:
-    """
-    touch sample_stats.csv
-    touch v_family.csv
-    touch d_family.csv
-    touch j_family.csv
-    """
 }
