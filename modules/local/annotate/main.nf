@@ -11,6 +11,8 @@ process ANNOTATE_CONCATENATE {
     script:
     """
     # Concatenate input Adaptive files and process metadata
+    # Note: 'all_sample_files' is used as an implicit dependency to control scheduling.
+    : $all_sample_files
     compare_concatenate.py "${samplesheet_utf8}"
     """
 }
