@@ -21,7 +21,7 @@
                 "default": 2000000,
                 "description": "Divide total CDR3 list into chunks of n length for processing by OLGA. Larger length = reduced parallelization",
                 "title": "olga_chunk_length",
-                "type": "int"
+                "type": "integer"
             },
             "distance_metric": {
                 "default": "tcrdist",
