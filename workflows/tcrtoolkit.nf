@@ -97,12 +97,12 @@ workflow TCRTOOLKIT {
     }
 
     // Running comparison analysis
-    if (levels.contains('compare')) {
-        COMPARE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
-            RESOLVE_SAMPLESHEET.out.all_sample_files,
-            ANNOTATE.out.concat_cdr3_sorted,
-            ANNOTATE.out.cdr3_pgen)
-    }
+    // if (levels.contains('compare')) {
+    //     COMPARE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
+    //         RESOLVE_SAMPLESHEET.out.all_sample_files,
+    //         ANNOTATE.out.concat_cdr3_sorted,
+    //         ANNOTATE.out.cdr3_pgen)
+    // }
 }
 
 /*

@@ -29,35 +29,41 @@ def main():
             row['file'],
             sep="\t",
             usecols=[
-                'junction_aa',
-                'v_call',
-                'j_call',
-                'duplicate_count',
-                'productive'
+                'amino_acid', #'junction_aa',
+                'v_gene',
+                'j_gene',
+                'productive_frequency', #'duplicate_count',
+                # 'productive'
             ]
         )
+        df = df.rename(columns={
+            'amino_acid': 'CDR3b',
+            'v_gene': 'v_call',
+            'j_gene': 'j_call',
+            'productive_frequency': 'duplicate_frequency_percent'
+        })
 
         # Retain only productive CDR3 sequences
         df = df[
-            (df['productive']) &
-            (df['junction_aa'].notna()) &
-            (df['v_call'].notna()) # also remove rows with a CDR3 sequence but no Vgene called
+            # (df['productive']) &
+            (df['CDR3b'].notna()) # &
+            # (df['v_call'].notna()) # also remove rows with a CDR3 sequence but no Vgene called
         ]
 
         df['sample'] = row['sample']
-        df = df[['junction_aa', 'v_call', 'j_call', 'duplicate_count', 'sample']]
+        df = df[['CDR3b', 'v_call', 'j_call', 'duplicate_frequency_percent', 'sample']]
 
         dfs.append(df)
 
     df_combined = pd.concat(dfs, ignore_index=True)
 
     # Rename columns as required
-    df_combined = df_combined.rename(columns={
-        'junction_aa': 'CDR3b',
-        'v_call': 'TRBV',
-        'j_call': 'TRBJ',
-        'duplicate_count': 'counts'
-    })
+    # df_combined = df_combined.rename(columns={
+    #     'junction_aa': 'CDR3b',
+    #     'v_call': 'TRBV',
+    #     'j_call': 'TRBJ',
+    #     'duplicate_count': 'counts'
+    # })
 
     df_combined.to_csv(f"concatenated_cdr3.tsv", sep="\t", index=False)
 

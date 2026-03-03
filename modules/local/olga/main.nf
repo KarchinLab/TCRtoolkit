@@ -79,8 +79,6 @@ process OLGA_SAMPLE_MERGE {
 
     output:
     tuple val(sample_meta), path("${sample_meta.sample}_tcr_pgen.tsv"), emit: olga_pgen
-    path "olga_xmin_value.txt", emit: olga_xmin
-    path "olga_xmax_value.txt", emit: olga_xmax
 
     script:
     """
@@ -90,30 +88,18 @@ process OLGA_SAMPLE_MERGE {
     import pandas as pd
 
     df = pd.read_csv("${count_table}", sep="\t")
+    df = df.rename(columns={"amino_acid": "junction_aa", "productive_frequency": "duplicate_frequency_percent"})
 
     pgen = pd.read_csv("${cdr3_pgen}", sep="\t")
     pgen = pgen.rename(columns={"CDR3b": "junction_aa"})
-
-    print(pgen.head())
-    print(df.head())
 
     merged_df = df.merge(
         pgen,
         on="junction_aa",
         how="inner"
-    )[['sequence_id', 'junction_aa', 'pgen', 'log10_pgen', 'duplicate_count', 'duplicate_frequency_percent']]
+    )[['junction_aa', 'pgen', 'log10_pgen', 'duplicate_frequency_percent']]
     merged_df.to_csv("${sample_meta.sample}_tcr_pgen.tsv", sep="\t", index=False)
 
-    log_probs = merged_df['log10_pgen']
-
-    left_bound = np.floor(np.min(log_probs))
-    right_bound = np.ceil(np.max(log_probs))
-
-    with open(f"olga_xmin_value.txt", "w") as f:
-        f.write(str(left_bound))
-
-    with open(f"olga_xmax_value.txt", "w") as f:
-        f.write(str(right_bound))
     EOF
     """
 }
