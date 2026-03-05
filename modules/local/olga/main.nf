@@ -96,8 +96,8 @@ process OLGA_SAMPLE_MERGE {
     merged_df = df.merge(
         pgen,
         on="junction_aa",
-        how="inner"
-    )[['junction_aa', 'pgen', 'log10_pgen', 'duplicate_frequency_percent']]
+        how="left"
+    )
     merged_df.to_csv("${sample_meta.sample}_tcr_pgen.tsv", sep="\t", index=False)
 
     EOF
