@@ -87,7 +87,22 @@ process OLGA_SAMPLE_MERGE {
     import numpy as np
     import pandas as pd
 
-    df = pd.read_csv("${count_table}", sep="\t")
+    df = pd.read_csv("${count_table}", sep="\t",
+        usecols=[
+        "amino_acid",
+        "frame_type",
+        "productive_frequency",
+        "v_family",
+        "v_gene",
+        "v_allele",
+        "d_family",
+        "d_gene",
+        "d_allele",
+        "j_family",
+        "j_gene",
+        "j_allele"
+    ])
+    df = df[df['amino_acid'].notna()]
     df = df.rename(columns={"amino_acid": "junction_aa", "productive_frequency": "duplicate_frequency_percent"})
 
     pgen = pd.read_csv("${cdr3_pgen}", sep="\t")
