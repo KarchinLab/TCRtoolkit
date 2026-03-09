@@ -5,7 +5,7 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { ANNOTATE_CONCATENATE; ANNOTATE_SORT_CDR3; ANNOTATE_DEDUPLICATE_CDR3_TRBV; ANNOTATE_DEDUPLICATE_CDR3 } from '../../modules/local/annotate'
+include { ANNOTATE_PROCESS; ANNOTATE_SORT_CDR3; ANNOTATE_DEDUPLICATE_CDR3_TRBV; ANNOTATE_DEDUPLICATE_CDR3 } from '../../modules/local/annotate'
 include { OLGA_CONCATENATE; OLGA_CALCULATE } from '../../modules/local/olga'
 
 /*
@@ -16,14 +16,15 @@ include { OLGA_CONCATENATE; OLGA_CALCULATE } from '../../modules/local/olga'
 
 workflow ANNOTATE {
     take:
-    samplesheet_resolved
-    all_sample_files
+    sample_map
 
     main:
-    ANNOTATE_CONCATENATE( samplesheet_resolved,
-        all_sample_files )
+    ANNOTATE_PROCESS( sample_map )
+    ANNOTATE_PROCESS.out.process
+        .collectFile(name: 'concat_cdr3.tsv', keepHeader: true, skip: 1)
+        .set { concat_cdr3 }
 
-    ANNOTATE_SORT_CDR3( ANNOTATE_CONCATENATE.out.concat_cdr3 )
+    ANNOTATE_SORT_CDR3( concat_cdr3 )
     concat_cdr3_sorted = ANNOTATE_SORT_CDR3.out.concat_cdr3_sorted
 
     ANNOTATE_DEDUPLICATE_CDR3_TRBV( concat_cdr3_sorted )

@@ -84,8 +84,7 @@ workflow TCRTOOLKIT {
         sample_map_final )
 
     if (levels.intersect(['sample','compare'])) {
-        ANNOTATE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
-            RESOLVE_SAMPLESHEET.out.all_sample_files )
+        ANNOTATE( sample_map_final )
     }
 
     // Running sample level analysis

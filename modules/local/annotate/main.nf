@@ -1,3 +1,52 @@
+process ANNOTATE_PROCESS {
+    tag "${sample_meta.sample}"
+    label 'process_low'
+    publishDir enabled: false
+
+    input:
+    tuple val(sample_meta), path(count_table)
+
+    output:
+    path "${sample_meta.sample}_cdr3.tsv", emit: "process"
+
+    script:
+    """
+    python - <<EOF
+import pandas as pd
+
+USECOLS = [
+    "amino_acid",
+    "v_gene",
+    "j_gene",
+    "productive_frequency"
+]
+
+COLMAP = {
+    "amino_acid": "CDR3b",
+    "v_gene": "v_call",
+    "j_gene": "j_call",
+    "productive_frequency": "duplicate_frequency_percent"
+}
+
+df = pd.read_csv(
+    "${count_table}",
+    sep='\t',
+    usecols=USECOLS,
+    dtype={
+        "amino_acid": "string",
+        "v_gene": "string",
+        "j_gene": "string",
+        "productive_frequency": "float32"
+    })
+df.rename(columns=COLMAP, inplace=True)
+df = df[df.CDR3b.notna()]
+df["sample"] = "${sample_meta.sample}"
+df.to_csv("${sample_meta.sample}_cdr3.tsv", sep="\t", index=False)
+
+EOF
+    """
+}
+
 process ANNOTATE_CONCATENATE {
     label 'process_low'
 
