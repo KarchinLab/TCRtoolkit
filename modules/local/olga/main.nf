@@ -10,7 +10,21 @@ process OLGA_CALCULATE{
 
     script:
     """
-    olga-compute_pgen --humanTRB -i ${cdr3_chunk} -o "pgen_${cdr3_chunk}"
+    olga-compute_pgen --humanTRB -i ${cdr3_chunk} -o olga_pgen.tsv
+    cat olga_pgen.tsv \
+    | awk -F'\t' -v OFS='\t' '
+        BEGIN { log10_base = log(10) }
+        {
+            cdr3 = \$1
+            pgen = \$2
+
+            if (pgen == "NA" || pgen == "" || pgen == 0) {
+                print cdr3, pgen, "NA"
+            } else {
+                print cdr3, pgen, log(pgen)/log10_base
+            }
+        }
+    ' > "pgen_${cdr3_chunk}"
     """
 }
 
@@ -22,23 +36,39 @@ process OLGA_CONCATENATE {
 
     output:
     path "olga_pgen.tsv", emit: cdr3_pgen
+    path "olga_pgen.stats.tsv", emit: cdr3_pgen_stats
 
     script:
     """
-    printf "CDR3b\tpgen\tlog10_pgen\n" > olga_pgen.tsv
-    cat ${pgen_chunks} \
-        | awk -F'\t' -v OFS='\t' '
-            {
+    awk -F'\t' '
+        BEGIN {
+            max_len = 0
+            min_log = ""
+            max_log = ""
+        }
+
+        {
             cdr3 = \$1
-            pgen = \$2
-            if (pgen == "NA" || pgen == "" || pgen == 0) {
-                print cdr3, pgen, "NA"
-            } else {
-                print cdr3, pgen, log(pgen)/log(10)
+            log10 = \$3
+
+            len = length(cdr3)
+            if (len > max_len) max_len = len
+
+            if (log10 != "NA" && log10 != "") {
+                if (min_log == "" || log10 < min_log) min_log = log10
+                if (max_log == "" || log10 > max_log) max_log = log10
             }
-            }
-        ' \
-        >> olga_pgen.tsv
+        }
+
+        END {
+            printf "max_cdr3_length\t%d\\n", max_len > "olga_pgen.stats.tsv"
+            printf "min_log10_pgen\t%s\\n", min_log > "olga_pgen.stats.tsv"
+            printf "max_log10_pgen\t%s\\n", max_log > "olga_pgen.stats.tsv"
+        }
+    ' ${pgen_chunks}
+
+    printf "CDR3b\tpgen\tlog10_pgen\n" > olga_pgen.tsv
+    cat ${pgen_chunks} >> olga_pgen.tsv
     """
 }
 
@@ -72,10 +102,12 @@ process OLGA_MERGE {
 process OLGA_SAMPLE_MERGE {
     tag "${sample_meta.sample}"
     label 'process_low'
+    memory {8.GB  * task.attempt}
 
     input:
     tuple val(sample_meta), path(count_table)
     path cdr3_pgen
+    val olga_stats
 
     output:
     tuple val(sample_meta), path("${sample_meta.sample}_tcr_pgen.tsv"), emit: olga_pgen
@@ -84,38 +116,133 @@ process OLGA_SAMPLE_MERGE {
     """
     # Extract vector of cdr3 aa, dropping null values
     python - <<EOF
-    import numpy as np
-    import pandas as pd
+import numpy as np
+import pandas as pd
 
-    df = pd.read_csv("${count_table}", sep="\t",
-        usecols=[
-        "amino_acid",
-        "frame_type",
-        "productive_frequency",
-        "v_family",
-        "v_gene",
-        "v_allele",
-        "d_family",
-        "d_gene",
-        "d_allele",
-        "j_family",
-        "j_gene",
-        "j_allele"
-    ])
-    df = df[df['amino_acid'].notna()]
-    df = df.rename(columns={"amino_acid": "junction_aa", "productive_frequency": "duplicate_frequency_percent"})
+INDEX_FILE = "${cdr3_pgen}"
+REP_FILE = "${count_table}"
+OUTPUT_FILE = "${sample_meta.sample}_tcr_pgen.tsv"
 
-    pgen = pd.read_csv("${cdr3_pgen}", sep="\t")
-    pgen = pgen.rename(columns={"CDR3b": "junction_aa"})
+CHUNKSIZE = 2_000_000
 
-    merged_df = df.merge(
-        pgen,
-        on="junction_aa",
-        how="left"
+
+def load_index():
+
+    print("Loading pgen index...")
+
+    df = pd.read_csv(
+        INDEX_FILE,
+        sep="\t",
+        usecols=["CDR3b", "pgen", "log10_pgen"],
+        dtype={"CDR3b": "object"},
     )
-    merged_df.to_csv("${sample_meta.sample}_tcr_pgen.tsv", sep="\t", index=False)
 
-    EOF
+    max_len = "${olga_stats.max_cdr3_length}"
+    cdr3_dtype = f"S{max_len}"
+
+    print(f"Max CDR3 length: {max_len}")
+
+    cdr3_index = df["CDR3b"].values.astype(cdr3_dtype)
+
+    pgen_index = df["pgen"].to_numpy(dtype=np.float64)
+
+    log10_index = pd.to_numeric(
+        df["log10_pgen"], errors="coerce"
+    ).to_numpy(dtype=np.float32)
+
+    del df
+
+    print("Index loaded:", len(cdr3_index))
+
+    return cdr3_index, pgen_index, log10_index, cdr3_dtype
+
+
+def annotate_chunk(chunk, cdr3_index, pgen_index, log10_index, cdr3_dtype):
+
+    query = chunk["junction_aa"].values.astype(cdr3_dtype)
+
+    pos = np.searchsorted(cdr3_index, query)
+
+    pos_safe = pos.clip(max=len(cdr3_index) - 1)
+
+    match = (pos < len(cdr3_index)) & (cdr3_index[pos_safe] == query)
+
+    pgen_out = np.full(len(chunk), np.nan, dtype=np.float64)
+    log10_out = np.full(len(chunk), np.nan, dtype=np.float32)
+
+    pgen_out[match] = pgen_index[pos[match]]
+    log10_out[match] = log10_index[pos[match]]
+
+    chunk["pgen"] = pgen_out
+    chunk["log10_pgen"] = log10_out
+
+    return chunk
+
+
+def stream_join():
+
+    cdr3_index, pgen_index, log10_index, cdr3_dtype = load_index()
+
+    reader = pd.read_csv(
+        REP_FILE,
+        sep="\t",
+        chunksize=CHUNKSIZE,
+        dtype={"amino_acid": "object"},
+        usecols=[
+            "amino_acid",
+            "frame_type",
+            "productive_frequency",
+            "v_family",
+            "v_gene",
+            "v_allele",
+            "d_family",
+            "d_gene",
+            "d_allele",
+            "j_family",
+            "j_gene",
+            "j_allele"
+        ])
+
+    header_written = False
+
+    for i, chunk in enumerate(reader):
+
+        print(f"Processing chunk {i} ({len(chunk)} rows)")
+        chunk = chunk[chunk['amino_acid'].notna()]
+
+        chunk.rename(
+            columns={
+                "amino_acid": "junction_aa",
+                "productive_frequency": "duplicate_frequency_percent"
+            },
+            inplace=True
+        )
+
+        chunk = annotate_chunk(
+            chunk,
+            cdr3_index,
+            pgen_index,
+            log10_index,
+            cdr3_dtype,
+        )
+
+        chunk.to_csv(
+            OUTPUT_FILE,
+            sep="\t",
+            index=False,
+            mode="a",
+            header=not header_written,
+        )
+
+        header_written = True
+
+    print("Join complete")
+
+
+if __name__ == "__main__":
+    stream_join()
+
+EOF
     """
 }
 

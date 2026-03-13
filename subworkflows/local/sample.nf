@@ -28,6 +28,7 @@ workflow SAMPLE {
     take:
     sample_map
     cdr3_pgen
+    olga_stats
 
     main:
 
@@ -87,9 +88,10 @@ workflow SAMPLE {
     //     global_y_max_value
     // )
 
-    cdr3_pgen_file = cdr3_pgen.first()
+
     OLGA_SAMPLE_MERGE ( sample_map,
-        cdr3_pgen_file )
+        cdr3_pgen.first(),
+        olga_stats )
 
     // OLGA_SAMPLE_MERGE.out.olga_xmin
     //     .map { xmin -> xmin.text.trim().toDouble() }
