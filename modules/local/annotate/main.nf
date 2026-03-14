@@ -1,3 +1,50 @@
+process ANNOTATE_PROCESS {
+    tag "${sample_meta.sample}"
+    label 'process_low'
+    publishDir enabled: false
+
+    input:
+    tuple val(sample_meta), path(count_table)
+
+    output:
+    path "${sample_meta.sample}_cdr3.tsv", emit: "process"
+
+    script:
+    """
+    python - <<EOF
+import pandas as pd
+
+USECOLS = [
+    "junction_aa",
+    "v_call",
+]
+
+COLMAP = {
+    "junction_aa": "CDR3b",
+}
+
+df = pd.read_csv(
+    "${count_table}",
+    sep='\t',
+    usecols=USECOLS,
+    dtype={
+        "junction_aa": "string",
+        "v_gene": "string",
+    })
+
+df = (
+    df[df.junction_aa.notna()]
+    .rename(columns=COLMAP)
+    [["CDR3b", "v_call"]]
+)
+df["sample"] = "${sample_meta.sample}"
+
+df.to_csv("${sample_meta.sample}_cdr3.tsv", sep="\t", index=False)
+
+EOF
+    """
+}
+
 process ANNOTATE_CONCATENATE {
     label 'process_low'
 

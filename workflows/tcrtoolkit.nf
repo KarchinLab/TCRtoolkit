@@ -92,7 +92,8 @@ workflow TCRTOOLKIT {
     if (levels.contains('sample')) {
         SAMPLE(
             sample_map_final,
-            ANNOTATE.out.cdr3_pgen
+            ANNOTATE.out.cdr3_pgen,
+            ANNOTATE.out.olga_stats
         )
     }
 
