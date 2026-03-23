@@ -1,0 +1,267 @@
+
+```{python}
+#| include: false
+
+# ---------------------------------------------------------
+# DERIVED PATHS 
+# ---------------------------------------------------------
+
+# Define files 
+project_dir=f"{project_dir}"
+
+sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
+concat_csv = f"{project_dir}/annotate/concatenated_cdr3.tsv"  # f"{project_dir}/compare/concatenated_cdr3.txt" 
+
+v_family_csv= f"{project_dir}/sample/v_family.csv"
+j_family_csv= f"{project_dir}/sample/j_family.csv"
+morisita_mat_pheno= f"{project_dir}/compare_phenotype/morisita_mat.csv"
+concat_csv_pheno=f"{project_dir}/compare_phenotype/concatenated_cdr3.tsv"
+sample_table_pheno=f"{project_dir}/pipeline_info/samplesheet_phenotype.csv"
+
+#  Define dirs
+tcrdist_dir = f"{project_dir}/tcrdist3/"
+olga_dir = f"{project_dir}/olga/"
+tcrpheno_dir = f"{project_dir}/tcrpheno/"
+pseudobulk_dir = f"{project_dir}/pseudobulk/"
+VDJdb_dir = f"{project_dir}/vdjdb/"
+convergence_dir = f"{project_dir}/convergence/"
+
+```
+
+
+```{python}
+#| code-fold: true
+
+# 1. Load Packages
+import datetime
+import glob
+import itertools
+import math
+import os
+import sys
+import h5py
+import igraph as ig
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+# import networkx as nx
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import scipy.cluster.hierarchy as sch
+import seaborn as sns
+from IPython.display import Image
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.sparse import csr_matrix
+from scipy.stats import gaussian_kde
+import plotly.io as pio
+from scipy import stats
+from itertools import combinations
+from scipy.stats import mannwhitneyu
+from plotly.subplots import make_subplots
+from pathlib import Path
+import re
+import upsetplot
+import warnings
+from pathlib import Path
+import io
+import base64
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="plotly"
+)
+
+# 2. Print pipeline parameters
+
+print('Project Name:          ' + project_name)
+print('Workflow command:      ' + workflow_cmd)
+print('Date and time:         ' + str(datetime.datetime.now()))
+
+# 3. Loading data
+## Reading sample metadata
+meta = pd.read_csv(sample_table, sep=',')
+meta.drop(columns=['file'], inplace=True)
+meta_cols = meta.columns.tolist()
+
+## Reading combined repertoire statistics
+df = pd.read_csv(sample_stats_csv, sep=',')
+df = pd.merge(df, meta, on='sample', how='left')
+df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
+
+## Reading V gene family usage
+v_family = pd.read_csv(v_family_csv, sep=',')
+v_family = pd.merge(v_family, meta, on='sample', how='left')
+v_family = v_family[meta_cols + [c for c in v_family.columns if c not in meta_cols]]
+v_family = v_family.sort_values(by=[subject_col])
+
+## Reading J gene family usage
+j_family = pd.read_csv(j_family_csv, sep=',')
+j_family = pd.merge(j_family, meta, on='sample', how='left')
+j_family = j_family[meta_cols + [c for c in j_family.columns if c not in meta_cols]]
+j_family = j_family.sort_values(by=[subject_col])
+
+## Reading concatenated cdr3 file
+concat_df = pd.read_csv(concat_csv, sep='\t')
+concat_df = concat_df.merge(meta[['sample', subject_col, alias_col, 'timepoint', timepoint_order_col]], on='sample', how='left')
+
+# Phenotype files
+
+# Samplesheet
+metadata_pheno_df = pd.read_csv(sample_table_pheno, sep=',', header=0, index_col="file")
+metadata_pheno_df.index = metadata_pheno_df.index.map(lambda p: Path(p).name)
+metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_pseudobulk', '', regex=False)
+metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_phenotype.tsv', '', regex=False)
+# Morisita
+morisita_pheno_df = pd.read_csv(morisita_mat_pheno, sep=',', header=0, index_col=0)
+morisita_pheno_df.index = morisita_pheno_df.index.str.replace('_airr', '', regex=False)
+morisita_pheno_df.index = morisita_pheno_df.index.str.replace('_pseudobulk', '', regex=False)
+morisita_pheno_df.columns = morisita_pheno_df.columns.str.replace('_airr', '', regex=False)
+morisita_pheno_df.columns = morisita_pheno_df.columns.str.replace('_pseudobulk', '', regex=False)
+
+# Importing sample metadata (pheno-ps)
+clonotypes_pheno_df = pd.read_csv(concat_csv_pheno, sep='\t', header=0, index_col=0).reset_index()
+clonotypes_pheno_df['sample_phenotype'] = clonotypes_pheno_df['sample']
+# Add 'sample_phenotype' and 'phenotype'
+samples = sorted(meta['sample'].astype(str).unique(), key=len, reverse=True)
+pattern = r'^(?P<sample>' + '|'.join(map(re.escape, samples)) + r')(?:_(?P<phenotype>.*))?$'
+extracted = clonotypes_pheno_df['sample_phenotype'].astype(str).str.extract(pattern)
+clonotypes_pheno_df['sample'] = extracted['sample']
+clonotypes_pheno_df['phenotype'] = extracted['phenotype']
+
+```
+
+## Phenotypic plasticity of TCR Clones {#sec-overlap-pheno}
+
+While the previous section zoomed in on plasticity within a single sample, this analysis provides a macroscopic view of the **entire dataset**. By comparing **every sample-phenotype combination against every other combination**, we can determine the global structure of the immune landscape. This heatmap helps answer a fundamental question: Is the TCR repertoire defined more by the patient's identity (e.g., all phenotypes from Patient A look similar) or by the cell type (e.g., all "CD8 Effector Memory" cells look similar, regardless of the patient)?
+
+This clustered heatmap helps answer a fundamental biological question: Is an individual's TCR repertoire organized more by the specific clinical timepoint (e.g., all cell phenotypes at Day 17 cluster together due to a massive, broad acute response) or by the persistent cell lineage (e.g., all "CD8 Effector Memory" cells maintain a highly similar repertoire across all timepoints)?
+
+The **Morisita-Horn Index**  is a similarity metric often used to compare the similarity, which is **sensitive to clonal abundance**. This is critical for TCR data because it properly weights the contribution of highly expanded T-cell clones that are likely driving an immune response.
+
+The index metric for 2 given samples is calculated as follows:
+$$
+M(A,B)=\frac{2\sum_{i=1}^{S}a_{i}b_{i}}{(D_{a}+D_{b})AB} ; D_{a}=\frac{\sum_{i=1}^{S}a_{i}^{2}}{A^2},\quad D_{b}=\frac{\sum_{i=1}^{S}b_{i}^{2}}{B^2}
+$$
+
+Where:
+
+- $A$ and $B$ are the sets of unique CDR3 amino acid sequences (TCRs) in samples A and B.
+- $a_{i}$ ($b_{i}$) is the number of times TCR $i$ is represented in the total $A$ ($B$) from one sample.
+- $S$ is the total number of unique TCRs in the two samples.
+- $D_{a}$ and $D_{b}$ are the Simpson Index values for samples A and B, respectively.
+
+
+```{python}
+#| output: asis
+#| echo: false
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Ensure entire matrix is numeric
+morisita_numeric_pheno = morisita_pheno_df.apply(pd.to_numeric, errors='coerce')
+
+# Create mappings directly from metadata
+sample_to_timepoint = dict(zip(meta['sample'], meta['timepoint']))
+sample_to_subject = dict(zip(meta['sample'], meta[subject_col]))
+
+# Get all unique patients and sort them
+all_subjects = sorted(meta[subject_col].dropna().unique())
+
+# --- Generate Quarto Tabs ---
+print("::: {.panel-tabset}\n")
+
+for subject in all_subjects:
+    # Get all original sample IDs that belong to this patient
+    subject_samples = meta[meta[subject_col] == subject]['sample'].tolist()
+    
+    # Identify which columns in the Morisita matrix belong to this patient
+    subject_cols = []
+    rename_mapping = {}
+    
+    for col in morisita_numeric_pheno.columns:
+        for orig_sample in subject_samples:
+            if col.startswith(orig_sample):
+                subject_cols.append(col)
+                # Create the new name: swap <orig_sample> for <timepoint>
+                timepoint = sample_to_timepoint[orig_sample]
+                new_name = col.replace(orig_sample, str(timepoint), 1)
+                rename_mapping[col] = new_name
+                break
+                
+    # Skip patients that don't have enough data to form a heatmap
+    if len(subject_cols) < 2:
+        continue
+        
+    print(f"## {subject}\n")
+    
+    # 1. Subset the matrix for THIS patient only
+    subj_matrix = morisita_numeric_pheno.loc[subject_cols, subject_cols].copy()
+    
+    # 2. Safely rename the rows and columns to <timepoint>_<phenotype>
+    subj_matrix = subj_matrix.rename(index=rename_mapping, columns=rename_mapping)
+    
+    # 3. Cluster the subset matrix to establish visual order
+    sns_cluster = sns.clustermap(subj_matrix)
+    plt.close() # Prevent seaborn from rendering static plots in the notebook
+    
+    # 4. Reorder matrix based on hierarchical clustering
+    subj_matrix_clustered = subj_matrix.iloc[
+        sns_cluster.dendrogram_row.reordered_ind,
+        sns_cluster.dendrogram_col.reordered_ind
+    ]
+    
+    # 5. Prepare values for Plotly (Masking the diagonal)
+    vals = subj_matrix_clustered.values.copy()
+    np.fill_diagonal(vals, np.nan) 
+    
+    # Calculate dynamic max color scale for this specific patient
+    zmax = np.nanmax(vals) if not np.all(np.isnan(vals)) else 1
+
+    # 6. Generate Plotly Heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=vals,
+        x=subj_matrix_clustered.columns,
+        y=subj_matrix_clustered.index,
+        text=np.round(subj_matrix_clustered.values, 3),
+        hoverinfo="text",
+        coloraxis="coloraxis",
+        zmin=0,
+        zmax=zmax
+    ))
+    
+    fig.update_layout(
+        title=f"Phenotype Similarity (Morisita) — {subject}",
+        plot_bgcolor='white',
+        coloraxis=dict(colorscale='Viridis', colorbar=dict(title="Similarity")),
+        width=750,
+        height=750,
+        xaxis=dict(tickfont=dict(size=11), tickangle=45),
+        yaxis=dict(tickfont=dict(size=11)),
+        margin=dict(t=80, b=150, l=150, r=50) # Extra margins to accommodate long labels
+    )
+    
+    # Enforce square aspect ratio for heatmaps
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    
+    fig.show()
+    print("\n\n")
+
+print(":::\n")
+
+```
+**Figure 3: Morisita sharing index of exact sequences.** Heatmap showing sharing between all sample-phenotype pairs.
+
+**High Similarity Clusters (The Hotspots)**: Look for square "blocks" of yellow or bright green along the diagonal.
+
+- **Patient Clustering:** If you see a solid block of high similarity corresponding to multiple phenotypes from the same patient, it indicates that the patient's repertoire is highly distinct and internally consistent. The clonal landscape is driven primarily by the individual's immune history.
+
+- **Phenotype Convergence:** If you see hotspots connecting the same phenotype across different patients (e.g., "Reg_T" from Patient 1 overlapping with "Reg_T" from Patient 2), this suggests the presence of "public" TCRs—clones that are universally selected for that specific functional role, regardless of the host.
+
+**Low Similarity (The Background):** Dark blue or purple areas represent pairs of samples with little to no TCR overlap. A dark background highlights just how unique each repertoire is, emphasizing that T-cell expansion is often private to specific conditions or individuals.

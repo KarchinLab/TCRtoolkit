@@ -1,0 +1,621 @@
+
+
+```{python}
+#| include: false
+
+# ---------------------------------------------------------
+# DERIVED PATHS 
+# ---------------------------------------------------------
+
+# Define files 
+project_dir=f"{project_dir}"
+
+sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
+concat_csv = f"{project_dir}/annotate/concatenated_cdr3.tsv"
+
+v_family_csv= f"{project_dir}/sample/v_family.csv"
+j_family_csv= f"{project_dir}/sample/j_family.csv"
+morisita_mat_pheno= f"{project_dir}/compare_phenotype/morisita_mat.csv"
+concat_csv_pheno=f"{project_dir}/compare_phenotype/concatenated_cdr3.tsv"
+sample_table_pheno=f"{project_dir}/pipeline_info/samplesheet_phenotype.csv"
+
+#  Define dirs
+tcrdist_dir = f"{project_dir}/tcrdist3/"
+olga_dir = f"{project_dir}/olga/"
+tcrpheno_dir = f"{project_dir}/tcrpheno/"
+pseudobulk_dir = f"{project_dir}/pseudobulk/"
+VDJdb_dir = f"{project_dir}vdjdb/"
+convergence_dir = f"{project_dir}convergence/"
+```
+
+
+
+```{python}
+#| code-fold: true
+
+# 1. Load Packages
+import datetime
+import glob
+import itertools
+import math
+import os
+import sys
+import h5py
+import igraph as ig
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+# import networkx as nx
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import scipy.cluster.hierarchy as sch
+import seaborn as sns
+from IPython.display import Image
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.sparse import csr_matrix
+from scipy.stats import gaussian_kde
+import plotly.io as pio
+from scipy import stats
+from itertools import combinations
+from scipy.stats import mannwhitneyu
+from plotly.subplots import make_subplots
+from pathlib import Path
+import re
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="plotly"
+)
+
+# 2. Print pipeline parameters
+
+# print('Project Name:          ' + project_name)
+# print('Workflow command:      ' + workflow_cmd)
+# print('Date and time:         ' + str(datetime.datetime.now()))
+
+# 3. Loading data
+## Reading sample metadata
+meta = pd.read_csv(sample_table, sep=',')
+meta.drop(columns=['file'], inplace=True)
+meta_cols = meta.columns.tolist()
+
+## Reading combined repertoire statistics
+df = pd.read_csv(sample_stats_csv, sep=',')
+df = pd.merge(df, meta, on='sample', how='left')
+df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
+
+## Reading V gene family usage
+v_family = pd.read_csv(v_family_csv, sep=',')
+v_family = pd.merge(v_family, meta, on='sample', how='left')
+v_family = v_family[meta_cols + [c for c in v_family.columns if c not in meta_cols]]
+v_family = v_family.sort_values(by=[subject_col])
+
+## Reading J gene family usage
+j_family = pd.read_csv(j_family_csv, sep=',')
+j_family = pd.merge(j_family, meta, on='sample', how='left')
+j_family = j_family[meta_cols + [c for c in j_family.columns if c not in meta_cols]]
+j_family = j_family.sort_values(by=[subject_col])
+
+## Reading concatenated cdr3 file
+concat_df = pd.read_csv(concat_csv, sep='\t')
+concat_df = concat_df.merge(meta[['sample', subject_col, alias_col, timepoint_col, timepoint_order_col]], on='sample', how='left')
+
+# Phenotype files
+
+# Samplesheet
+metadata_pheno_df = pd.read_csv(sample_table_pheno, sep=',', header=0, index_col="file")
+metadata_pheno_df.index = metadata_pheno_df.index.map(lambda p: Path(p).name)
+metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_pseudobulk', '', regex=False)
+metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_phenotype.tsv', '', regex=False)
+# Morisita
+morisita_pheno_df = pd.read_csv(morisita_mat_pheno, sep=',', header=0, index_col=0)
+morisita_pheno_df.index = morisita_pheno_df.index.str.replace('_airr', '', regex=False)
+morisita_pheno_df.index = morisita_pheno_df.index.str.replace('_pseudobulk', '', regex=False)
+morisita_pheno_df.columns = morisita_pheno_df.columns.str.replace('_airr', '', regex=False)
+morisita_pheno_df.columns = morisita_pheno_df.columns.str.replace('_pseudobulk', '', regex=False)
+
+# Importing sample metadata (pheno-ps)
+clonotypes_pheno_df = pd.read_csv(concat_csv_pheno, sep='\t', header=0, index_col=0).reset_index()
+clonotypes_pheno_df['sample_phenotype'] = clonotypes_pheno_df['sample']
+# Add 'sample_phenotype' and 'phenotype'
+samples = sorted(meta['sample'].astype(str).unique(), key=len, reverse=True)
+pattern = r'^(?P<sample>' + '|'.join(map(re.escape, samples)) + r')(?:_(?P<phenotype>.*))?$'
+extracted = clonotypes_pheno_df['sample_phenotype'].astype(str).str.extract(pattern)
+clonotypes_pheno_df['sample'] = extracted['sample']
+clonotypes_pheno_df['phenotype'] = extracted['phenotype']
+
+```
+
+
+## Characterizing cellular composition at single-cell resolution {#sec-sc-phenotypes if="show_sc"}
+
+::: {.callout-warning title="Single-cell data ONLY"}
+If you are dealing with **bulk TCR data, please skip section**.
+For this section to be rightfully executed, you must have had provided cells and their associated phenotypes.
+:::
+
+Single-cell technologies (e.g. 10X) allow the TCR sequence capture together with the RNA expression caracterization, which allows for cell phenotype assignment.
+
+TCRs coming from the same phenotype are pseudobulked and here we analyze them.
+
+
+**<u>The Diversity of the Repertoire (Unweighted Phenotypes)</u>**   
+In the analysis of paired single-cell RNA (scRNA-seq) and T-cell receptor (TCR-seq) data, evaluating the unweighted phenotypic composition provides an initial assessment of repertoire diversity. In this representation, each unique TCR clonotype is counted uniformly, irrespective of its cellular frequency. This visualization delineates the baseline functional landscape of the microenvironment, illustrating the breadth of available transcriptional states—such as memory, regulatory, or CD8+ cytotoxic phenotypes. However, while this approach effectively captures the diverse potential of the immune response, it fundamentally equates rare, quiescent clones with those that have undergone substantial clonal expansion. To accurately determine which functional phenotypes are driving the active immune response, it is necessary to integrate metrics of clonal abundance.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import os
+import glob
+
+def create_phenotype_stacked_bar(meta_df):
+
+    # --- 1. Load Data ---
+    file_pattern = os.path.join(pseudobulk_dir, "*_pseudobulk_phenotype.tsv")
+    file_paths = glob.glob(file_pattern)
+
+    all_data = []
+
+    for file_path in file_paths:
+        try:
+            df = pd.read_csv(file_path, sep='\t')
+            basename = os.path.basename(file_path)
+            sample_raw = basename.replace('_pseudobulk_phenotype.tsv', '')
+            df['sample_raw'] = sample_raw
+            all_data.append(df)
+        except Exception as e:
+            continue
+
+    if not all_data:
+        print("No files found matching the pattern.")
+        return
+
+    combined_df = pd.concat(all_data, ignore_index=True)
+
+    # --- 2. Clean Sample Names ---
+    def clean_sample_name(row):
+        s = str(row['sample_raw'])
+        p = str(row['phenotype'])
+        suffix = f"_{p}"
+        if s.endswith(suffix):
+            return s[:-len(suffix)]
+        return s
+
+    combined_df['sample'] = combined_df.apply(clean_sample_name, axis=1)
+
+    # --- 3. Merge with Metadata ---
+    cols_to_use = ['sample', subject_col, timepoint_col, timepoint_order_col]
+
+    if subject_col not in meta_df.columns:
+        print(f"Error: {subject_col} not found in metadata.")
+        return
+
+    plot_df = combined_df.merge(meta_df[cols_to_use], on='sample', how='inner')
+
+    # --- 4. ESTABLISH GLOBAL PHENOTYPE COLORS ---
+    # Extract unique phenotypes in order of appearance to map colors stably
+    all_unique_phenotypes = plot_df['phenotype'].dropna().unique().tolist()
+    palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set1
+    global_pheno_colors = {pheno: palette[i % len(palette)] for i, pheno in enumerate(all_unique_phenotypes)}
+
+    # --- 5. Generate Tabs ---
+    print("::: {.panel-tabset}\n")
+
+    unique_patients = sorted(plot_df[subject_col].unique())
+
+    for pat in unique_patients:
+        print(f"## {pat}\n")
+
+        pat_df = plot_df[plot_df[subject_col] == pat].copy()
+
+        # Group by Timepoint and Phenotype
+        counts = pat_df.groupby([timepoint_col, 'phenotype', timepoint_order_col]).size().reset_index(name='count')
+
+        # Calculate Totals per Timepoint
+        total_per_tp = counts.groupby(timepoint_col)['count'].transform('sum')
+        counts['percentage'] = (counts['count'] / total_per_tp) * 100
+
+        # Sort by Timepoint Order
+        counts = counts.sort_values(timepoint_order_col)
+
+        # Create a separate DF for the "Total" labels
+        totals_df = counts[[timepoint_col, timepoint_order_col]].drop_duplicates().sort_values(timepoint_order_col)
+        actual_sums = pat_df.groupby(timepoint_col).size()
+        totals_df['total_count'] = totals_df[timepoint_col].map(actual_sums)
+
+        # --- Plotting ---
+
+        fig = px.bar(
+            counts,
+            x=timepoint_col,
+            y='percentage',
+            color='phenotype',
+            color_discrete_map=global_pheno_colors, # Forces consistency
+            title=f"Phenotype Distribution (Full Repertoire): {pat}",
+            labels={'percentage': 'Percentage Clonotypes (%)', timepoint_col: timepoint_col, 'phenotype': 'Phenotype'},
+            template="simple_white",
+            category_orders={
+                timepoint_col: totals_df[timepoint_col].tolist(),
+                'phenotype': all_unique_phenotypes # Matches legend order perfectly
+            },
+            hover_data={'count': True, timepoint_col: False, 'percentage': ':.1f'}
+        )
+
+        fig.update_traces(
+            hovertemplate="<b>%{x}</b><br>Phenotype: %{data.name}<br>Percentage: %{y:.1f}%<br>Count: %{customdata[0]}<extra></extra>"
+        )
+
+        # Add Total Count Annotations
+        fig.add_trace(
+            go.Scatter(
+                x=totals_df[timepoint_col],
+                y=[102] * len(totals_df),
+                text=totals_df['total_count'],
+                mode='text',
+                texttemplate='<b>N=%{text}</b>',
+                textposition='bottom center',
+                showlegend=False,
+                hoverinfo='none'
+            )
+        )
+
+        fig.update_layout(
+            barmode='stack',
+            xaxis_title="Timepoint",
+            yaxis_title="Percentage Clonotypes (%)",
+            yaxis=dict(range=[0, 110]),
+            width=800,
+            height=600,
+            margin=dict(t=60),
+            showlegend=True
+        )
+
+        fig.update_xaxes(categoryorder='array', categoryarray=totals_df[timepoint_col].tolist())
+
+        fig.show()
+        print("\n")
+
+    print(":::\n")
+
+# --- Run ---
+create_phenotype_stacked_bar(meta)
+
+```
+
+**Figure 9: Composition of Unique TCR Clonotypes by scRNA-seq Phenotype** Stacked bar chart showing the proportional diversity of T-cell phenotypes (e.g., Memory, Regulatory) for each sample, derived from single-cell gene expression profiles. Each bar indicates the percentage of unique TCR clonotypes assigned to a specific phenotype based on the transcriptional cluster of their corresponding cell(s), independent of clonal expansion size.
+
+**<u>The Physical Footprint (Cell-Weighted Phenotypes)</u>**   
+Weighting phenotypic categories by the absolute number of cells expressing each TCR provides a more accurate representation of biological impact. This analytical transition shifts the focus from functional diversity to actual cellular effector capacity. A specific phenotype that appears subdominant in an unweighted analysis may dominate the cell-weighted composition if a subset of its constituent clones has undergone significant antigen-driven proliferation. Conversely, a highly diverse phenotypic compartment may represent a negligible fraction of the total cellular population if those clones failed to actively expand. Ultimately, immune-mediated control within a tissue—whether resolving an active infection or infiltrating a tumor microenvironment—is driven not merely by the structural diversity of the T-cell repertoire, but by the aggregate cellular abundance of these specific functional states.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import os
+import glob
+
+def create_phenotype_stacked_bar(meta_df, count_col='counts'): # <-- Added count_col parameter
+
+    # --- 1. Load Data ---
+    file_pattern = os.path.join(pseudobulk_dir, "*_pseudobulk_phenotype.tsv")
+    file_paths = glob.glob(file_pattern)
+
+    all_data = []
+
+    for file_path in file_paths:
+        try:
+            df = pd.read_csv(file_path, sep='\t')
+            basename = os.path.basename(file_path)
+            sample_raw = basename.replace('_pseudobulk_phenotype.tsv', '')
+            df['sample_raw'] = sample_raw
+            all_data.append(df)
+        except Exception as e:
+            continue
+
+    if not all_data:
+        print("No files found matching the pattern.")
+        return
+
+    combined_df = pd.concat(all_data, ignore_index=True)
+
+    # Check if the count column exists
+    if count_col not in combined_df.columns:
+        print(f"Error: The column '{count_col}' was not found in the data. Please update the 'count_col' parameter.")
+        return
+
+    # --- 2. Clean Sample Names ---
+    def clean_sample_name(row):
+        s = str(row['sample_raw'])
+        p = str(row['phenotype'])
+        suffix = f"_{p}"
+        if s.endswith(suffix):
+            return s[:-len(suffix)]
+        return s
+
+    combined_df['sample'] = combined_df.apply(clean_sample_name, axis=1)
+
+    # --- 3. Merge with Metadata ---
+    cols_to_use = ['sample', subject_col, timepoint_col, timepoint_order_col]
+
+    if subject_col not in meta_df.columns:
+        print(f"Error: {subject_col} not found in metadata.")
+        return
+
+    plot_df = combined_df.merge(meta_df[cols_to_use], on='sample', how='inner')
+
+    # --- 4. ESTABLISH GLOBAL PHENOTYPE COLORS ---
+    all_unique_phenotypes = plot_df['phenotype'].dropna().unique().tolist()
+    palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set1
+    global_pheno_colors = {pheno: palette[i % len(palette)] for i, pheno in enumerate(all_unique_phenotypes)}
+
+    # --- 5. Generate Tabs ---
+    print("::: {.panel-tabset}\n")
+
+    unique_patients = sorted(plot_df[subject_col].unique())
+
+    for pat in unique_patients:
+        print(f"## {pat}\n")
+
+        pat_df = plot_df[plot_df[subject_col] == pat].copy()
+
+        # Group by Timepoint and Phenotype, SUMMING the cell counts instead of counting rows
+        counts = pat_df.groupby([timepoint_col, 'phenotype', timepoint_order_col])[count_col].sum().reset_index(name='count')
+
+        # Calculate Totals per Timepoint
+        total_per_tp = counts.groupby(timepoint_col)['count'].transform('sum')
+        counts['percentage'] = (counts['count'] / total_per_tp) * 100
+
+        # Sort by Timepoint Order
+        counts = counts.sort_values(timepoint_order_col)
+
+        # Create a separate DF for the "Total" labels
+        totals_df = counts[[timepoint_col, timepoint_order_col]].drop_duplicates().sort_values(timepoint_order_col)
+        
+        # Sum the counts for the annotations (N=...)
+        actual_sums = pat_df.groupby(timepoint_col)[count_col].sum()
+        totals_df['total_count'] = totals_df[timepoint_col].map(actual_sums)
+
+        # --- Plotting ---
+
+        fig = px.bar(
+            counts,
+            x=timepoint_col,
+            y='percentage',
+            color='phenotype',
+            color_discrete_map=global_pheno_colors, 
+            title=f"Phenotype Distribution (Cellular Abundance): {pat}", # Updated Title
+            labels={'percentage': 'Percentage Cells (%)', timepoint_col: timepoint_col, 'phenotype': 'Phenotype'}, # Updated Labels
+            template="simple_white",
+            category_orders={
+                timepoint_col: totals_df[timepoint_col].tolist(),
+                'phenotype': all_unique_phenotypes 
+            },
+            hover_data={'count': True, timepoint_col: False, 'percentage': ':.1f'}
+        )
+
+        fig.update_traces(
+            hovertemplate="<b>%{x}</b><br>Phenotype: %{data.name}<br>Percentage: %{y:.1f}%<br>Cell Count: %{customdata[0]}<extra></extra>"
+        )
+
+        # Add Total Count Annotations
+        fig.add_trace(
+            go.Scatter(
+                x=totals_df[timepoint_col],
+                y=[102] * len(totals_df),
+                text=totals_df['total_count'],
+                mode='text',
+                texttemplate='<b>N=%{text}</b>',
+                textposition='bottom center',
+                showlegend=False,
+                hoverinfo='none'
+            )
+        )
+
+        fig.update_layout(
+            barmode='stack',
+            xaxis_title="Timepoint",
+            yaxis_title="Percentage Cells (%)", # Updated Y-axis Title
+            yaxis=dict(range=[0, 110]),
+            width=800,
+            height=600,
+            margin=dict(t=60),
+            showlegend=True
+        )
+
+        fig.update_xaxes(categoryorder='array', categoryarray=totals_df[timepoint_col].tolist())
+
+        fig.show()
+        print("\n")
+
+    print(":::\n")
+
+# --- Run ---
+create_phenotype_stacked_bar(meta, count_col='cell_count')
+
+```
+**Figure 10: Clonally-Weighted TCR Phenotype Composition.** Stacked bar chart showing the proportional abundance of T-cell phenotypes for each sample, weighted by clonal size. The size of each segment is determined by summing the read counts of all TCRs assigned to that functional category, thus directly reflecting clonal expansion.
+
+### Phenotypic plasticity of TCR Clones {#sec-overlap-pheno}
+
+Beyond tracking clones over time, it is critical to understand their functional roles and whether those roles change. Phenotypic plasticity refers to the **ability of a single T-cell clonal lineage** (defined by its unique TCR sequence) **to acquire different phenotypes or functional states**. By mapping TCR clones to their phenotypic clusters (e.g., cytotoxic, regulatory, memory), we can identify clones that are "locked" into a single state versus those that span multiple functional identities.
+
+This analysis uses an UpSet plot to visualize the intersection of TCR clones across different phenotypic groups within a single sample.
+
+- **Phenotypic Fidelity (Unique Sets):** Bars corresponding to a single dot (e.g., only CD8_cytotoxic) represent clones that are exclusively found in that phenotype. A high number here suggests that most clones in your sample have a distinct, stable functional role.
+
+- **Phenotypic Plasticity (Shared Sets):** Bars corresponding to connected dots (e.g., CD8_cytotoxic -- Memory) represent clones that are present in multiple phenotypic states simultaneously. This implies that the clonal lineage has diversified. These are biologically significant as they may represent clones in transition (e.g., differentiating from effector to memory) or highly adaptable clones responding to the tumor environment.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import upsetplot
+import io
+import base64
+
+# --- Helper: Convert Matplotlib to Plotly Image ---
+def fig_to_plotly(mpl_fig):
+    """Converts a Matplotlib figure to a Plotly image trace."""
+    buf = io.BytesIO()
+    mpl_fig.savefig(buf, format='png', bbox_inches='tight')
+    plt.close(mpl_fig)
+    buf.seek(0)
+    img_bytes = buf.read()
+    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+    return go.Image(source='data:image/png;base64,' + img_base64)
+
+# --- Core Plotting Function ---
+def create_patient_upset_figure(df, patient_samples, meta_df):
+    """
+    Creates a single Plotly figure containing multiple UpSet plot images (traces).
+    Includes a dropdown menu to toggle between the provided samples.
+    """
+    fig = go.Figure()
+
+    # Map Sample ID -> Alias (or Timepoint)
+    if alias_col in meta_df.columns:
+        alias_map = meta_df.set_index('sample')[alias_col].to_dict()
+    else:
+        alias_map = {s: s for s in patient_samples}
+
+    # Generate a trace for each sample
+    valid_indices = []
+
+    for i, sample in enumerate(patient_samples):
+        # 1. Prepare Data
+        sample_df = df[df['sample'] == sample]
+        phenotypes = sorted(sample_df['phenotype'].unique())
+
+        # Skip if only 1 phenotype (UpSet needs at least 2 to show intersections)
+        if len(phenotypes) < 2:
+            continue
+
+        valid_indices.append(i) # Track which samples actually generated a plot
+
+        clones_by_pheno = {
+            p: set(sample_df[sample_df['phenotype'] == p]['CDR3b'])
+            for p in phenotypes
+        }
+        upset_data = upsetplot.from_contents(clones_by_pheno)
+
+        # 2. Plot with Matplotlib
+        mpl_fig = plt.figure(figsize=(10, 6))
+        upsetplot.plot(
+            upset_data,
+            fig=mpl_fig,
+            sort_by='cardinality',
+            show_counts=True
+        )
+
+        # Title using ALIAS
+        alias = alias_map.get(sample, sample)
+        plt.suptitle(f'Shared Clones: {alias}', fontsize=16)
+
+        # 3. Convert to Plotly Trace
+        plotly_trace = fig_to_plotly(mpl_fig)
+        fig.add_trace(plotly_trace)
+
+        # Set visibility: Only first valid trace is True
+        fig.data[-1].visible = (len(valid_indices) == 1)
+
+    # If no samples had enough phenotypes, return None
+    if not fig.data:
+        return None
+
+    # --- Create Dropdown Buttons ---
+    buttons = []
+    # We iterate through the traces we successfully added
+    for i, trace_idx in enumerate(valid_indices):
+        sample_id = patient_samples[trace_idx]
+        alias = alias_map.get(sample_id, sample_id)
+
+        # Visibility mask
+        visibility = [False] * len(fig.data)
+        visibility[i] = True
+
+        buttons.append(dict(
+            label=alias, # Dropdown shows Alias
+            method="restyle",
+            args=[{"visible": visibility}]
+        ))
+
+    # --- Layout ---
+    fig.update_layout(
+        updatemenus=[dict(
+            active=0,
+            buttons=buttons,
+            direction="down",
+            x=0.0, xanchor="left",
+            y=1.15, yanchor="top",
+            showactive=True
+        )],
+        width=900,
+        height=700,
+        margin=dict(t=80) # Space for dropdown
+    )
+
+    # Hide axes (since we display images)
+    fig.update_xaxes(showticklabels=False, showgrid=False, visible=False)
+    fig.update_yaxes(showticklabels=False, showgrid=False, visible=False)
+
+    return fig
+
+# --- Main Execution ---
+
+# 1. Merge Metadata (if needed) to get Patient IDs
+if subject_col not in clonotypes_pheno_df.columns:
+    # Ensure we merge strictly on sample
+    clonotypes_pheno_df = clonotypes_pheno_df.merge(
+        meta[['sample', subject_col]],
+        on='sample',
+        how='left'
+    )
+
+# 2. Get Patients
+unique_patients = sorted(clonotypes_pheno_df[subject_col].dropna().unique())
+
+# 3. Suppress Warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
+# 4. Generate Tabs
+print("::: {.panel-tabset}\n")
+
+for pat in unique_patients:
+    print(f"## {pat}\n")
+
+    # Get samples for this patient
+    # Sort them by timepoint_order_col if available in meta
+    pat_samples = meta[meta[subject_col] == pat].sort_values(timepoint_order_col)['sample'].tolist()
+
+    # Filter to samples present in the clonotype data
+    existing_samples = [s for s in pat_samples if s in clonotypes_pheno_df['sample'].unique()]
+
+    if existing_samples:
+        fig = create_patient_upset_figure(clonotypes_pheno_df, existing_samples, meta)
+
+        if fig:
+            fig.show()
+        else:
+            print(f"No samples for {pat} have >1 phenotype to compare.")
+    else:
+        print(f"No data found for {pat}.")
+
+    print("\n")
+
+print(":::\n")
+
+```
+**Figure 11: clonal sharing between phenotypes.** Upset plot showing the number of TCR clones shared between different phenotypic clusters within a single sample.
+
+

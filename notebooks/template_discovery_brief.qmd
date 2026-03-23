@@ -1,0 +1,2232 @@
+---
+title: "Discovery Brief"
+format:
+  html:
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    code-fold: true
+    embed-resources: true
+    number-sections: true
+    smooth-scroll: true
+    grid:
+      body-width: 1000px
+      margin-width: 300px
+
+jupyter: python3
+---
+
+<style>
+  /* Shrink the tab buttons */
+  .panel-tabset .nav-link {
+    font-size: 0.9rem !important;  /* Make text smaller */
+    padding: 0.4rem 0.7rem !important; /* Make buttons less "fat" */
+  }
+
+  /* Optional: Shrink the active tab slightly to differentiate */
+  .panel-tabset .nav-link.active {
+    font-weight: bold;
+  }
+</style>
+
+Thank you for using TCRtoolkit! This report is generated from the data you provided. 
+
+:::{.callout-note collapse="true"}
+## Document Information
+**Current Version:** 1.0-beta   
+**Last Updated:** March 2026  
+**Maintainer:** BTC Data Science Team   
+**Notes:** 
+:::
+
+::: {.callout-note collapse="true"}
+## Notebook Analysis Scope
+This notebook contains strictly the most relevant, high-impact analysis. If you want to dig deeper through every section, refer to the detailed notebook.
+:::
+
+## Report Setup
+
+```{python}
+#| tags: [parameters]
+#| include: false
+
+# ---------------------------------------------------------
+# BASE PARAMETERS 
+# ---------------------------------------------------------
+workflow_cmd = '<command used to run the pipeline>'
+project_name='<project_name>'
+project_dir='<path/to/project_dir>'
+sample_table='<path/to/sample_table.csv>'
+
+timepoint_col = 'timepoint'
+timepoint_order_col = 'timepoint_order'
+alias_col = 'alias'
+subject_col = 'subject_id'
+
+```
+
+```{python}
+#| include: false
+
+# ---------------------------------------------------------
+# DERIVED PATHS 
+# ---------------------------------------------------------
+
+# Define files 
+project_dir=f"{project_dir}/{project_name}"
+
+sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
+concat_file = f"{project_dir}/annotate/concatenated_cdr3.tsv"  
+pgen_csv = f"{project_dir}/tcrsharing/cdr3_sharing.tsv"
+giana_tsv = f"{project_dir}/giana/giana_RotationEncodingBL62.txt"
+
+# Define dirs
+tcrdist_dir = f"{project_dir}/tcrdist3/"
+olga_dir = f"{project_dir}/olga/"
+tcrpheno_dir = f"{project_dir}/tcrpheno/"
+pseudobulk_dir = f"{project_dir}/pseudobulk/"
+VDJdb_dir = f"{project_dir}/vdjdb/"
+convergence_dir = f"{project_dir}/convergence/"
+convert_dir = f"{project_dir}/convert/"
+
+```
+
+
+```{python}
+#| code-fold: true
+
+# 1. Load Packages
+from IPython.display import Image
+import os
+import datetime
+import sys
+import pandas as pd
+import math
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+import plotly.express as px
+import plotly.graph_objects as go
+import glob
+import itertools
+import h5py
+import igraph as ig
+import matplotlib.ticker as ticker
+import networkx as nx
+import numpy as np
+import scipy.cluster.hierarchy as sch
+import ipywidgets as widgets
+from IPython.display import display, Markdown
+from scipy.sparse import csr_matrix
+from scipy.stats import gaussian_kde
+from scipy.stats import entropy
+from scipy.stats import skew, wasserstein_distance
+from scipy.stats import pearsonr
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from scipy import sparse
+from sklearn.preprocessing import normalize
+from scipy.stats import wilcoxon
+from scipy.stats import mannwhitneyu
+from itertools import combinations
+from scipy.spatial.distance import pdist
+from scipy.cluster.hierarchy import linkage, leaves_list
+import plotly.figure_factory as ff
+import re
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="plotly"
+)
+
+# 2. Print pipeline parameters
+
+print('Project Name:          ' + project_name)
+print('Workflow command:      ' + workflow_cmd)
+print('Date and time:         ' + str(datetime.datetime.now()))
+
+# 3. Loading data
+## reading sample metadata
+meta = pd.read_csv(sample_table, sep=',')
+meta_cols = meta.columns.tolist()
+
+## Reading combined repertoire statistics
+df = pd.read_csv(sample_stats_csv, sep=',')
+df = pd.merge(df, meta, on='sample', how='left')
+df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
+
+## reading concatenated cdr3 file
+concat_df = pd.read_csv(concat_file, sep='\t')
+
+# Read Pgen and GIANA data
+prob_generation_df = pd.read_csv(pgen_csv, sep='\t')
+giana_df = pd.read_csv(giana_tsv, comment='#', sep='\t')
+
+```
+
+## TCR Clonality
+
+Clonality acts as a summary statistic for the evenness of the repertoire distribution. It is derived from the inverse of normalized Shannon Entropy, ranging from 0 (maximally diverse/polyclonal) to 1 (monoclonal). Measures the uniformity of the entire distribution. It is sensitive to changes in the “tail” (rare clones).
+
+Clonality is a measure of T cell clonal expansion and reflects the degree to which the sample is dominated by 1 or more T cell clones. Clonality is calculated via: $$Clonality = 1 - \frac{H}{\log_{2} N} \quad\text{,}\quad H = -\sum\limits_{i=1}^N p_i \log_{2}{p_i}$$ where $H$ is the Shannon entropy of a given sample, $N$ is the number of unique TCRs in the sample, and $p_i$ is the frequency of the $i$ th unique TCR in the sample.
+
+```{python}
+#| output: asis
+#| echo: false
+
+# Create a mapping for timepoint order using the 'meta' dataframe
+# This ensures we sort by timepoint_order_col (1, 2, 3...) not alphabetically
+if 'meta' in locals() and timepoint_col in meta.columns and timepoint_order_col in meta.columns:
+    time_order_map = meta.set_index(timepoint_col)[timepoint_order_col].to_dict()
+else:
+    # Fallback: if 'meta' isn't loaded, try to use columns in the main df
+    if timepoint_order_col in df.columns:
+        time_order_map = df.set_index(timepoint_col)[timepoint_order_col].to_dict()
+    else:
+        time_order_map = {} # No sorting map available
+
+# 1. Define General Exclusions
+exclude_cols = ['sample', 'file', 'clonality', 'counts', 'total_counts',
+                'num_clones', 'num_TCRs', 'simpson_index', 'simpson_index_corrected',
+                'num_prod', 'num_nonprod', 'pct_prod', 'pct_nonprod',
+                'productive_cdr3_avg_len', 'num_convergent','ratio_convergent']
+
+# 2. Define Groups for "All Samples" Tab (Exclude timepoint/order)
+exclude_from_all_samples = [timepoint_col, timepoint_order_col, 'protocol_day', alias_col]
+group_opts_all = [
+    col for col in df.columns
+    if col not in exclude_cols
+    and col not in exclude_from_all_samples
+    and df[col].nunique() < 35
+]
+
+# 3. Define Groups for "By Patient" Tab (Only timepoint)
+group_opts_patient = [timepoint_col] if timepoint_col in df.columns else []
+
+unique_patients = sorted(df[subject_col].dropna().unique().tolist())
+
+# --- 1. DEFINE PLOTTING FUNCTION ---
+def create_clonality_plot(data, group_col, custom_order=None):
+    """
+    custom_order: Optional list of x-axis values in the desired order.
+    """
+    if data.empty or data[group_col].dropna().empty:
+        return
+
+    # Determine order: Use custom list if provided, otherwise sort alphabetically
+    if custom_order:
+        unique_cats = [x for x in custom_order if x in data[group_col].unique()]
+    else:
+        unique_cats = sorted(data[group_col].dropna().unique().tolist())
+
+    # Base Plot
+    fig = px.box(
+        data,
+        x=group_col,
+        y='clonality',
+        color=group_col,
+        points='all',
+        hover_data=['alias'],
+        category_orders={group_col: unique_cats}, 
+        template="simple_white",
+        title=f"TCR Clonality by {group_col}"
+    )
+    fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
+
+    for trace in fig.data:
+        if isinstance(trace, go.Box):
+            trace.pointpos = 0
+            trace.jitter = 0.2
+
+    # Stats
+    if len(unique_cats) >= 2:
+        # Use unique_cats (which is now ordered) for pair generation
+        pairs = list(combinations(unique_cats, 2))
+        y_max = data['clonality'].max()
+        y_range = y_max - data['clonality'].min()
+        if y_range == 0: y_range = 1
+        step_size = y_range * 0.13
+        stack_counter = 0
+
+        for t1, t2 in pairs:
+            group1 = data[data[group_col] == t1]['clonality'].dropna()
+            group2 = data[data[group_col] == t2]['clonality'].dropna()
+
+            if len(group1) < 2 or len(group2) < 2: continue
+
+            try:
+                stat, p_value = mannwhitneyu(group1, group2, alternative='two-sided')
+            except ValueError: continue
+
+            if p_value >= 0.05: continue
+
+            if p_value < 0.001: symbol = '***'
+            elif p_value < 0.01: symbol = '**'
+            elif p_value < 0.05: symbol = '*'
+
+            y_bracket = y_max + (y_range * 0.15) + (stack_counter * step_size)
+            y_text = y_bracket + (y_range * 0.02)
+
+            # Draw Bracket
+            fig.add_shape(type="line", xref="x", yref="y",
+                x0=t1, y0=y_bracket, x1=t2, y1=y_bracket,
+                line=dict(color="black", width=1.5))
+
+            tick_len = y_range * 0.02
+            fig.add_shape(type="line", xref="x", yref="y",
+                x0=t1, y0=y_bracket, x1=t1, y1=y_bracket - tick_len,
+                line=dict(color="black", width=1.5))
+            fig.add_shape(type="line", xref="x", yref="y",
+                x0=t2, y0=y_bracket, x1=t2, y1=y_bracket - tick_len,
+                line=dict(color="black", width=1.5))
+
+            try: x_center = (t1 + t2) / 2
+            except: x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
+
+            fig.add_annotation(
+                x=x_center, y=y_text, text=f"{symbol}<br>p={p_value:.3f}",
+                showarrow=False, font=dict(size=10, color="black")
+            )
+            stack_counter += 1
+        top_margin = 60 + (stack_counter * 40)
+    else:
+        top_margin = 60
+
+    fig.update_layout(
+        xaxis_title=group_col, yaxis_title="Clonality",
+        xaxis=dict(tickfont=dict(size=15)),
+        margin=dict(t=top_margin), showlegend=False,
+        width=600, height=600, plot_bgcolor='rgba(0,0,0,0)'
+    )
+    fig.update_yaxes(showgrid=True, gridcolor='lightgrey')
+    fig.show()
+
+# --- 2. GENERATE TABS ---
+
+if len(unique_patients) <= 10:
+    print("::::: {.panel-tabset}\n")
+
+    # --- TAB A: ALL SAMPLES ---
+    print("## All Samples\n")
+    print(":::: {.panel-tabset}\n")
+    for group in group_opts_all:
+        print(f"### {group}\n")
+        create_clonality_plot(df, group) 
+        print("\n")
+    print("::::\n")
+
+    # --- TAB B: BY PATIENT ---
+    print("## By Patient\n")
+    print(":::: {.panel-tabset}\n")
+
+    for pat in unique_patients:
+        print(f"### {pat}\n")
+
+        pat_df = df[df[subject_col] == pat]
+
+        for group in group_opts_patient:
+            if pat_df[group].nunique() > 0:
+
+                # --- APPLY CUSTOM SORTING IF AVAILABLE ---
+                custom_order = None
+                if group == timepoint_col and time_order_map:
+                    # Get unique timepoints for this patient
+                    pat_tps = pat_df[group].dropna().unique().tolist()
+                    # Sort them based on the map we created from 'meta'
+                    # Use .get(x, 999) to handle missing keys gracefully by putting them at the end
+                    custom_order = sorted(pat_tps, key=lambda x: time_order_map.get(x, 999))
+
+                create_clonality_plot(pat_df, group, custom_order)
+            else:
+                print(f"No data for {group} in patient {pat}.")
+            print("\n")
+
+    print("::::\n")
+    print(":::::\n")
+
+else:
+    # --- STANDARD VIEW (>10 Patients) ---
+    print("::: {.panel-tabset}\n")
+    for group in group_opts_all:
+        print(f"## {group}\n")
+        create_clonality_plot(df, group)
+        print("\n")
+    print(":::\n")
+
+```
+
+**Figure 1. The clonality of samples across timepoints.** Distribution of TCR clonality across metadata variables.
+
+**<u>Technical QC 🚩</u>**  
+**The "False Positive" (High Clonality in Control Samples)**  
+If you observe high clonality (> 0.1 - 0.2) in samples that should be naive or diverse (e.g., PBMC, healthy tissue, baseline controls).
+
+- **Diagnosis:** This is likely PCR Amplification Bias or Low Input Material.  
+- **The Error:** You are not sequencing true biological expansion; you are sequencing the same few molecules repeatedly because the library complexity was bottlenecked during preparation.  
+- **Action:** Check your RNA input amounts and PCR cycle counts.
+
+**The "False Negative" (Low Clonality in Tumor/Response Samples)**  
+If you observe low clonality (< 0.05) in samples expected to be highly reactive (e.g., TILs, post-treatment, Timepoint 6 in Fig 4):
+
+- **Diagnosis:** This often indicates poor tumor purity or failed T-cell enrichment.  
+- **The Error:** The sequencing is dominated by non-T-cell background or bystander T-cells, failing to capture the tumor-reactive clones.    
+
+**<u>Biological Interpretation 🦠</u>**
+
+Once QC is cleared, Shannon clonality quantifies antigen-driven selection.
+
+- **Rising Trend (Response):** A concurrent rise in Shannon clonality indicates robust clonal focusing. The immune system has identified a target and is actively effectively expanding specific clones against it.  
+
+## TCR Overlap
+
+We use two distinct metrics to compare repertoires. One measures membership (who is there?), and the other measures structure (who is dominant?).
+
+- **1. Jaccard Index:** Measures the overlap of unique sequences, ignoring frequency. It treats a singleton and a top clone equally.  
+**Question:** "What fraction of the unique CDR3s are found in both samples?"  
+**Range:** $0$ (No shared sequences) $\to$ $1$ (Identical unique sequence list).  
+**Formula:**
+$$J(A,B) = \frac{|A \cap B|}{|A \cup B|}$$
+Where $|A \cap B|$ is the count of unique clonotypes shared by both samples, and $|A \cup B|$ is the total count of unique clonotypes in the union of both samples.
+
+- **2. Morisita-Horn Index:** Measures the overlap of dominant populations. It accounts for clone abundance, meaning rare clones have mathematically negligible impact on the score.  
+**Question**: "If I randomly draw two T-cells from these two samples, what is the probability they are the same clone?"  
+**Range:** $0$ (Completely different dominant clones) $\to$ $1$ (Identical frequencies).  
+**Formula:**  
+$$C_{MH} = \frac{2 \sum_{i=1}^{S} p_{ai} p_{bi}}{\sum_{i=1}^{S} p_{ai}^2 + \sum_{i=1}^{S} p_{bi}^2}$$
+Where $p_{ai}$ and $p_{bi}$ are the relative frequencies of the $i$-th clonotype in Sample A and Sample B, respectively. Note that the denominator terms ($\sum p^2$) are essentially the Simpson Indices of the individual samples.
+
+```{python}
+#| output: asis
+#| fig-width: 7
+#| fig-height: 7
+
+import pandas as pd
+import numpy as np
+from scipy import sparse
+from sklearn.preprocessing import normalize
+from scipy.spatial.distance import pdist
+from scipy.cluster.hierarchy import linkage, leaves_list
+import plotly.express as px
+
+def calculate_overlaps(df, meta):
+    # --- 1. PREP DATA ---
+    # Ensure patient mapping is available
+    sample_to_patient = meta.set_index('sample')[subject_col].to_dict()
+    df[subject_col] = df['sample'].map(sample_to_patient)
+    df = df.dropna(subset=[subject_col, 'CDR3b', 'counts'])
+
+    samples = sorted(df['sample'].unique())
+    patients = sorted(df[subject_col].unique())
+    clones = sorted(df['CDR3b'].unique())
+    
+    clone_map = {c: i for i, c in enumerate(clones)}
+    n_clones = len(clones)
+
+    # --- 2. MORISITA (Sample-level, Frequency-based) ---
+    sample_map = {s: i for i, s in enumerate(samples)}
+    row_idx_s = df['sample'].map(sample_map).values
+    col_idx_s = df['CDR3b'].map(clone_map).values
+    values_s = df['counts'].values
+    
+    mat_s = sparse.coo_matrix((values_s, (row_idx_s, col_idx_s)), shape=(len(samples), n_clones)).tocsr()
+    
+    mat_freq = normalize(mat_s, norm='l1', axis=1)
+    simpson = mat_freq.power(2).sum(axis=1).A1
+    num_m = 2 * mat_freq.dot(mat_freq.T).toarray()
+    den_m = simpson[:, None] + simpson[None, :]
+    
+    morisita = np.divide(num_m, den_m, out=np.zeros_like(num_m), where=den_m!=0)
+    morisita_df = pd.DataFrame(morisita, index=samples, columns=samples)
+
+    # --- 3. JACCARD (Patient-level, Binary-based) ---
+    # Aggregate counts by patient/CDR3b to get unique clones per patient
+    patient_df = df.groupby([subject_col, 'CDR3b']).size().reset_index()
+    
+    pat_map = {p: i for i, p in enumerate(patients)}
+    row_idx_p = patient_df[subject_col].map(pat_map).values
+    col_idx_p = patient_df['CDR3b'].map(clone_map).values
+    
+    # Binary matrix: 1 if patient has clone, else 0
+    mat_p_bin = sparse.coo_matrix((np.ones(len(patient_df)), (row_idx_p, col_idx_p)), 
+                                  shape=(len(patients), n_clones)).tocsr()
+    
+    intersection = mat_p_bin.dot(mat_p_bin.T).toarray()
+    row_sums = mat_p_bin.sum(axis=1).A1
+    union_matrix = row_sums[:, None] + row_sums[None, :] - intersection
+    
+    jaccard = np.divide(intersection, union_matrix, 
+                        out=np.zeros_like(intersection, dtype=float), 
+                        where=union_matrix!=0)
+    jaccard_df = pd.DataFrame(jaccard, index=patients, columns=patients)
+
+    return jaccard_df, morisita_df
+
+# --- EXECUTION ---
+jaccard_df, morisita_df = calculate_overlaps(concat_df, meta)
+
+# --- RENAME MORISITA SAMPLES TO ALIAS (If applicable) ---
+if alias_col in meta.columns:
+    sample_to_alias = meta.set_index('sample')[alias_col].to_dict()
+    morisita_df = morisita_df.rename(index=sample_to_alias, columns=sample_to_alias)
+
+# --- CLUSTERING & PLOTTING ---
+def get_clustered_order(matrix):
+    if matrix.shape[0] <= 1: return matrix.index.tolist()
+    dist = pdist(matrix.values, metric='cityblock')
+    link = linkage(dist, method='average')
+    leaves = leaves_list(link)
+    return matrix.index[leaves].tolist()
+
+def plot_interactive_heatmap(matrix, title, label_name="Unit"):
+    try:
+        ordered_labels = get_clustered_order(matrix)
+        matrix = matrix.loc[ordered_labels, ordered_labels]
+    except Exception as e:
+        print(f"Clustering skipped: {e}")
+
+    vals = matrix.values
+    mask = ~np.eye(vals.shape[0], dtype=bool)
+    max_val = vals[mask].max() if mask.any() else 1.0
+    if max_val < 0.01: max_val = 0.05
+
+    fig = px.imshow(
+        matrix,
+        labels=dict(x=label_name, y=label_name, color="Overlap"),
+        x=matrix.columns,
+        y=matrix.index,
+        color_continuous_scale="Reds",
+        range_color=[0, max_val],
+        title=f"{title}<br><sup>Max Overlap (Non-diag): {max_val:.3f}</sup>"
+    )
+
+    fig.update_layout(width=650, height=650, xaxis=dict(tickangle=90))
+    fig.update_traces(xgap=1, ygap=1)
+    fig.show()
+
+# --- OUTPUT ---
+print("::: {.panel-tabset}\n")
+print("## Jaccard (By Patient)\n")
+plot_interactive_heatmap(jaccard_df, "Patient-Level Jaccard Index", "Patient")
+print("\n")
+
+print("## Morisita (By Sample)\n")
+plot_interactive_heatmap(morisita_df, "Sample-Level Morisita Index", "Sample")
+print("\n")
+print(":::\n")
+
+```
+**Figure 2. Assessment of Clonal Overlap and Cross-Contamination.**
+Heatmaps display the pairwise similarity between TCR repertoires using the Jaccard (overlap) index, with an option to toggle to the Morisita (abundance-weighted) index. Hierarchical clustering groups samples based on their shared clonal content, facilitating the identification of biological replicates or potential cross-contamination events. The color intensity reflects the degree of similarity, where darker red indicates a higher proportion of shared clonotypes between sample pairs.
+
+**<u>Technical QC 🚩</u>**    
+Use these overlap metrics to detect the two most dangerous errors in sequencing: **Sample Swapping and Physical Contamination.**
+
+- **1. Identity Validation: Morisita-Horn Index**
+    - Red Flag: A dark red square between two different Patient IDs Similarity ($> 0.90$; Dark Red).
+    - Diagnosis: Sample Swap / Duplication. Biologically, two humans cannot have identical repertoires and share the exact same dominant clones at identical frequencies ($>90\%$). You likely pipetted the same library into two wells, or the labels were swapped during handling.
+    - Action: If Patient_A and Patient_B have a Morisita of 0.98, This is highly indicative of the metadata being wrong. 
+
+- **2. Contamination Detection: Jaccard Index**
+    - Red Flag: A block of red squares connecting unrelated samples (Overlap $> 0.05 - 0.1$ Pink/Red).
+    - Diagnosis: Cross-Contamination. Because TCRs are hypervariable, <u>distinct individuals</u> should almost never share rare sequences (Jaccard should be near 0).
+    - Scenario A (Splash): Patient_A and Patient_B share 20% of their unique sequences. Physical liquid likely splashed between wells during PCR setup.
+    - Scenario B (Barcode Hopping): If an entire batch shows faint overlap (~5-10%) with a high-concentration sample, it indicates index hopping during sequencing.
+    - Action: Flag samples with unexpected Jaccard scores $>0.05$.
+
+
+**<u>Biological Interpretation 🦠</u>**   
+Once technical artifacts are ruled out, overlap quantifies stability and shared biology.
+
+- **1. Longitudinal Stability: Morisita-Horn**
+Use this to track the persistence of the immune response over time within the same patient.
+    - High Overlap ($> 0.8$): Indicates Repertoire Stability. The dominant clones present at Timepoint 1 are still the dominant clones at Timepoint 2. This is expected in healthy controls or stable disease.
+    - Dropping Overlap: If Morisita drops significantly between Pre- and Post-treatment, it confirms Repertoire Reshaping. The drug has successfully forced the expansion of a new set of clones, replacing the old dominant population.
+
+- **2. Public Clones: Jaccard**
+    - Low but Real Overlap (< 0.01):While distinct humans rarely share repertoires, they may share identical "Public Clones" (often viral-specific, e.g., CMV or EBV).
+    - Interpretation: A very faint Jaccard signal (0.001 - 0.01) across a cohort can indicate a shared antigen exposure (e.g., a common viral infection in the population) or convergent recombination events.
+
+
+## Persistent and Unique Clones between timepoints {#sec-upset}
+
+To understand how the TCR repertoire changes over time, we need to identify which T-cell clones are persistent, which are new, and which have disappeared. Analyzing the TCR overlap for patients with multiple timepoint can be an ideal way of understanding changes in the repertoire over time.
+
+To visualize these complex intersections, we use an **UpSet Plot**. Unlike a traditional Venn diagram, which becomes unreadable with more than three groups, an UpSet plot clearly separates the clones shared between specific combinations of timepoints from those unique to a single sample.
+
+**Persistent Clones (The Intersection):**
+The height of this bar tells you the number of T-cell clones that persisted between the two timepoints. These could be long-lived memory T-cells or clones responding to a chronic antigen or tumor. A large persistent set suggests a stable immune state.
+
+**Unique Clones:**  
+- ***Waning Clones:*** Look for the bar with a solid dot for Time 1 only. These are clones that were present initially but disappeared or contracted by Time 2. This could represent the resolution of an acute infection.  
+- ***Emerging Clones:*** Look for the bar with a solid dot for Time 2 only. These are new T-cell clones that expanded between the timepoints. This is a strong indicator of a new immune response, perhaps due to a new infection, vaccination, or a response to treatment.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import upsetplot
+import matplotlib.pyplot as plt
+import warnings
+
+# Ensure your dataframe merges are intact before this step
+meta = meta.reset_index(drop=True)
+concat_df = concat_df.merge(meta[['sample', 'origin', timepoint_col, timepoint_order_col, alias_col]], on='sample', how='left')
+
+def create_upset_tabs(df, patient_list):
+    """Generates Quarto tabs per patient, displaying native Matplotlib UpSet plots."""
+    print("::: {.panel-tabset}\n")
+    
+    for patient_id in patient_list:
+        print(f"## {patient_id}\n")
+        
+        patient_df = df[df[subject_col] == patient_id]
+        timepoints = sorted(patient_df[timepoint_col].unique())
+        
+        # Extracting clones (CDR3b) by timepoint
+        clones_by_timepoint = {tp: set(patient_df[patient_df[timepoint_col] == tp]['CDR3b']) for tp in timepoints}
+
+        upset_data = upsetplot.from_contents(clones_by_timepoint)
+
+        # Generate Matplotlib figure
+        mpl_fig = plt.figure(figsize=(12, 7))
+        upsetplot.plot(upset_data, fig=mpl_fig, sort_by='cardinality', show_counts=True)
+        plt.suptitle(f'UpSet Plot for {patient_id}', fontsize=16)
+        plt.show()
+        plt.close(mpl_fig)
+        
+        print("\n\n")
+        
+    print(":::\n")
+
+# Find patient groups with more than 1 timepoint
+timepoint_counts = concat_df.groupby(subject_col)[timepoint_col].nunique()
+upset_patients = timepoint_counts[timepoint_counts > 1].index.tolist()
+
+# Suppress warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="upsetplot.plotting")
+warnings.filterwarnings("ignore", category=FutureWarning, module="upsetplot.data")
+warnings.filterwarnings("ignore", category=UserWarning, message="This figure includes Axes that are not compatible with tight_layout")
+
+# Create and display the tabs
+if upset_patients:
+    create_upset_tabs(concat_df, upset_patients)
+else:
+    print("No patients with multiple timepoints found for UpSet plotting.")
+
+```
+**Figure 3. Clonal sharing.** Upset plot showing the raw number of shared clones between 2 or more samples.
+
+**Understanding the Upset plot:**
+**1. Top Bar Chart: Intersection Size**
+Each bar represents the number of TCR clones found in a specific combination of samples. The taller the bar, the more clones there are in that specific group. You can quickly see which combinations (e.g., clones unique to Time 1) are the largest.
+
+**2. Dot Matrix: Set Membership**
+Below the bar chart, a matrix of dots tells you which samples are included in each intersection.
+A solid dot (⚫) means that the sample is part of the combination for the bar directly above it.
+A faint gray dot (⚪) means the sample is not part of that combination.
+A line connecting two or more solid dots (⚫--⚫) indicates that the bar above represents clones shared between those connected samples.
+
+**3. Left Bar Chart: Total Set Size**
+This horizontal bar chart on the left shows the total number of unique clones in each original sample. This gives you a quick overview of the repertoire diversity for each timepoint before looking at the overlaps.
+
+## Clonal Dynamics  {#sec-expansion}
+
+To track how the T-cell repertoire changes over time, we first identify clones present at both pre- and post-treatment timepoints. For these **shared clones**, we calculate a **"Fold Change"**. This score is a powerful metric that quantifies the magnitude and direction of a clone's change in frequency, defined as:
+
+$$
+Fold Change=\log_{2}\left(\frac{\text{Frequency}_{\text{Post}}}{\text{Frequency}_{\text{Pre}}}\right)
+$$
+
+- **A positive score indicates expansion** (the clone makes up a larger proportion of the repertoire after treatment).
+- **A negative score indicates contraction** (the clone's proportion has decreased).
+- **A score around 0** represents a stable behavior (the clone's proportion has remained quite similar).
+
+We use **clonal frequency** (the proportion of a specific clone relative to the total number of T-cells sequenced in that sample) **rather than raw counts**. This is crucial because **sequencing depth can vary between samples**. Using frequency normalizes the data, ensuring a fair comparison and preventing a sample with more total reads from appearing to have more expanded clones simply due to deeper sequencing.
+
+**<u>Are changes in clonal frequency statistically significant?</u>**  
+**While the "Fold Change" tells us the magnitude of a change, it doesn't tell us if that change is meaningful**. The immune system has natural fluctuations (**biological noise**), and the sequencing process itself has variability (**technical noise**). A small change in frequency could easily be a result of this random noise.
+
+To address this, **we perform a statistical test (Fisher's Exact Test) on the raw counts of each shared clone**. This test calculates the probability (the p-value) that an observed change is merely a random fluke. By adjusting these p-values for the thousands of tests run (one for each clone), we get a q-value, which controls the False Discovery Rate. A low q-value gives us high confidence that the observed expansion or contraction is a real, statistically significant event.
+
+```{python}
+#| output: asis
+#| echo: false
+
+def create_styled_table(df, title="", max_height='400px', formatter=None):
+    """
+    Applies custom styling to a DataFrame to match the desired theme,
+    hides the index, adds a title, and places it in a scrollable container.
+    """
+    if df.empty:
+        print(f"{title}: No data to display.")
+        return
+
+    # Define the CSS styles for the table
+    styles = [
+        # Style for the table header (th)
+        dict(selector="th", props=[
+            ("background-color", "paleturquoise"),
+            ("text-align", "left"),
+            ("font-weight", "bold"),
+            ("padding", "8px") # Add some padding
+        ]),
+        # Style for the data cells (td)
+        dict(selector="td", props=[
+            ("background-color", "lavender"),
+            ("text-align", "left"),
+            ("padding", "8px"),
+            ("min-width", "120px")  # Give columns enough space for names
+        ]),
+        # Style for the table caption (title)
+        dict(selector="caption", props=[
+            ("caption-side", "top"),
+            ("font-size", "1.1em"),
+            ("font-weight", "bold"),
+            ("text-align", "left"),
+            ("margin-bottom", "10px")
+        ])
+    ]
+
+    # Apply styles and settings to the DataFrame
+    styler = df.style.set_table_styles(styles).set_caption(title).hide(axis='index')
+
+    # Apply number formatting if provided
+    if formatter:
+        styler = styler.format(formatter, na_rep="NA")
+
+    # Convert the styled table to an HTML string
+    html = styler.to_html()
+
+    # Wrap the HTML table in a scrollable div container
+    scrollable_html = f'<div style="max-height: {max_height}; overflow-y: auto; border: 1px solid #ccc;">{html}</div>'
+
+    # Return an HTML object for display in the notebook
+    return HTML(scrollable_html)
+
+```
+
+```{python}
+
+import pandas as pd
+import numpy as np
+import itertools
+from scipy.stats import fisher_exact
+from statsmodels.stats.multitest import multipletests
+
+# --- Setup & Pre-computation ---
+
+clonotypes_df = concat_df.copy()
+clonotypes_df = clonotypes_df.dropna(subset=[timepoint_col, 'origin'])
+clone_cols = ['CDR3b', 'TRBV', 'TRBJ']
+merge_cols = clone_cols + [subject_col, 'origin'] 
+
+clonotypes_df['timepoint_rank'] = clonotypes_df[timepoint_order_col]
+clonotypes_df = clonotypes_df.sort_values('timepoint_rank')
+
+# Grouping by subject, origin, and timepoint for accurate total counts
+sample_total_counts = clonotypes_df.groupby([subject_col, 'origin', timepoint_col])['counts'].sum().reset_index()
+sample_total_counts.rename(columns={'counts': 'total_counts'}, inplace=True)
+clonotypes_df = pd.merge(clonotypes_df, sample_total_counts, on=[subject_col, 'origin', timepoint_col])
+clonotypes_df['frequency'] = clonotypes_df['counts'] / clonotypes_df['total_counts']
+
+# Helper to run fisher exact test on rows
+def run_fisher(row, alt_hyp):
+    table = [[row['count_post'], row['total_post'] - row['count_post']],
+             [row['count_pre'], row['total_pre'] - row['count_pre']]]
+    return fisher_exact(table, alternative=alt_hyp)[1]
+
+
+# ==========================================
+# ----------- EXPANDING CLONES -----------
+# ==========================================
+
+fc_thold_up = 2.0
+signif_thold = 0.05
+top_clones_to_show = 15
+
+all_significant_results = []
+comparison_details = []
+expansion_counts_list = []
+
+for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin']):
+    timepoints = subject_df.sort_values('timepoint_rank')[timepoint_col].unique().tolist()
+    if len(timepoints) < 2:
+        continue
+
+    freq_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='frequency', fill_value=0)
+    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='counts', fill_value=0)
+    subject_total_counts = subject_df.groupby(timepoint_col)['counts'].sum()
+
+    for t_pre, t_post in itertools.combinations(timepoints, 2):
+        # 1. Vectorized DataFrame creation instead of iterrows
+        comp_df = pd.DataFrame({
+            'count_pre': counts_pivot[t_pre],
+            'count_post': counts_pivot[t_post],
+            'freq_pre': freq_pivot[t_pre],
+            'freq_post': freq_pivot[t_post]
+        }).reset_index()
+        
+        # 2. Fast pre-filtering: Must have post counts > 0 to be an expansion
+        comp_df = comp_df[comp_df['count_post'] > 0].copy()
+        if comp_df.empty:
+            continue
+            
+        # 3. Vectorized Total Counts & Fold Change
+        comp_df['total_pre'] = subject_total_counts[t_pre]
+        comp_df['total_post'] = subject_total_counts[t_post]
+        
+        # Safe divide for fold change (np.where is extremely fast)
+        comp_df['fold_change'] = np.where(comp_df['freq_pre'] == 0, np.inf, comp_df['freq_post'] / comp_df['freq_pre'])
+        
+        # 4. Filter strictly by fold_change threshold BEFORE running expensive Fisher tests
+        # If it doesn't meet the FC threshold, it won't make your final cut anyway.
+        comp_df = comp_df[comp_df['fold_change'] > fc_thold_up].copy()
+        
+        if comp_df.empty:
+            continue
+
+        # 5. Apply Fisher's Exact test only to the remaining rows
+        comp_df['p_value'] = comp_df.apply(run_fisher, axis=1, alt_hyp='greater')
+        
+        # Add metadata
+        comp_df[subject_col] = subject
+        comp_df['origin'] = origin
+        comp_df['t_pre'] = t_pre
+        comp_df['t_post'] = t_post
+
+        # Run FDR correction
+        _, q_values, _, _ = multipletests(comp_df['p_value'], alpha=signif_thold, method='fdr_bh')
+        comp_df['q_value'] = q_values
+        
+        comparison_details.append(comp_df)
+
+        # Get Significant Hits
+        significant_hits = comp_df[comp_df['q_value'] < signif_thold]
+
+        if not significant_hits.empty:
+            counts_per_pair = pd.DataFrame({
+                't_pre': [t_pre], 't_post': [t_post], 
+                'expanded_count': [len(significant_hits)],
+                subject_col: [subject], 'origin': [origin]
+            })
+            expansion_counts_list.append(counts_per_pair)
+
+            significant_clones = significant_hits[clone_cols].drop_duplicates()
+            final_clones_df = freq_pivot.loc[pd.MultiIndex.from_frame(significant_clones)].reset_index()
+            final_clones_df[subject_col] = subject
+            final_clones_df['origin'] = origin
+            
+            cols = [subject_col, 'origin'] + clone_cols + timepoints
+            final_clones_df = final_clones_df[[c for c in cols if c in final_clones_df.columns]]
+            all_significant_results.append(final_clones_df)
+
+# --- Assemble Expanding Tables ---
+expansion_counts_table = pd.DataFrame()
+if expansion_counts_list:
+    expansion_counts_table = pd.concat(expansion_counts_list, ignore_index=True)
+    # Reorder columns slightly just to match previous layout
+    if not expansion_counts_table.empty:
+        expansion_counts_table = expansion_counts_table[[subject_col, 'origin', 't_pre', 't_post', 'expanded_count']]
+
+detailed_comparisons_table = pd.DataFrame()
+if comparison_details:
+    detailed_comparisons_table = pd.concat(comparison_details, ignore_index=True)
+
+expanded_clones_summary_table = pd.DataFrame()
+if all_significant_results:
+    expanded_clones_summary_table = pd.concat(all_significant_results, ignore_index=True).fillna(0)
+    expanded_clones_summary_table.rename(columns={t: f'freq_{t}' for t in expanded_clones_summary_table.columns if t not in merge_cols}, inplace=True)
+
+# --- Clean & Get Top Expanding Clones ---
+table1_top = pd.DataFrame()
+table2_top = pd.DataFrame()
+
+if not detailed_comparisons_table.empty:
+    for col in ['p_value', 'q_value', 'fold_change']:
+        detailed_comparisons_table[col] = detailed_comparisons_table[col].replace([np.inf, -np.inf], pd.NA)
+
+    # Note: FC filter was already applied earlier, so this is just checking Q-value
+    significant_details = detailed_comparisons_table[
+        (pd.to_numeric(detailed_comparisons_table['q_value'], errors='coerce') < signif_thold)
+    ].copy()
+
+    if not significant_details.empty:
+        min_q_value_rows = significant_details.loc[significant_details.groupby(merge_cols)['q_value'].idxmin()]
+        top_clones = min_q_value_rows.sort_values('q_value', ascending=True).head(top_clones_to_show)
+        top_clone_identifiers = top_clones[merge_cols]
+
+        if not expanded_clones_summary_table.empty:
+            table1_top = pd.merge(top_clone_identifiers, expanded_clones_summary_table, on=merge_cols, how='left')
+
+        table2_top = pd.merge(top_clone_identifiers, detailed_comparisons_table, on=merge_cols, how='inner')
+        table2_top = table2_top[table2_top['q_value'] < signif_thold]
+
+
+# ==========================================
+# ----------- CONTRACTING CLONES -----------
+# ==========================================
+
+fc_thold_down = 0.5 
+signif_thold = 0.05
+
+all_significant_results_cont = []
+comparison_details_cont = []
+contraction_counts_list = [] 
+
+for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin']):
+    timepoints = subject_df.sort_values('timepoint_rank')[timepoint_col].unique().tolist()
+    if len(timepoints) < 2:
+        continue
+
+    freq_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='frequency', fill_value=0)
+    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='counts', fill_value=0)
+    subject_total_counts = subject_df.groupby(timepoint_col)['counts'].sum()
+
+    for t_pre, t_post in itertools.combinations(timepoints, 2):
+        # 1. Vectorize
+        comp_df = pd.DataFrame({
+            'count_pre': counts_pivot[t_pre],
+            'count_post': counts_pivot[t_post],
+            'freq_pre': freq_pivot[t_pre],
+            'freq_post': freq_pivot[t_post]
+        }).reset_index()
+        
+        # 2. Fast pre-filtering: Must have pre counts > 0 to contract
+        comp_df = comp_df[comp_df['count_pre'] > 0].copy()
+        if comp_df.empty:
+            continue
+            
+        # 3. Vectorized Total Counts & Fold Change
+        comp_df['total_pre'] = subject_total_counts[t_pre]
+        comp_df['total_post'] = subject_total_counts[t_post]
+        comp_df['fold_change'] = comp_df['freq_post'] / comp_df['freq_pre']
+        
+        # 4. Filter by FC threshold BEFORE Fisher
+        comp_df = comp_df[comp_df['fold_change'] < fc_thold_down].copy()
+        
+        if comp_df.empty:
+            continue
+
+        # 5. Apply Fisher
+        comp_df['p_value'] = comp_df.apply(run_fisher, axis=1, alt_hyp='less')
+        
+        # Add metadata
+        comp_df[subject_col] = subject
+        comp_df['origin'] = origin
+        comp_df['t_pre'] = t_pre
+        comp_df['t_post'] = t_post
+
+        # Run FDR
+        _, q_values, _, _ = multipletests(comp_df['p_value'], alpha=signif_thold, method='fdr_bh')
+        comp_df['q_value'] = q_values
+        
+        comparison_details_cont.append(comp_df)
+
+        # Get Significant Hits
+        significant_hits = comp_df[comp_df['q_value'] < signif_thold]
+
+        if not significant_hits.empty:
+            counts_per_pair = pd.DataFrame({
+                't_pre': [t_pre], 't_post': [t_post], 
+                'contracted_count': [len(significant_hits)],
+                subject_col: [subject], 'origin': [origin]
+            })
+            contraction_counts_list.append(counts_per_pair)
+
+            significant_clones = significant_hits[clone_cols].drop_duplicates()
+            final_clones_df = freq_pivot.loc[pd.MultiIndex.from_frame(significant_clones)].reset_index()
+            final_clones_df[subject_col] = subject
+            final_clones_df['origin'] = origin
+
+            cols = [subject_col, 'origin'] + clone_cols + timepoints
+            final_clones_df = final_clones_df[[c for c in cols if c in final_clones_df.columns]]
+            all_significant_results_cont.append(final_clones_df)
+
+# --- Assemble Contracting Tables ---
+contraction_counts_table = pd.DataFrame()
+if contraction_counts_list:
+    contraction_counts_table = pd.concat(contraction_counts_list, ignore_index=True)
+    if not contraction_counts_table.empty:
+        contraction_counts_table = contraction_counts_table[[subject_col, 'origin', 't_pre', 't_post', 'contracted_count']]
+
+detailed_comparisons_table_cont = pd.DataFrame() 
+if comparison_details_cont:
+    detailed_comparisons_table_cont = pd.concat(comparison_details_cont, ignore_index=True)
+
+contracting_clones_summary_table = pd.DataFrame()
+if all_significant_results_cont:
+    contracting_clones_summary_table = pd.concat(all_significant_results_cont, ignore_index=True).fillna(0)
+    contracting_clones_summary_table.rename(columns={t: f'freq_{t}' for t in contracting_clones_summary_table.columns if t not in merge_cols}, inplace=True)
+
+# --- Clean & Get Top Contracting Clones ---
+table1_contracting_top = pd.DataFrame()
+table2_contracting_top = pd.DataFrame()
+
+if not detailed_comparisons_table_cont.empty:
+    for col in ['p_value', 'q_value']:
+        detailed_comparisons_table_cont[col] = detailed_comparisons_table_cont[col].replace([np.inf, -np.inf], pd.NA)
+
+    significant_details = detailed_comparisons_table_cont[
+        (pd.to_numeric(detailed_comparisons_table_cont['q_value'], errors='coerce') < signif_thold)
+    ].copy()
+
+    if not significant_details.empty:
+        min_q_value_rows = significant_details.loc[significant_details.groupby(merge_cols)['q_value'].idxmin()]
+        top_clones = min_q_value_rows.sort_values('q_value', ascending=True).head(top_clones_to_show)
+        top_clone_identifiers = top_clones[merge_cols]
+
+        if not contracting_clones_summary_table.empty:
+            table1_contracting_top = pd.merge(top_clone_identifiers, contracting_clones_summary_table, on=merge_cols, how='left')
+
+        table2_contracting_top = pd.merge(top_clone_identifiers, detailed_comparisons_table_cont, on=merge_cols, how='left')
+        table2_contracting_top = table2_contracting_top[table2_contracting_top['q_value'] < signif_thold]
+        
+```
+
+```{python}
+#| echo: false
+#| output: asis
+
+import plotly.graph_objects as go
+import pandas as pd
+
+# --- 1. Identify "New" vs "Pre-existing" via Cumulative History ---
+
+present_clones = clonotypes_df[clonotypes_df['counts'] > 0].copy()
+present_clones = present_clones.sort_values([subject_col, timepoint_order_col])
+
+dynamic_results = []
+
+# PERFORMANCE UPGRADE: Pre-load expansions and contractions into fast lookup sets
+expanded_set = set()
+if 'detailed_comparisons_table' in locals() and not detailed_comparisons_table.empty:
+    sig_exp = detailed_comparisons_table[
+        (detailed_comparisons_table['fold_change'] > fc_thold_up) &
+        (pd.to_numeric(detailed_comparisons_table['q_value'], errors='coerce') < signif_thold)
+    ]
+    expanded_set = set(zip(sig_exp[subject_col], sig_exp['origin'], sig_exp['t_post'], sig_exp['CDR3b']))
+
+contracted_set = set()
+if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_table_cont.empty:
+    sig_cont = detailed_comparisons_table_cont[
+        (detailed_comparisons_table_cont['fold_change'] < fc_thold_down) &
+        (pd.to_numeric(detailed_comparisons_table_cont['q_value'], errors='coerce') < signif_thold)
+    ]
+    contracted_set = set(zip(sig_cont[subject_col], sig_cont['origin'], sig_cont['t_post'], sig_cont['CDR3b']))
+
+
+# Iterate over both subject AND origin
+for (subject, origin), subj_df in present_clones.groupby([subject_col, 'origin']):
+    timepoints = sorted(subj_df[timepoint_order_col].unique())
+    history = set() # Cumulative set of CDR3bs seen so far
+    
+    for rank in timepoints:
+        tp_name = subj_df[subj_df[timepoint_order_col] == rank][timepoint_col].iloc[0]
+        current_clones = subj_df[subj_df[timepoint_order_col] == rank]['CDR3b'].unique()
+        
+        for clone in current_clones:
+            status = "Stable" # Default
+            
+            # A. Check Baseline
+            if rank == timepoints[0]:
+                status = "Baseline"
+            # B. Check if New
+            elif clone not in history:
+                status = "New"
+            # C. Check if significantly Expanded or Contracted (Fast Set Lookup)
+            else:
+                if (subject, origin, tp_name, clone) in expanded_set:
+                    status = "Expanded"
+                elif (subject, origin, tp_name, clone) in contracted_set:
+                    status = "Contracted"
+
+            dynamic_results.append({
+                subject_col: subject,
+                'origin': origin,       # Ensure origin is appended here!
+                timepoint_col: tp_name,
+                timepoint_order_col: rank,
+                'CDR3b': clone,
+                'Status': status
+            })
+            
+        history.update(current_clones)
+
+
+# --- 2. Aggregate for Plotting ---
+plot_df = pd.DataFrame(dynamic_results)
+
+# Group by origin as well to retain it in agg_df
+agg_df = plot_df.groupby([subject_col, 'origin', timepoint_col, timepoint_order_col, 'Status']).size().reset_index(name='Count')
+
+# Calculate Percentages per timepoint per origin
+totals = agg_df.groupby([subject_col, 'origin', timepoint_col])['Count'].transform('sum')
+agg_df['Percentage'] = (agg_df['Count'] / totals) * 100
+agg_df['Total_N'] = totals
+
+# Sort categories for consistent stacking
+status_order = ['New', 'Expanded', 'Contracted', 'Stable', 'Baseline']
+agg_df['Status'] = pd.Categorical(agg_df['Status'], categories=status_order, ordered=True)
+agg_df = agg_df.sort_values([subject_col, 'origin', timepoint_order_col, 'Status'])
+
+
+# --- 3. Plotting with Dropdowns (Origin-Specific Timepoints) ---
+color_map = {
+    'New': '#2ca02c',         # Green
+    'Expanded': '#ef553b',    # Red
+    'Contracted': '#636efa',  # Blue
+    'Stable': '#d3d3d3',      # Light Grey
+    'Baseline': '#000000'     # Black
+}
+
+print("::: {.panel-tabset}\n")
+for subject, group in agg_df.groupby(subject_col):
+    print(f"## {subject}\n")
+    
+    origins = group['origin'].unique()
+    
+    fig = go.Figure()
+    
+    traces_per_origin = len(status_order) + 1 
+    buttons = []
+    first_orig_timepoints = [] # To set the default initial view
+    
+    for i, orig in enumerate(origins):
+        orig_group = group[group['origin'] == orig]
+        is_visible = (i == 0) # Only the first origin is visible by default
+        
+        # Get timepoints strictly for this origin
+        orig_timepoints = orig_group.sort_values(timepoint_order_col)[timepoint_col].unique().tolist()
+        
+        if i == 0:
+            first_orig_timepoints = orig_timepoints
+        
+        # Add the 5 stacked bars
+        for status in status_order:
+            status_df = orig_group[orig_group['Status'] == status]
+            
+            fig.add_trace(go.Bar(
+                x=status_df[timepoint_col],
+                y=status_df['Percentage'],
+                name=status,
+                legendgroup=status,      
+                showlegend=is_visible,   
+                marker_color=color_map[status],
+                marker_line_color='black',
+                marker_line_width=0.5,
+                customdata=status_df[['Count', 'Total_N']],
+                hovertemplate="%{x}<br>Status: " + status + "<br>Percentage: %{y:.1f}%<br>Count: %{customdata[0]}<br>Total N: %{customdata[1]}<extra></extra>",
+                visible=is_visible
+            ))
+        
+        # Add the 'n=' labels as an invisible scatter trace
+        tp_totals = orig_group[[timepoint_col, timepoint_order_col, 'Total_N']].drop_duplicates().sort_values(timepoint_order_col)
+        fig.add_trace(go.Scatter(
+            x=tp_totals[timepoint_col],
+            y=[105] * len(tp_totals),
+            text=["n=" + str(int(n)) for n in tp_totals['Total_N']],
+            mode='text',
+            textfont=dict(color="black"),
+            showlegend=False,
+            hoverinfo='none',
+            visible=is_visible
+        ))
+
+        # Build the button for this origin
+        visibility = [False] * (len(origins) * traces_per_origin)
+        for j in range(traces_per_origin):
+            visibility[i * traces_per_origin + j] = True
+            
+        buttons.append(dict(
+            label=str(orig),
+            method="update",
+            args=[
+                {"visible": visibility}, # 1. Update trace visibility
+                {
+                    "title": f"Clonal Dynamics: {subject} ({orig})",
+                    "xaxis.categoryarray": orig_timepoints # 2. Update X-axis to drop missing timepoints
+                }
+            ]
+        ))
+
+    # --- Construct the Dropdown Menus if multiple origins exist ---
+    if len(origins) > 1:
+        fig.update_layout(
+            updatemenus=[dict(
+                active=0,
+                buttons=buttons,
+                direction="down",
+                showactive=True,
+                x=0.0,
+                xanchor="left",
+                y=1.15,
+                yanchor="top"
+            )]
+        )
+
+    # --- Apply layout formatting ---
+    fig.update_layout(
+        title=f"Clonal Dynamics: {subject} ({origins[0]})",
+        barmode='stack',
+        yaxis=dict(range=[0, 115], title="Percentage of Repertoire (%)"),
+        # Set the initial X-axis to only show the first origin's timepoints
+        xaxis=dict(title="Timepoint", categoryorder='array', categoryarray=first_orig_timepoints),
+        plot_bgcolor='white',
+        paper_bgcolor='white'
+    )
+    fig.update_xaxes(showline=True, linecolor='black')
+    fig.update_yaxes(showgrid=True, gridcolor='lightgrey')
+    
+    fig.show()
+    print("\n")
+    
+print(":::\n")
+
+```
+**Figure 4. Longitudinal Clonal Dynamics of the TCR Repertoire.** Stacked bar chart illustrating the relative proportion of unique TCR clonotypes categorized by their longitudinal behavior. At each timepoint, clones are classified relative to their historical presence in the patient. The y-axis represents the percentage of the total unique clones present at that specific timepoint. The absolute number of unique clonotypes analyzed per timepoint is denoted by the 'n=' value above each bar.
+
+To understand how the T-cell repertoire shifts in response to therapy, it is not enough to just look at overall diversity; we must track the specific trajectories of individual clones across multiple timepoints. By comparing the frequency of a clone at a given timepoint against its historical baseline, we can classify its behavior and visualize the macroscopic turnover of the patient's immune system  
+
+**Defining Clonal Categories**  
+In this visualization, the total unique repertoire at each timepoint is broken down into four distinct functional statuses:
+Baseline (Black): The initial pool of clones detected at the very first sampling timepoint ($T_0$). By definition, everything here is the starting point.  
+
+- **New (Green):** Clones that have emerged for the very first time at the current timepoint. These were completely undetected in any prior samples.
+- **Expanded (Red):** Pre-existing clones (in at least one previous timepoint) that have demonstrated a statistically significant increase in frequency (via Fisher's exact test) compared to previous timepoints. These represent the actively proliferating, potentially treatment-responsive compartment.
+- **Stable (Grey):** Pre-existing clones (in at least one previous timepoint) that are neither significantly expanding nor contracting. They are persisting in the repertoire as background or memory populations.
+
+```{python}
+
+# --- Save Detailed Clone Categories with Info ---
+
+# Merge the categorical statuses back with the original data to keep counts, frequencies, and gene usage
+export_cols = [subject_col, timepoint_col, 'CDR3b', 'TRBV', 'TRBJ', 'counts', 'frequency']
+export_cols = [c for c in export_cols if c in present_clones.columns] # Safely keep only existing columns
+
+detailed_export_df = pd.merge(
+    plot_df, # Contains subject, timepoint, timepoint_order, CDR3b, Status
+    present_clones[export_cols],
+    on=[subject_col, timepoint_col, 'CDR3b'],
+    how='left'
+)
+
+# Sort it logically: By Patient -> Chronological Timepoint -> Status -> Largest Clones first
+detailed_export_df = detailed_export_df.sort_values(
+    by=[subject_col, timepoint_order_col, 'Status', 'counts'], 
+    ascending=[True, True, True, False]
+)
+```
+
+## Similar TCR sequences within samples {#sec-tcrdist}
+
+[TCRdist](https://elifesciences.org/articles/68605) is a **metric that quantifies the similarity between any two T-cell receptors (TCRs) by calculating a biochemically-aware distance based on their amino acid sequences**. Instead of just checking if two TCR sequences are identical, **TCRdist focuses on the key regions that bind to antigens: Complementarity-Determining Regions (CDRs).** It compares the amino acid sequences of the CDR1, CDR2 (obtained from the V gene), and especially the hypervariable CDR3 loops of two TCRs. The "distance" is calculated using a substitution matrix (like BLOSUM62) that scores how similar two different amino acids are in their biochemical properties. Swapping two functionally similar amino acids results in a small distance penalty, while swapping two very different ones results in a large penalty. The total distance is a weighted sum of these scores, with the CDR3 distance contributing the most.
+
+**Why This Metric Is Helpful?** 🌐  
+The primary benefit of TCRdist is its ability to identify groups of T-cells that are likely to recognize the same antigen, even if their TCRs are not identical. This phenomenon is known as cross-reactivity.
+By calculating the distance between all TCRs in your sample, you can move beyond analyzing single, identical clones and instead identify functional "neighborhoods" of similar TCRs. This provides a much more comprehensive and biologically accurate picture of an immune response. It allows you to group related T-cells together to see the full breadth of the response to a specific antigen, rather than just the single most expanded clone.
+
+**What is similar enough?**   
+Clonotypes were grouped into meta-clonotypes using TCRdist3 with a similarity radius threshold of 24 units. This threshold was selected to permit minor biochemical variations (approximately 1–2 amino acid substitutions within the CDR3 loop) while maintaining high sequence specificity. While this radius is permissive enough to capture chemically similar motifs, it is stringent enough to exclude unrelated sequences in the local density space. Users are encouraged to examine the nearest-neighbor distance distribution of their own datasets (first tab on Figure below) to validate that this threshold effectively separates clonal variants from the background repertoire.
+
+
+```{python}
+#| echo: false
+#| output: asis
+
+# Expanded: keep only those metaclones with at least one expanded clone
+
+import os
+import glob
+import pandas as pd
+import numpy as np
+import igraph as ig
+import h5py
+import itertools
+import plotly.graph_objects as go
+import plotly.express as px
+from scipy.sparse import csr_matrix
+
+# --- Configuration ---
+DISTANCE_THRESHOLD = 24
+COLOR_MULTI = '#000000'  # Black for multiple timepoints
+
+# --- PLOTTING HELPER FUNCTION ---
+def create_network_figure(g_plot, title_text, num_clusters):
+    if len(g_plot.vs) == 0:
+        return None
+        
+    layout = g_plot.layout_fruchterman_reingold(niter=500)
+
+    # Edge Trace
+    edge_x, edge_y = [], []
+    for edge in g_plot.es:
+        x0, y0 = layout[edge.source]
+        x1, y1 = layout[edge.target]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=0.5, color='#888'),
+        hoverinfo='none', mode='lines', showlegend=False
+    )
+
+    traces = [edge_trace]
+
+    # Node Traces by Category
+    categories = sorted(list(set(g_plot.vs['category'])))
+    if 'Multiple Timepoints' in categories:
+        categories.remove('Multiple Timepoints')
+        categories.append('Multiple Timepoints')
+
+    for category in categories:
+        cat_nodes = [v for v in g_plot.vs if v['category'] == category]
+        if not cat_nodes: continue
+        
+        x_coords = [layout[v.index][0] for v in cat_nodes]
+        y_coords = [layout[v.index][1] for v in cat_nodes]
+        texts = [v['title'] for v in cat_nodes]
+        sizes = [v['size'] for v in cat_nodes]
+        color = cat_nodes[0]['color']
+
+        traces.append(go.Scatter(
+            x=x_coords, y=y_coords,
+            mode='markers', name=str(category),
+            text=texts, hoverinfo='text',
+            marker=dict(color=color, size=sizes, line_width=1, line_color='black')
+        ))
+
+    fig = go.Figure(data=traces, layout=go.Layout(
+        title=dict(text=f"{title_text}<br><sup>Total Metaclones: {num_clusters}</sup>", x=0.5),
+        showlegend=True,
+        legend=dict(x=1.02, y=1, bgcolor='rgba(255,255,255,0.8)', bordercolor='#ccc', borderwidth=1),
+        hovermode='closest',
+        margin=dict(b=20,l=5,r=150,t=60),
+        plot_bgcolor='white', paper_bgcolor='white',
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+    ))
+    return fig
+
+# --- Load and Aggregate Metadata ---
+clone_file_pattern = os.path.join(tcrdist_dir, '*_clone_df.csv')
+clone_files = sorted(glob.glob(clone_file_pattern))
+
+if not clone_files:
+    print(f"Error: No clone metadata files found at: {clone_file_pattern}")
+else:
+    all_clones_list = []
+
+    for f in clone_files:
+        df = pd.read_csv(f)
+        basename = os.path.basename(f).replace('_clone_df.csv', '')
+        df['sample'] = basename 
+        
+        count_col = 'count' if 'count' in df.columns else 'counts'
+        df['frequency'] = df[count_col] / df[count_col].sum()
+
+        if basename in meta.index:
+            df['patient'] = meta.loc[basename, subject_col]
+            df[timepoint_col] = meta.loc[basename, timepoint_col]
+            all_clones_list.append(df)
+        elif basename in meta['sample'].values:
+            row = meta[meta['sample'] == basename].iloc[0]
+            df['patient'] = row[subject_col]
+            df[timepoint_col] = row[timepoint_col]
+            all_clones_list.append(df)
+
+    if all_clones_list:
+        all_clones_df = pd.concat(all_clones_list).reset_index(drop=True)
+        
+        unique_timepoints = sorted(all_clones_df[timepoint_col].dropna().unique())
+        color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set1
+        timepoint_colors = {tp: color_palette[i % len(color_palette)] for i, tp in enumerate(unique_timepoints)}
+
+        # --- PATIENT LOOP ---
+        print("::: {.panel-tabset}\n")
+        
+        for patient, patient_df in all_clones_df.groupby('patient'):
+            print(f"## {patient}\n")
+            
+            count_col_name = 'count' if 'count' in patient_df.columns else 'counts'
+            node_properties = patient_df.groupby('cdr3_b_aa').agg(
+                max_frequency=('frequency', 'max'),
+                max_count=(count_col_name, 'max'),
+                timepoints=(timepoint_col, lambda t: ','.join(sorted(list(set(t)))))
+            ).reset_index()
+
+            def get_color_and_category(timepoints_str):
+                tps = timepoints_str.split(',')
+                if len(tps) > 1: return COLOR_MULTI, 'Multiple Timepoints'
+                else: return timepoint_colors.get(tps[0], '#888888'), tps[0]
+
+            node_properties[['color', 'category']] = node_properties['timepoints'].apply(
+                lambda x: pd.Series(get_color_and_category(x))
+            )
+
+            node_properties['size'] = node_properties['max_frequency'].apply(lambda x: max(10, np.sqrt(x * 100) * 15))
+
+            tcr_to_idx = {tcr: i for i, tcr in enumerate(node_properties['cdr3_b_aa'])}
+
+            g = ig.Graph()
+            g.add_vertices(len(node_properties))
+            g.vs['name'] = node_properties['cdr3_b_aa']
+            g.vs['size'] = node_properties['size'] 
+            g.vs['color'] = node_properties['color']
+            g.vs['category'] = node_properties['category']
+            g.vs['title'] = node_properties.apply(
+                lambda row: f"TCR: {row['cdr3_b_aa']}<br>Peak Freq: {(row['max_frequency']*100):.3f}%<br>Peak Count: {row['max_count']}<br>TPs: {row['timepoints']}",
+                axis=1
+            ).tolist()
+
+            patient_samples = patient_df['sample'].unique()
+            for sample_id in patient_samples:
+                dist_file = os.path.join(tcrdist_dir, f'{sample_id}_distance_matrix.hdf5')
+                clone_file = os.path.join(tcrdist_dir, f'{sample_id}_clone_df.csv')
+
+                if not os.path.exists(dist_file) or not os.path.exists(clone_file): continue
+
+                try:
+                    with h5py.File(dist_file, 'r') as hf:
+                        data = hf['data'][:]
+                        indices = hf['indices'][:]
+                        indptr = hf['indptr'][:]
+                        dist_matrix = csr_matrix((data, indices, indptr)).toarray()
+
+                    sample_clones_df = pd.read_csv(clone_file)
+                    tcr_names = sample_clones_df['cdr3_b_aa'].tolist()
+                    valid_indices = [i for i, t in enumerate(tcr_names) if t in tcr_to_idx]
+
+                    for i, j in itertools.combinations(valid_indices, 2):
+                        distance = dist_matrix[i, j]
+                        if 0 < distance <= DISTANCE_THRESHOLD:
+                            u = tcr_to_idx[tcr_names[i]]
+                            v = tcr_to_idx[tcr_names[j]]
+                            g.add_edge(u, v)
+                except Exception as e:
+                    print(f"Skipping {sample_id} due to error: {e}")
+
+            g.simplify()
+            g.delete_vertices(g.vs.select(_degree=0))
+
+            if len(g.vs) == 0:
+                print("No clusters identified for this patient under the current distance threshold.\n")
+                continue
+
+            # --- PLOT 1: FULL NETWORK ---
+            num_metaclones = len(g.connected_components())
+            fig_full = create_network_figure(g, f"Full TCR Network: {patient}", num_metaclones)
+            if fig_full: fig_full.show()
+
+            # --- PLOT 2: EXPANDED METACLONES ONLY ---
+            # 1. Get the list of truly expanded CDR3s for this specific patient from your detailed dataframe
+            patient_expanded_df = detailed_export_df[
+                (detailed_export_df[subject_col] == patient) & 
+                (detailed_export_df['Status'] == 'Expanded')
+            ]
+            expanded_tcr_set = set(patient_expanded_df['CDR3b'].tolist())
+
+            # 2. Iterate through connected components and keep only those with at least one expanded clone
+            keep_vids = []
+            num_expanded_metaclones = 0
+            
+            for component in g.connected_components():
+                component_tcrs = [g.vs[v]['name'] for v in component]
+                # If the intersection of the component's TCRs and the Expanded TCRs is not empty
+                if any(tcr in expanded_tcr_set for tcr in component_tcrs):
+                    keep_vids.extend(component)
+                    num_expanded_metaclones += 1
+
+            # 3. Create Subgraph and Plot
+            g_expanded = g.subgraph(keep_vids)
+            
+            if len(g_expanded.vs) > 0:
+                fig_exp = create_network_figure(g_expanded, f"Filtered Network (Expanded Metaclones Only): {patient}", num_expanded_metaclones)
+                if fig_exp: fig_exp.show()
+            else:
+                print(f"*(No expanded metaclones found for {patient} to generate the filtered network plot.)*")
+
+            print("\n")
+            
+        print(":::\n")
+
+```
+**Figure 5. TCRdist Network** Network graphs visualizing sequence similarity between TCR clonotypes based on the TCRdist metric. Nodes represent individual unique clonotypes, with node size proportional to clonal frequency. Node color indicates the sample timepoint where the clone was detected. Edges connect clonotypes with a TCRdist score below a set threshold, forming clusters (metaclones). **(Top)** Full TCR Network: Visualization of all detected metaclones within the patient repertoire. **(Bottom)** Filtered Network (Expanded Metaclones Only):
+
+Up to this point, our analysis has treated every unique CDR3 amino acid sequence as a distinct entity. However, immunology is rarely so black and white. T-cell receptors with highly similar, though not identical, sequences often recognize the same antigenic epitope. By focusing only on exact matches, we risk fragmenting the data and missing the broader, coordinated cellular response to a specific antigen.
+
+To overcome this, we utilize TCRdist, a metric designed to quantify the biochemical and structural similarity between TCR sequences. By linking clones with small TCRdist distances, we can cluster related sequences into "metaclones"—groups of T-cells that likely share the same target specificity.
+
+**The Full TCR Network (Top Panel)** provides a landscape view of sequence similarity across the entire repertoire. We see many isolated clusters representing diverse specificities, often restricted to single timepoints.
+
+However, the most biologically relevant insights come from the Filtered Network **(Bottom Panel)**. Here, we hide the noise and display only those metaclones that contain at least one clonotype previously identified as Expanded (the red clones from our dynamics analysis).
+
+This filtered view reveals crucial insights:  
+
+- **Responses are polyclonal:** An expanding response is rarely just one single sequence; it is often a "cloud" of related sequences responding together.
+- **Persistence of responders:** If you notice the high proportion of dark grey nodes in the filtered network, this indicates that the antigen-specific metaclones driving the expansion are not transient. They persist within the patient over time, bridging different timepoints.
+
+## Pathogenic/Self-antigen TCR specificity (VDJdb) {#sec-VDJdb}
+
+[VDJdb](https://vdjdb.cdr3.net/) is a curated, public **database that catalogs T-cell receptor (TCR) sequences with known antigen specificities**. It serves as a valuable resource for immunologists and bioinformaticians, providing a standardized repository of information **linking a TCR's sequence to the specific epitope (antigen) it recognizes, along with the presenting MHC molecule**. The data within VDJdb is manually aggregated from a wide range of published studies and includes both TCR alpha and beta chains, providing rich context for each entry.
+
+You can query VDJdb by TCR sequence. You can search for a specific CDR3 sequence to determine if its antigen specificity has been previously reported. This ability to **match your experimental TCR sequences to a reference database allows you to annotate your bulk-TCR sequencing data and gain biological insights**. For example, by comparing your bulk-TCR repertoire to VDJdb, you can infer which antigens your T-cells have previously encountered or are actively responding to.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import os
+import io
+import warnings
+
+# Suppress pandas chained assignment warnings for cleaner output
+warnings.filterwarnings('ignore')
+
+# 2. Strict 3-Tier Categorization Logic
+def get_3tier_category(species):
+    species_str = str(species).strip()
+    if pd.isna(species) or species_str == 'nan' or species_str == '' or species_str == '.':
+        return 'Unmapped'
+    elif species_str == 'HomoSapiens':
+        return 'Self-Antigen (Human)'
+    else:
+        return 'Foreign Bystander'
+
+all_data = []
+
+# 3. Process each sample
+for _, row in meta.iterrows():
+    filepath = row['file']
+    
+    if os.path.exists(convert_dir) and os.listdir(convert_dir):
+        base_name = os.path.basename(row['file'])
+        name_part, ext_part = os.path.splitext(base_name)
+        new_file_name = f"{name_part}_airr{ext_part}"
+        
+        # Update the path to point to convert_dir
+        target_file = os.path.join(convert_dir, new_file_name)
+    else:
+        target_file = row['file']
+        
+    # Check if the newly constructed path exists before reading
+    if not os.path.exists(target_file):
+        print(f"Warning: File {target_file} not found. Skipping.")
+        continue
+        
+    airr_df = pd.read_csv(target_file, sep='\t')
+
+    # Handle standard AIRR column names
+    if 'junction_aa' in airr_df.columns:
+        airr_df.rename(columns={'junction_aa': 'cdr3aa'}, inplace=True)
+
+    if 'duplicate_fraction' in airr_df.columns:
+        airr_df.rename(columns={'duplicate_fraction': 'freq'}, inplace=True)
+    elif 'clone_fraction' in airr_df.columns:
+        airr_df.rename(columns={'clone_fraction': 'freq'}, inplace=True)
+    elif 'duplicate_count' in airr_df.columns:
+        airr_df['freq'] = airr_df['duplicate_count'] / airr_df['duplicate_count'].sum()
+    else:
+        raise ValueError(f"Sample {row['sample']} is missing frequency and count columns.")
+
+    # Match and map VDJdb annotations
+    vdjmatch_path = os.path.join(VDJdb_dir, f"{row['sample']}.vdjmatch.txt")
+    if os.path.exists(vdjmatch_path):
+        vdj_df = pd.read_csv(vdjmatch_path, sep='\t')
+        vdj_dedup = vdj_df.sort_values('vdjdb.score', ascending=False).drop_duplicates(subset=['cdr3aa'])
+
+        # Safely extract annotation columns; standardizing names for hover data
+        annot_cols = {'cdr3aa': 'cdr3aa', 'antigen.species': 'Species', 'antigen.gene': 'Gene', 'antigen.epitope': 'Antigen'}
+        existing_cols = {k: v for k, v in annot_cols.items() if k in vdj_dedup.columns}
+
+        vdj_annotations = vdj_dedup[list(existing_cols.keys())].rename(columns=existing_cols)
+        merged_df = airr_df.merge(vdj_annotations, on='cdr3aa', how='left')
+    else:
+        merged_df = airr_df.copy()
+        merged_df['Species'] = np.nan
+        merged_df['Gene'] = np.nan
+        merged_df['Antigen'] = np.nan
+
+    # Categorize BEFORE filling NaNs
+    merged_df['Category'] = merged_df['Species'].apply(get_3tier_category)
+
+    # Fill NaN values in annotations so Plotly hover text formats cleanly
+    merged_df[['Species', 'Gene', 'Antigen']] = merged_df[['Species', 'Gene', 'Antigen']].fillna('Unknown')
+
+    merged_df[subject_col] = row[subject_col]
+    merged_df[timepoint_col] = str(row[timepoint_col])
+    merged_df[timepoint_order_col] = int(row[timepoint_order_col])
+
+    cols_to_keep = ['cdr3aa', 'freq', 'Category', subject_col, timepoint_col, timepoint_order_col, 'Species', 'Gene', 'Antigen']
+    all_data.append(merged_df[cols_to_keep])
+
+final_df = pd.concat(all_data, ignore_index=True)
+
+# ---------------------------------------------------------
+# QUARTO TAB GENERATION & PLOTTING (INTERACTIVE WITH PLOTLY)
+# ---------------------------------------------------------
+
+cat_colors = {
+    'Unmapped': '#d3d3d3',
+    'Foreign Bystander': '#1f77b4',
+    'Self-Antigen (Human)': '#d62728'
+}
+
+patients = final_df[subject_col].unique()
+
+print("::: {.panel-tabset}\n")
+
+for pat in patients:
+    print(f"## {pat}\n")
+
+    # Sort explicitly by timepoint_order before plotting
+    pat_df = final_df[final_df[subject_col] == pat].sort_values(by=[timepoint_order_col, 'freq'], ascending=[True, False])
+    ordered_timepoints = pat_df[[timepoint_col, timepoint_order_col]].drop_duplicates().sort_values(timepoint_order_col)[timepoint_col].tolist()
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=('Repertoire Composition', 'Clonal Dominance'))
+
+    # --- Plot 1: Repertoire Composition (Barplot) ---
+    pt_bar_data = pat_df.groupby([timepoint_col, timepoint_order_col, 'Category']).agg(
+        total_freq=('freq', 'sum'),
+        tcr_count=('cdr3aa', 'count')
+    ).reset_index().sort_values(timepoint_order_col)
+
+    for cat in cat_colors.keys():
+        cat_bar = pt_bar_data[pt_bar_data['Category'] == cat]
+        fig.add_trace(go.Bar(
+            x=cat_bar[timepoint_col],
+            y=cat_bar['total_freq'],
+            name=cat,
+            marker_color=cat_colors[cat],
+            customdata=cat_bar['tcr_count'],
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                "Category: " + cat + "<br>"
+                "Total Freq: %{y:.4f}<br>"
+                "No. of TCRs: %{customdata}<extra></extra>"
+            ),
+            legendgroup=cat
+        ), row=1, col=1)
+
+    # Aggregate the total counts and find the top Y coordinate for each timepoint
+    tp_totals = pt_bar_data.groupby([timepoint_col, timepoint_order_col]).agg(
+        total_count=('tcr_count', 'sum'),
+        top_y=('total_freq', 'sum')
+    ).reset_index().sort_values(timepoint_order_col)
+
+    fig.add_trace(go.Scatter(
+        x=tp_totals[timepoint_col],
+        y=tp_totals['top_y'],
+        text=["n=" + str(int(n)) for n in tp_totals['total_count']],
+        mode='text',
+        textposition="top center", # Places the text just above the highest point of the bar
+        textfont=dict(color="black"),
+        showlegend=False,
+        hoverinfo='none'
+    ), row=1, col=1)
+    # ---------------------------------------------------------
+
+    # --- Plot 2: Clonal Dominance (Stripplot equivalent with grouping) ---
+    for cat in cat_colors.keys():
+        cat_df = pat_df[pat_df['Category'] == cat]
+
+        # Plotly Box with invisible bounds for jittered scatter
+        fig.add_trace(go.Box(
+            x=cat_df[timepoint_col],
+            y=cat_df['freq'],
+            name=cat,
+            marker_color=cat_colors[cat],
+            boxpoints='all',
+            jitter=0.5,
+            pointpos=0,
+            fillcolor='rgba(0,0,0,0)',
+            line_color='rgba(0,0,0,0)',
+            showlegend=False,
+            legendgroup=cat,
+            customdata=np.stack((cat_df['cdr3aa'], cat_df['Species'], cat_df['Gene'], cat_df['Antigen']), axis=-1),
+            hovertemplate=(
+                "CDR3: %{customdata[0]}<br>"
+                "Freq: %{y:.2e}<br>"
+                "Species: %{customdata[1]}<br>"
+                "Gene: %{customdata[2]}<br>"
+                "Antigen: %{customdata[3]}<extra></extra>"
+            )
+        ), row=1, col=2)
+
+    # Format layout globally
+    fig.update_layout(
+        barmode='stack',
+        boxmode='group', 
+        height=550,
+        margin=dict(b=100),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+        plot_bgcolor='white',
+        paper_bgcolor='white'
+    )
+
+    # Configure axes specifically
+    fig.update_xaxes(categoryorder='array', categoryarray=ordered_timepoints, showline=True, linewidth=1, linecolor='black')
+    fig.update_yaxes(title_text='Total Clonal Frequency (UMI Fraction)', showgrid=True, gridcolor='lightgrey', row=1, col=1)
+    
+    fig.update_yaxes(range=[0, tp_totals['top_y'].max() * 1.15], row=1, col=1)
+    
+    fig.update_yaxes(title_text='Individual Clone Frequency (Log10)', type='log', showgrid=True, gridcolor='lightgrey', row=1, col=2)
+
+    fig.show()
+
+    print("\n\n")
+
+print(":::\n")
+
+```
+**Figure 6. Antigen Specificity Mapping against VDJdb** This figure summarizes the predicted antigen specificity of the TCR repertoire over time, based on exact CDR3 sequence matching to the VDJdb database. **(A) Repertoire Composition by Target Species.** A 100% stacked bar chart showing the proportion of clones at each timepoint categorized by the species of the target antigen. **Red (Self-Antigen):** Clones mapped to human peptides, representing potential tumor-reactive populations. **Blue (Foreign Bystander):** Clones mapped to known viral or bacterial antigens (e.g., CMV, EBV, Influenza). **Grey (Unmapped):** Clones with no known match in the current VDJdb database. **(B) Clonal Dominance of Specific Antigen Targets.** A jitter plot visualizing individual clone frequencies (y-axis, log scale) over time. Each dot represents a unique clonotype. Dots are colored according to their VDJdb mapping status (Self-Antigen, Foreign Bystander, or Unmapped), matching the color scheme in Panel A. This visualization highlights whether highly dominant expanding clones are mapped to potential therapeutic targets versus bystander viruses.
+
+Clonal dynamics tells us which clones are active. However, it doesn't tell us what those T-cells are actually recognizing. In the context of cancer immunology, distinguishing between a T-cell attacking a tumor antigen and one reacting to a common background virus (like CMV or EBV) is crucial.  
+To bridge this gap, we utilize public databases of experimentally validated TCR-antigen interactions.  
+
+**Interpreting Specificity Categories**  
+Mapping results are generally categorized to understand the nature of the immune response:
+
+- **Self-Antigen (Human):** Clones known to recognize human peptides. In the context of cancer, expanding clones in this category are primary candidates for tumor-reactive T-cells recognizing tumor-associated antigens or neoantigens.
+- **Foreign Bystanders (e.g., CMV, EBV, Influenza):** Clones recognizing common viral pathogens. These often comprise a significant fraction of the repertoire as persistent memory cells. While expanding "bystanders" can indicate generalized immune activation, they are usually not directly targeting the tumor.
+- **Unmapped:** The vast majority of TCRs in any given patient will not have a known match in current databases. These represent novel specificities.
+
+While mapping the entire repertoire to VDJdb provides a broad overview of a patient's antigenic history, the most critical question in the context of therapy is: **What are the actively responding T-cells targeting?** By layering this specificity data onto our previous analyses, we can determine if the **"Expanded"** clones we identified earlier are likely driving an anti-tumor response or are merely bystander populations. 
+A large, stable population of CMV-specific memory cells is common and generally irrelevant to cancer treatment. However, a sudden, massive expansion of T-cells targeting a self-antigen could be the key signature of an effective anti-tumor response (or an autoimmune adverse event).
+
+::: {.callout-warning title="Warning"}
+Be mindful that only timepoints with at least one TCR matching VDJdb are included in the plots. If a timepoint has no TCRs matching VDJdb, it will not be represented in the plot, which can lead to an incomplete picture of the overall dynamics.
+:::
+
+```{python}
+#| output: asis
+#| echo: false
+
+import plotly.colors as pc
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+import numpy as np
+
+# --- 1. Isolate Annotated Expanded Clones ---
+exp_df = detailed_export_df[detailed_export_df['Status'] == 'Expanded'].copy()
+
+rename_dict = {}
+if 'CDR3b' in exp_df.columns: rename_dict['CDR3b'] = 'cdr3aa'
+if subject_col in exp_df.columns and subject_col != subject_col: rename_dict[subject_col] = subject_col
+exp_df = exp_df.rename(columns=rename_dict)
+
+expanded_annotated = pd.merge(
+    exp_df[[subject_col, timepoint_col, 'cdr3aa']],
+    final_df,
+    on=[subject_col, timepoint_col, 'cdr3aa'],
+    how='inner'
+)
+
+# --- 2. Aggregate Data for Stacked Barplot (Species Level, 100% Normalized) ---
+
+# Dropped 'Antigen' to force aggregation at the Species level
+plot_data = expanded_annotated.groupby(
+    [subject_col, timepoint_col, timepoint_order_col, 'Category', 'Species']
+).agg(
+    total_freq=('freq', 'sum'),
+    tcr_count=('cdr3aa', 'nunique')
+).reset_index()
+
+# Calculate the 100% normalized percentage based on unique expanded clones per timepoint
+tp_totals = plot_data.groupby([subject_col, timepoint_col])['tcr_count'].transform('sum')
+plot_data['clone_pct'] = (plot_data['tcr_count'] / tp_totals) * 100
+
+# Strict sorting
+plot_data = plot_data.sort_values(
+    [timepoint_order_col, 'Category', 'Species'], 
+    ascending=[True, False, True]
+)
+
+# --- 3. Assign Distinct Colors to Species ---
+unique_species = sorted(plot_data['Species'].unique())
+species_colors = {}
+
+# Use a clean, distinct qualitative palette
+palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set1
+color_idx = 0
+
+for sp in unique_species:
+    if sp in ['Unmapped', 'Unknown', 'nan', 'NaN']:
+        species_colors[sp] = '#d3d3d3' # Grey for noise/unmapped
+    elif sp == 'HomoSapiens':
+        species_colors[sp] = '#d62728' # Red for self-antigen
+    else:
+        species_colors[sp] = palette[color_idx % len(palette)]
+        color_idx += 1
+
+# --- 4. Plotting (Tabbed Interface) ---
+
+print("::: {.panel-tabset}\n")
+
+all_patients = final_df[subject_col].unique()
+
+for pat in all_patients:
+    print(f"## {pat}\n")
+
+    pat_data = plot_data[plot_data[subject_col] == pat].copy()
+    
+    if pat_data.empty:
+        print(f"*(No significantly expanded clones found for {pat} to annotate.)*\n\n")
+        continue
+
+    ordered_timepoints = pat_data[[timepoint_col, timepoint_order_col]].drop_duplicates().sort_values(timepoint_order_col)[timepoint_col].tolist()
+
+    fig = px.bar(
+        pat_data,
+        x=timepoint_col,
+        y='clone_pct',
+        color='Species',           
+        color_discrete_map=species_colors,
+        title=f"Species Specificity of Expanded Clones: {pat}",
+        labels={'clone_pct': 'Expanded Clones (%)', timepoint_col: 'Timepoint', 'Species': 'Target Species'},
+        hover_name='Species', 
+        hover_data={
+            timepoint_col: False,
+            'Category': True,
+            'Species': False,      
+            'tcr_count': True,
+            'clone_pct': ':.1f',   
+            'total_freq': ':.4f'   
+        }
+    )
+
+    fig.update_layout(
+        barmode='stack',
+        height=600,
+        yaxis=dict(range=[0, 115], fixedrange=True), 
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        legend_title_text='Species',
+        xaxis=dict(categoryorder='array', categoryarray=ordered_timepoints, showline=True, linewidth=1, linecolor='black')
+    )
+    
+    fig.update_yaxes(showgrid=True, gridcolor='lightgrey')
+    fig.update_traces(marker_line_color='black', marker_line_width=0.5)
+
+    # --- Add n= Annotations on top of bars ---
+    pat_totals = pat_data.groupby([timepoint_col, timepoint_order_col])['tcr_count'].sum().reset_index()
+    
+    for _, row in pat_totals.iterrows():
+        fig.add_annotation(
+            x=row[timepoint_col],
+            y=102, 
+            text=f"n={int(row['tcr_count'])}",
+            showarrow=False,
+            font=dict(size=12, color="black"),
+            xanchor='center',
+            yanchor='bottom'
+        )
+
+    fig.show()
+    print("\n\n")
+
+print(":::\n")
+
+```
+**Figure 7. Predicted Antigen Specificity of Expanded TCR Clones**. A 100% stacked bar chart illustrating the predicted target species of TCR clonotypes that were identified as statistically significantly expanded compared to prior timepoints.
+
+**Visualizing Expanded Clone Specificity**  
+
+- **Filtering the Noise:** By removing the vast majority of non-expanding, stable clones, we get a clearer picture of the active immune targets. The total number of unique expanded clones (n) analyzed at each timepoint is indicated above the bars.
+- **Tracking the Shift:** This visualization allows us to see how the specificity of the responding compartment evolves. 
+
+This analysis is crucial for distinguishing between a therapy-driven expansion of potentially tumor-reactive T-cells versus a bystander expansion of virus-specific memory cells.
+
+## TCR Publicity {#sec-sharing}  
+
+**TCR publicity** refers to how widely a specific T-cell receptor (TCR) sequence is shared among different individuals. In simple terms, it's a **measure of whether a TCR is unique to one person or common across a population.**
+
+**<u>Private vs. Public TCRs 👥</u>**   
+
+**Private TCRs:** These receptor sequences are found in only one individual. The vast majority of a person's TCR repertoire is private, reflecting their unique genetic background and history of antigen exposure.
+
+**Public TCRs:** These are identical TCR sequences found in multiple, unrelated individuals. **While much rarer than private TCRs, these shared receptors are often of great biological importance.**
+
+**Why TCR Publicity is Important?**  
+The primary reason public TCRs are important is convergent selection. The generation of TCRs is a random process, and the potential diversity is astronomical. Therefore, if the exact same TCR sequence appears in many different people, it’s highly unlikely to be by chance. Instead, it strongly implies that different immune systems, when faced with the same threat (like a virus or cancer cell), have independently “converged” on the same optimal TCR as an effective weapon.
+
+```{python}
+
+import plotly.graph_objects as go
+import pandas as pd
+
+def create_top_shared_clones_table(concat_df, meta, pgen_df, n_top_clones=10):
+    """
+    Creates an interactive Plotly table showing the top N most shared TCR clones,
+    with distinct columns for each patient showing which samples (aliases) the clone was found in.
+    """
+
+    # --- 2. Create the "Wide" Matrix (One Column per Patient) ---
+    patient_map = concat_df.groupby(['CDR3b', subject_col])[alias_col].apply(
+        lambda x: ', '.join(sorted(x.unique().astype(str)))
+    ).unstack(fill_value='-')
+    
+    # --- 3. Calculate Summary Stats (Total Patients) ---
+    stats_df = concat_df.groupby('CDR3b').agg(
+        total_patients=(subject_col, 'nunique')
+    ).reset_index()
+
+    # --- 4. Merge Everything Together ---
+    final_df = pd.merge(stats_df, pgen_df[['CDR3b', 'pgen']], on='CDR3b', how='inner')
+    final_df = pd.merge(final_df, patient_map, on='CDR3b', how='inner')
+
+    # --- 5. Filter and Sort ---
+    final_df = final_df[final_df['total_patients'] > 1]
+    
+    # MODIFIED: Sort by Shared Count (Desc) then Pgen (Asc - lowest first)
+    final_df = final_df.sort_values(by=['total_patients', 'pgen'], ascending=[False, True]).head(n_top_clones)
+
+    # --- 6. Formatting for Display ---
+    final_df['pgen'] = final_df['pgen'].apply(lambda x: f"{x:.2e}")
+    
+    rename_dict = {
+        'CDR3b': 'CDR3b Sequence',
+        'total_patients': '# Shared Individuals',
+        'pgen': 'Pgen'
+    }
+    final_df.rename(columns=rename_dict, inplace=True)
+    
+    standard_cols = ['CDR3b Sequence', '# Shared Individuals', 'Pgen']
+    patient_cols = sorted([c for c in final_df.columns if c not in standard_cols])
+    
+    display_df = final_df[standard_cols + patient_cols]
+
+    # --- Calculate Dynamic Widths ---
+    col_widths = [180, 140, 100] + [180] * len(patient_cols)
+    total_table_width = sum(col_widths)
+
+    # --- 7. Create Plotly Table ---
+    fig = go.Figure(data=[go.Table(
+        columnwidth=col_widths, 
+        header=dict(
+            values=list(display_df.columns),
+            fill_color='paleturquoise',
+            align='left',
+            font=dict(size=12, color='black', weight='bold'),
+            line_color='darkslategray'
+        ),
+        cells=dict(
+            values=[display_df[col] for col in display_df.columns],
+            fill_color='lavender',
+            align='left',
+            font=dict(size=11, color='black'),
+            line_color='darkslategray'
+        )
+    )])
+
+    # --- 8. Update Layout ---
+    fig.update_layout(
+        title_text=f"Top {n_top_clones} Public Clones",
+        title_x=0.5,
+        margin=dict(l=10, r=10, t=50, b=10),
+        width=max(total_table_width, 800) 
+    )
+    
+    return fig
+
+# ---- Usage
+top_clones_table_fig = create_top_shared_clones_table(
+    concat_df=concat_df, 
+    meta=meta, 
+    pgen_df=prob_generation_df, 
+    n_top_clones=10
+)
+
+top_clones_table_fig.show()
+
+```
+
+**Table 1. Top 10 most shared TCR clones** Public TCRs order by number of samples they are seen.
+
+The upset Plot below show the number of clones shared between different combinations of patients. 
+
+```{python}
+
+import matplotlib.pyplot as plt
+from upsetplot import from_contents, UpSet
+
+def plot_public_clones_upset(concat_df, subject_col, min_shared_patients=2):
+    """
+    Plots an UpSet plot of clones shared across multiple patients.
+    Filters out private clones to focus exclusively on public clones.
+    """
+    
+    # --- 1. Extract Unique Clones per Patient ---
+    # Group by patient and aggregate unique CDR3b sequences into a list
+    # Because we don't group by timepoint/origin, it automatically flattens them per patient
+    patient_clones = concat_df.groupby(subject_col)['CDR3b'].unique().to_dict()
+    
+    # Convert numpy arrays to standard lists for the upsetplot library
+    patient_contents = {str(patient): list(clones) for patient, clones in patient_clones.items()}
+    
+    # --- 2. Convert to UpSet Multi-Index Format ---
+    upset_data = from_contents(patient_contents)
+    
+    # --- 3. Build and Render the UpSet Plot ---
+    # min_degree=2 ensures we only look at clones shared by at least 2 patients
+    upset = UpSet(upset_data, 
+                  subset_size='count', 
+                  min_degree=min_shared_patients, 
+                  show_counts=True, 
+                  sort_by='cardinality',  # Sorts the intersection bars from highest to lowest
+                  facecolor='black')    # Red color to match your previous expansion plots
+    
+    # Create the figure
+    fig = plt.figure(figsize=(12, 6))
+    upset.plot(fig=fig)
+    
+    # UpSet creates multiple subplots, so we use suptitle for the main title
+    plt.suptitle(f"Public Clones (Shared by \u2265 {min_shared_patients} Patients)", fontsize=16, y=1.05)
+    plt.show()
+
+# ---- Usage ----
+# Run this right below your table generation
+plot_public_clones_upset(concat_df, subject_col=subject_col, min_shared_patients=2)
+
+```
+**Figure 8. UpSet plot of public TCR clones**. This plot illustrates the intersection of unique CDR3b sequences shared among multiple individuals. The horizontal bars on the left indicate the total number of unique clones identified in each individual patient. In the central matrix, connected black dots denote the specific combination of patients sharing a subset of clones. The vertical bars at the top represent the intersection size, indicating the exact number of public clones shared exclusively by the patients marked in the corresponding column below.
+
+
+## Similar TCR sequences across all samples  {#sec-GIANA}
+**GIANA** (Geometry Isometry based TCR AligNment Algorithm) is a powerful computational tool designed to rapidly analyze vast amounts of T-cell receptor (TCR) sequencing data. Its core function is to group or **cluster similar TCR sequences, which is essential for identifying T-cells that likely recognize the same antigen.** This allows researchers to **pinpoint key T-cell populations driving an immune response** in cancer, infectious diseases, or autoimmunity.
+
+**<u>How GIANA Works?</u>**  
+GIANA uses a novel geometric approach, instead of relying on traditional sequence alignment methods that tend to be *slower*. It converts the amino acid sequences of the hypervariable CDR3 region into *numerical *vectors. This transforms the complex problem of comparing biological sequences into a much faster mathematical problem of finding the nearest neighbors in a high-dimensional space. By doing this, it can efficiently sift through millions of TCRs to find functionally related groups.
+
+GIANA stands out from other TCR analysis tools for several key reasons:  
+
+- **Exceptional Speed:** GIANA's primary advantage is its remarkable speed. It can cluster tens of millions of TCR sequences in minutes, a task that can take hours or even days with alignment-based tools. This makes it ideal for handling the massive datasets common in modern immunology.
+
+- **High Scalability:** Its efficiency allows it to scale effortlessly from small pilot studies to large-scale clinical cohorts, enabling the analysis of thousands of samples simultaneously.
+
+- **Antigen-Specific Classification:** Because it's so fast, GIANA can be used to compare a patient's TCR repertoire against large, pre-existing databases of TCRs with known antigen specificities. This allows for the rapid identification of T-cell responses to known viruses (like CMV, EBV, or Influenza) or other targets.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import pandas as pd
+import plotly.graph_objects as go
+
+def plot_giana_tables(giana_df, meta_df):
+        
+    # --- 1. Base Merge and Clean ---
+    df = giana_df.merge(meta_df[['sample', subject_col, timepoint_col]], on='sample', how='left')
+    df = df.dropna(subset=[subject_col])
+    df[subject_col] = df[subject_col].fillna('Unknown')
+    df[timepoint_col] = df[timepoint_col].fillna('Unknown')
+
+    # --- 2. Base Aggregation ---
+    cluster_stats = df.groupby('cluster').agg(
+        Total_Counts=('counts', 'sum'),
+        Unique_TCRs=('CDR3b', 'nunique')
+    ).reset_index()
+    
+    cluster_stats.rename(columns={
+        'Total_Counts': 'Total Counts', 
+        'Unique_TCRs': 'Unique TCRs', 
+        'cluster': 'Cluster'
+    }, inplace=True)
+
+    # --- Helper Function to Render Individual Tables ---
+    def _render_table(stats_df, raw_df, min_unique, title):
+        filtered_stats = stats_df[stats_df['Unique TCRs'] > min_unique]
+        
+        if filtered_stats.empty:
+            print(f"*(No clusters found with > {min_unique} unique TCRs)*\n\n")
+            return
+
+        top_10 = filtered_stats.nlargest(10, 'Total Counts')
+        top_cluster_ids = top_10['Cluster'].tolist()
+
+        df_top = raw_df[raw_df['cluster'].isin(top_cluster_ids)].copy()
+        df_top.rename(columns={'cluster': 'Cluster'}, inplace=True)
+        df_top['formatted_tcr'] = df_top[timepoint_col].astype(str) + ':' + df_top['CDR3b'].astype(str)
+
+        seq_df = df_top.groupby(['Cluster', subject_col])['formatted_tcr'].apply(
+            lambda x: '<br>'.join(sorted(set(x)))
+        ).reset_index()
+        pivot_df = seq_df.pivot(index='Cluster', columns=subject_col, values='formatted_tcr').reset_index()
+        pivot_df.fillna('', inplace=True) 
+
+        final_df = pd.merge(top_10, pivot_df, on='Cluster', how='left')
+        final_df.sort_values('Total Counts', ascending=False, inplace=True)
+        
+        # Organize columns: Standard Info first, then Patients alphabetically
+        standard_cols = ['Cluster', 'Total Counts', 'Unique TCRs']
+        patient_cols = sorted([c for c in final_df.columns if c not in standard_cols])
+        display_df = final_df[standard_cols + patient_cols]
+
+        # --- Calculate Dynamic Column Widths ---
+        col_widths = [180, 140, 100] + [180] * len(patient_cols)
+        total_table_width = sum(col_widths)
+
+        # Plotly Figure
+        fig = go.Figure(data=[go.Table(
+            columnwidth=col_widths, 
+            header=dict(
+                values=list(display_df.columns),
+                fill_color='paleturquoise',
+                align='left',
+                font=dict(size=12, color='black', weight='bold'),
+                line_color='darkslategray'
+            ),
+            cells=dict(
+                values=[display_df[col] for col in display_df.columns],
+                fill_color='lavender',
+                align='left',
+                font=dict(size=11, color='black'),
+                line_color='darkslategray'
+            )
+        )])
+
+        # Update Layout
+        fig.update_layout(
+            title_text=title,
+            title_x=0.5,
+            margin=dict(l=10, r=10, t=50, b=10),
+            width=max(total_table_width, 1000) # <--- Fixed base width to 1000, expands if needed for scrolling
+        )
+        
+        fig.show()
+
+    # --- 3. Render the Tables Sequentially ---
+    
+    # Render First Table
+    _render_table(cluster_stats, df, min_unique=0, title="Top 10 GIANA Clusters by Total Abundance")
+    
+    # Render Second Table
+    _render_table(cluster_stats, df, min_unique=1, title="Top 10 GIANA Clusters (>=2 Unique TCRs) by Total Abundance")
+
+
+# Run the function
+plot_giana_tables(giana_df, meta)
+
+# import pandas as pd
+# import plotly.graph_objects as go
+
+# def plot_giana_tabs(giana_df, meta_df):
+        
+#     # --- 1. Base Merge and Clean ---
+#     df = giana_df.merge(meta_df[['sample', subject_col, timepoint_col]], on='sample', how='left')
+#     df = df.dropna(subset=[subject_col])
+#     df[subject_col] = df[subject_col].fillna('Unknown')
+#     df[timepoint_col] = df[timepoint_col].fillna('Unknown')
+
+#     # --- 2. Base Aggregation (Calculated once for all clusters) ---
+#     cluster_stats = df.groupby('cluster').agg(
+#         Total_Counts=('counts', 'sum'),
+#         Unique_TCRs=('CDR3b', 'nunique')
+#     ).reset_index()
+    
+#     cluster_stats.rename(columns={
+#         'Total_Counts': 'Total Counts', 
+#         'Unique_TCRs': 'Unique TCRs', 
+#         'cluster': 'Cluster'
+#     }, inplace=True)
+
+#     # --- Helper Function to Render Individual Tables ---
+#     def _render_table(stats_df, raw_df, min_unique, title):
+#         # Filter stats based on the minimum unique TCRs required
+#         filtered_stats = stats_df[stats_df['Unique TCRs'] > min_unique]
+        
+#         if filtered_stats.empty:
+#             print(f"*(No clusters found with > {min_unique} unique TCRs)*\n\n")
+#             return
+
+#         # Isolate top 10
+#         top_10 = filtered_stats.nlargest(10, 'Total Counts')
+#         top_cluster_ids = top_10['Cluster'].tolist()
+
+#         # Filter raw data
+#         df_top = raw_df[raw_df['cluster'].isin(top_cluster_ids)].copy()
+#         df_top.rename(columns={'cluster': 'Cluster'}, inplace=True)
+#         df_top['formatted_tcr'] = df_top[timepoint_col].astype(str) + ':' + df_top['CDR3b'].astype(str)
+
+#         # Pivot
+#         seq_df = df_top.groupby(['Cluster', subject_col])['formatted_tcr'].apply(
+#             lambda x: '<br>'.join(sorted(set(x)))
+#         ).reset_index()
+#         pivot_df = seq_df.pivot(index='Cluster', columns=subject_col, values='formatted_tcr').reset_index()
+#         pivot_df.fillna('', inplace=True) 
+
+#         # Merge and Format
+#         final_df = pd.merge(top_10, pivot_df, on='Cluster', how='left')
+#         final_df.sort_values('Total Counts', ascending=False, inplace=True)
+#         columns = final_df.columns.tolist()
+
+#         # --- NEW: Calculate Dynamic Column Widths ---
+#         standard_cols = ['Cluster', 'Total Counts', 'Unique TCRs']
+#         col_widths = []
+#         for col in columns:
+#             if col in standard_cols:
+#                 col_widths.append(120) # 120 pixels for standard stats
+#             else:
+#                 col_widths.append(250) # 250 pixels for subject columns (needs more room for sequences)
+        
+#         total_table_width = sum(col_widths)
+
+#         # Plotly Figure
+#         fig = go.Figure(data=[go.Table(
+#             columnwidth=col_widths, # Apply dynamic widths here
+#             header=dict(
+#                 values=[f"<b>{col}</b>" for col in columns],
+#                 fill_color='paleturquoise',
+#                 align='left',
+#                 font=dict(size=14, color='black'),
+#                 line_color='black'
+#             ),
+#             cells=dict(
+#                 values=[final_df[col] for col in columns],
+#                 fill_color='lavender',
+#                 align='left',
+#                 font=dict(size=12, color='black'),
+#                 line_color='black'
+#                 # REMOVED: height=30 (so rows expand vertically for <br> tags)
+#             )
+#         )])
+
+#         fig.update_layout(
+#             title_text=title,
+#             title_x=0.5,
+#             margin=dict(l=20, r=20, t=50, b=20),
+#             # Force figure width to trigger horizontal scroll if wider than 1000px
+#             width=max(total_table_width, 1000)
+#             # REMOVED: height=500 (allow the table to size itself naturally to fit the tall rows)
+#         )
+#         fig.show()
+#         print("\n\n")
+
+#     # --- 3. Generate Quarto Tabs ---
+#     print("::: {.panel-tabset}\n")
+
+#     print("## Top 10 Clusters\n")
+#     _render_table(cluster_stats, df, min_unique=0, title="Top 10 GIANA Clusters by Total Abundance")
+
+#     print("## Top 10 Clusters (>=2 Unique TCRs)\n")
+#     _render_table(cluster_stats, df, min_unique=1, title="Top 10 GIANA Clusters (>=2 Unique TCRs) by Total Abundance")
+
+#     print(":::\n")
+
+# plot_giana_tabs(giana_df, meta)
+
+```
+**Table 2. Top TCR Clusters Identified by GIANA** Summary tables detailing the top 10 most abundant TCR clusters across the cohort, grouped by sequence similarity using GIANA. **Top 10 (All Clusters):** Displays the absolute top 10 clusters by total counts. This view could be dominated by massive, singular clonal expansions. **Top 10 (>2 Unique TCRs)**: Filters the data to strictly show the top 10 most abundant clusters containing at least three unique CDR3β sequences. 
+
+
+If you only analyze exact CDR3 sequence matches, you are actively ignoring a fundamental truth of immunology: different T-cell clones can recognize the exact same antigen if their receptors are structurally similar. To capture the full scope of a targeted response, we have to group these functional "metaclones" together.
+
+{{< include ./template_pheno_bulk.qmd >}} 
+
+{{< include ./template_pheno_sc.qmd >}}
