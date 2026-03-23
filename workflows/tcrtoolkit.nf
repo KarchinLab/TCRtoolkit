@@ -13,6 +13,7 @@ include { INPUT_CHECK }         from '../subworkflows/local/input_check'
 include { CONVERT }             from '../subworkflows/local/convert'
 include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
+include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 include { ANNOTATE }            from '../subworkflows/local/annotate'
@@ -39,6 +40,16 @@ workflow TCRTOOLKIT {
     if (levels.contains('convert') && !['adaptive', 'cellranger'].contains(input_format)) {
         println("\u001B[33m[WARN]\u001B[0m To run Convert workflow, please specify a valid convertible --input_format (adaptive or cellranger)")
         if (!levels.contains('sample') && !levels.contains('compare')) {
+            return
+        }
+    }
+
+    if (levels.contains('patient')) {
+        def samplesheeet_header = file(params.samplesheet).readLines().first().split(',')
+        def has_patient = samplesheeet_header.contains('patient')
+        
+        if (!has_patient) {
+            println("\u001B[33m[WARN]\u001B[0m Patient workflow was specified but metadata was not found in samplesheet; please specify patient IDs for samples using the 'patient' column.")
             return
         }
     }
@@ -80,12 +91,11 @@ workflow TCRTOOLKIT {
 
     // --- Main Analysis ---
 
-    RESOLVE_SAMPLESHEET( ch_samplesheet_utf8,
-        sample_map_final )
+    // RESOLVE_SAMPLESHEET( ch_samplesheet_utf8,
+    //     sample_map_final )
 
     if (levels.intersect(['sample','compare'])) {
-        ANNOTATE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
-            RESOLVE_SAMPLESHEET.out.all_sample_files )
+        ANNOTATE( sample_map_final )
     }
 
     // Running sample level analysis
@@ -97,12 +107,17 @@ workflow TCRTOOLKIT {
         )
     }
 
+    // Running patient analysis
+    if (levels.contains('patient')) {
+        PATIENT( ANNOTATE.out.processed_samples )
+    }
+
     // Running comparison analysis
     if (levels.contains('compare')) {
-        COMPARE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
-            RESOLVE_SAMPLESHEET.out.all_sample_files,
+        COMPARE(
             ANNOTATE.out.concat_cdr3_sorted,
-            ANNOTATE.out.cdr3_pgen)
+            ANNOTATE.out.cdr3_pgen
+        )
     }
 }
 

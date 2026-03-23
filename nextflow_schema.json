@@ -69,8 +69,8 @@
         "workflow_level": {
           "type": "string",
           "default": "sample,compare",
-          "enum": ["sample,compare", "sample", "compare", "convert"],
-          "description": "Comma-separated workflow stages (sample, compare)."
+          "description": "Comma-separated workflow stages.",
+          "pattern": "^(sample|patient|compare|convert)(,(sample|patient|compare|convert))*$"
         },
         "project_name": {
           "type": "string",

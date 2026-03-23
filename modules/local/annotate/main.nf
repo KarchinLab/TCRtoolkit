@@ -7,7 +7,7 @@ process ANNOTATE_PROCESS {
     tuple val(sample_meta), path(count_table)
 
     output:
-    path "${sample_meta.sample}_cdr3.tsv", emit: "process"
+    tuple val(sample_meta), path("${sample_meta.sample}_cdr3.tsv"), emit: "process"
 
     script:
     """
@@ -17,10 +17,15 @@ import pandas as pd
 USECOLS = [
     "junction_aa",
     "v_call",
+    "j_call",
+    "duplicate_count"
 ]
 
 COLMAP = {
     "junction_aa": "CDR3b",
+    "v_call": "TRBV",
+    "j_call": "TRBJ",
+    "duplicate_count": "counts"
 }
 
 df = pd.read_csv(
@@ -29,13 +34,15 @@ df = pd.read_csv(
     usecols=USECOLS,
     dtype={
         "junction_aa": "string",
-        "v_gene": "string",
+        "v_call": "string",
+        "j_call": "string",
+        "duplicate_count": "int"
     })
 
 df = (
     df[df.junction_aa.notna()]
     .rename(columns=COLMAP)
-    [["CDR3b", "v_call"]]
+    [["CDR3b", "TRBV", "TRBJ", "counts"]]
 )
 df["sample"] = "${sample_meta.sample}"
 

@@ -20,7 +20,11 @@ workflow ANNOTATE {
 
     main:
     ANNOTATE_PROCESS( sample_map )
-    ANNOTATE_PROCESS.out.process
+    
+    processed_samples = ANNOTATE_PROCESS.out.process
+    
+    processed_samples
+        .map { _meta, file -> file }
         .collectFile(name: 'concat_cdr3.tsv', keepHeader: true, skip: 1)
         .set { concat_cdr3 }
 
@@ -58,6 +62,7 @@ workflow ANNOTATE {
         .first()
 
     emit:
+    processed_samples
     concat_cdr3_sorted
     cdr3_pgen
     olga_stats

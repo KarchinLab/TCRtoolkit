@@ -10,6 +10,13 @@
                 "type": "boolean",
                 "value": true
             },
+            "patient_lvl": {
+                "default": true,
+                "description": "Run clustering and comparison modules on samples grouped by patient of origin",
+                "title": "Patient",
+                "type": "boolean",
+                "value": true
+            },
             "compare_lvl": {
                 "default": true,
                 "description": "Comparative TCR repertoire analyses across samples and subjects",
