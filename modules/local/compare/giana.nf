@@ -12,7 +12,6 @@ process GIANA_CALC {
     path "${patient}_VgeneScores.txt"
     path "${patient}_giana.txt"
     // path "giana_EncodingMatrix.txt"
-    // path "giana.log"
 
     script:   
     """
@@ -25,7 +24,6 @@ process GIANA_CALC {
         --threshold_vgene ${threshold_vgene} \
         --NumberOfThreads ${task.cpus} \
         --Verbose
-        # > giana.log 2>&1
 
     # Insert header after GIANA comments
     insert=\$(head -n 1 "${concat_cdr3}")

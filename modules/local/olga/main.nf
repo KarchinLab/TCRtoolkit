@@ -18,7 +18,7 @@ process OLGA_CALCULATE{
             cdr3 = \$1
             pgen = \$2
 
-            if (pgen == "NA" || pgen == "" || pgen == 0) {
+            if (pgen == "NA" || pgen == "" || pgen == 0 || pgen >= 1) {
                 print cdr3, pgen, "NA"
             } else {
                 print cdr3, pgen, log(pgen)/log10_base
@@ -43,8 +43,8 @@ process OLGA_CONCATENATE {
     awk -F'\t' '
         BEGIN {
             max_len = 0
-            min_log = ""
-            max_log = ""
+            min_log = 0
+            max_log = -1e308
         }
 
         {
@@ -55,8 +55,8 @@ process OLGA_CONCATENATE {
             if (len > max_len) max_len = len
 
             if (log10 != "NA" && log10 != "") {
-                if (min_log == "" || log10 < min_log) min_log = log10
-                if (max_log == "" || log10 > max_log) max_log = log10
+                if (log10 < min_log) min_log = log10
+                if (log10 > max_log) max_log = log10
             }
         }
 
@@ -143,7 +143,9 @@ def load_index():
 
     cdr3_index = df["CDR3b"].values.astype(cdr3_dtype)
 
-    pgen_index = df["pgen"].to_numpy(dtype=np.float64)
+    pgen_index = pd.to_numeric(
+        df["pgen"], errors="coerce"
+    ).to_numpy(dtype=np.float32)
 
     log10_index = pd.to_numeric(
         df["log10_pgen"], errors="coerce"
@@ -251,9 +253,11 @@ process OLGA_HISTOGRAM_CALC {
 
     merged_df = pd.read_csv("${olga_pgen}", sep="\t")
 
-    # Drop rows where pgen is 0
-    merged_df = merged_df[merged_df['pgen'] != 0]
-    log_probs = np.log10(merged_df['pgen'])
+    # Drop rows where pgen is non-positive
+    merged_df = merged_df.dropna(subset=['pgen'])
+    merged_df = merged_df[merged_df['pgen'] > 0]
+
+    log_probs = merged_df['log10_pgen']
     cdr3_counts = merged_df['duplicate_count']
 
     min_val = ${olga_stats.min_log10_pgen}

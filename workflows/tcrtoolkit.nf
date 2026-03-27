@@ -45,11 +45,11 @@ workflow TCRTOOLKIT {
     }
 
     if (levels.contains('patient')) {
-        def samplesheeet_header = file(params.samplesheet).readLines().first().split(',')
-        def has_patient = samplesheeet_header.contains('patient')
+        def samplesheet_header = file(params.samplesheet).readLines().first().split(',')
+        def has_patient = samplesheet_header.contains('patient')
         
         if (!has_patient) {
-            println("\u001B[33m[WARN]\u001B[0m Patient workflow was specified but metadata was not found in samplesheet; please specify patient IDs for samples using the 'patient' column.")
+            println("\u001B[33m[WARN]\u001B[0m Patient workflow was specified but metadata was not found in samplesheet; please specify patient IDs for samples using the 'patient' column or remove 'patient' from workflow_level.")
             return
         }
     }
@@ -94,7 +94,7 @@ workflow TCRTOOLKIT {
     // RESOLVE_SAMPLESHEET( ch_samplesheet_utf8,
     //     sample_map_final )
 
-    if (levels.intersect(['sample','compare'])) {
+    if (levels.intersect(['sample','patient','compare'])) {
         ANNOTATE( sample_map_final )
     }
 
