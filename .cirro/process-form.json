@@ -10,6 +10,13 @@
                 "type": "boolean",
                 "value": true
             },
+            "patient_lvl": {
+                "default": true,
+                "description": "Run clustering and comparison modules on samples grouped by patient of origin",
+                "title": "Patient",
+                "type": "boolean",
+                "value": true
+            },
             "compare_lvl": {
                 "default": true,
                 "description": "Comparative TCR repertoire analyses across samples and subjects",
@@ -18,10 +25,10 @@
                 "value": true
             },
             "olga_chunk_length": {
-                "default": 2000000,
+                "default": 100000,
                 "description": "Divide total CDR3 list into chunks of n length for processing by OLGA. Larger length = reduced parallelization",
                 "title": "olga_chunk_length",
-                "type": "int"
+                "type": "integer"
             },
             "distance_metric": {
                 "default": "tcrdist",

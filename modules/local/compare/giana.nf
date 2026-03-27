@@ -1,17 +1,17 @@
 process GIANA_CALC {
+    tag "${patient}"
     label 'process_medium'
 
     input:
-    path concat_cdr3
+    tuple val(patient), path(concat_cdr3)
     val threshold
     val threshold_score
     val threshold_vgene
 
     output:
-    path "VgeneScores.txt"
-    path "giana_RotationEncodingBL62.txt"
-    path "giana_EncodingMatrix.txt"
-    path "giana.log"
+    path "${patient}_VgeneScores.txt"
+    path "${patient}_giana.txt"
+    // path "giana_EncodingMatrix.txt"
 
     script:   
     """
@@ -23,8 +23,7 @@ process GIANA_CALC {
         --threshold_score ${threshold_score} \
         --threshold_vgene ${threshold_vgene} \
         --NumberOfThreads ${task.cpus} \
-        --Verbose \
-        > giana.log 2>&1
+        --Verbose
 
     # Insert header after GIANA comments
     insert=\$(head -n 1 "${concat_cdr3}")
@@ -40,8 +39,9 @@ process GIANA_CALC {
     /^##/ { print; next }
     !inserted { print insert; inserted=1 }
     { print }
-    ' giana_RotationEncodingBL62.txt > tmp && mv tmp giana_RotationEncodingBL62.txt
+    ' giana_RotationEncodingBL62.txt > ${patient}_giana.txt
 
-    mv giana_RotationEncodingBL62.txt_EncodingMatrix.txt giana_EncodingMatrix.txt
+    # mv giana_RotationEncodingBL62.txt_EncodingMatrix.txt giana_EncodingMatrix.txt
+    mv VgeneScores.txt ${patient}_VgeneScores.txt
     """
 }
