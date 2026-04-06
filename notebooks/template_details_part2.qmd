@@ -103,6 +103,4 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 
 {{< include ./template_sharing.qmd >}}
 
-{{< include ./template_pheno_sc_details.qmd >}}
 
-{{< include ./template_gliph.qmd >}}

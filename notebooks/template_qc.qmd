@@ -273,7 +273,9 @@ group_opts_patient = [timepoint_col] if timepoint_col in plot_df.columns else []
 unique_patients = sorted(plot_df[subject_col].dropna().unique().tolist())
 
 # --- 4. PLOTTING FUNCTION ---
-def create_diversity_plot(data, x_col, y_metric, custom_order=None):
+
+def create_diversity_plot(data, x_col, y_metric, custom_order=None, plot_type="box"):
+
     if data.empty or data[x_col].dropna().empty:
         return
 
@@ -283,148 +285,238 @@ def create_diversity_plot(data, x_col, y_metric, custom_order=None):
     else:
         unique_cats = sorted(data[x_col].dropna().unique().tolist())
 
-    # Base Plot
-    fig = px.box(
-        data,
-        x=x_col,
-        y=y_metric,
-        color=x_col,
-        points="all",
-        hover_data=['alias'],
-        category_orders={x_col: unique_cats},
-        template="simple_white",
-        width=600,
-        height=600,
-        title=f"{y_metric} by {x_col}"
-    )
+    # --- BASE PLOT ---
+    if plot_type == "box":
+        fig = px.box(
+            data,
+            x=x_col,
+            y=y_metric,
+            color=x_col,
+            points="all",
+            hover_data=['alias'],
+            category_orders={x_col: unique_cats},
+            template="simple_white",
+            width=700,
+            height=600,
+            title=f"{y_metric} by {x_col}"
+        )
 
-    # Styling: Bigger dots
-    fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
+        fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
 
-    for trace in fig.data:
-        if isinstance(trace, go.Box):
-            trace.pointpos = 0
-            trace.jitter = 0.2
+        for trace in fig.data:
+            if isinstance(trace, go.Box):
+                trace.pointpos = 0
+                trace.jitter = 0.2
 
-    # Statistics
-    if len(unique_cats) >= 2:
+    elif plot_type == "line":
+        # Sort for proper line connection
+        data = data.copy()
+        data[x_col] = pd.Categorical(data[x_col], categories=unique_cats, ordered=True)
+        data = data.sort_values(x_col)
+
+        fig = px.scatter(
+            data,
+            x=x_col,
+            y=y_metric,
+            color_discrete_sequence=["black"],
+            hover_data=['alias'],
+            template="simple_white",
+            width=700,
+            height=500,
+            title=f"{y_metric} by {x_col}"
+        )
+
+        # Add dotted line
+        fig.add_trace(go.Scatter(
+            x=data[x_col],
+            y=data[y_metric],
+            mode='lines+markers',
+            line=dict(dash='dot', width=2),
+            marker=dict(size=18, color='black'),
+            showlegend=False
+        ))
+
+    # --- STATISTICS (ONLY FOR BOXPLOTS) ---
+    stack_counter = 0
+
+    if plot_type == "box" and len(unique_cats) >= 2:
+
         pairs = list(combinations(unique_cats, 2))
+
         y_max = data[y_metric].max()
         y_min = data[y_metric].min()
         y_range = y_max - y_min
-        if y_range == 0: y_range = 1
-        step_size = y_range * 0.13
-        stack_counter = 0
+        if y_range == 0:
+            y_range = 1
+
+        base_offset = y_range * 0.08      # was 0.2 → MUCH closer to boxes
+        step_size = y_range * 0.06        # was 0.15 → tighter stacking
+        text_offset = y_range * 0.015     # was 0.03 → less gap above line
 
         for t1, t2 in pairs:
+
             g1 = data[data[x_col] == t1][y_metric].dropna()
             g2 = data[data[x_col] == t2][y_metric].dropna()
 
-            if len(g1) < 2 or len(g2) < 2: continue
+            if len(g1) < 2 or len(g2) < 2:
+                continue
 
             try:
                 stat, p_value = mannwhitneyu(g1, g2, alternative='two-sided')
-            except ValueError: continue
+            except ValueError:
+                continue
 
-            if p_value >= 0.05: continue
+            if p_value >= 0.05:
+                continue
 
-            if p_value < 0.001: symbol = '***'
-            elif p_value < 0.01: symbol = '**'
-            elif p_value < 0.05: symbol = '*'
+            if p_value < 0.001:
+                symbol = '***'
+            elif p_value < 0.01:
+                symbol = '**'
+            else:
+                symbol = '*'
 
-            # Bracket coordinates
-            y_bracket = y_max + (y_range * 0.15) + (stack_counter * step_size)
-            y_text = y_bracket + (y_range * 0.02)
+            y_bracket = y_max + base_offset + (stack_counter * step_size)
+            y_text = y_bracket + text_offset
 
-            fig.add_shape(type="line", xref="x", yref="y",
+            fig.add_shape(
+                type="line", xref="x", yref="y",
                 x0=t1, y0=y_bracket, x1=t2, y1=y_bracket,
-                line=dict(color="black", width=1.5))
+                line=dict(color="black", width=1.5)
+            )
 
-            tick_len = y_range * 0.02
-            fig.add_shape(type="line", xref="x", yref="y",
-                x0=t1, y0=y_bracket, x1=t1, y1=y_bracket - tick_len,
-                line=dict(color="black", width=1.5))
-            fig.add_shape(type="line", xref="x", yref="y",
-                x0=t2, y0=y_bracket, x1=t2, y1=y_bracket - tick_len,
-                line=dict(color="black", width=1.5))
+            tick_len = y_range * 0.0015
 
-            try: x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
-            except: x_center = 0
+            fig.add_shape(type="line", xref="x", yref="y",
+                x0=t1, y0=y_bracket, x1=t1, y1=y_bracket - tick_len)
+
+            fig.add_shape(type="line", xref="x", yref="y",
+                x0=t2, y0=y_bracket, x1=t2, y1=y_bracket - tick_len)
+
+            try:
+                x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
+            except:
+                x_center = 0
 
             fig.add_annotation(
-                x=x_center, y=y_text,
+                x=x_center,
+                y=y_text,
                 text=f"{symbol}<br>p={p_value:.3f}",
                 showarrow=False,
-                font=dict(size=10, color="black")
+                font=dict(size=10)
             )
+
             stack_counter += 1
 
-        top_margin = 60 + (stack_counter * 40)
-    else:
-        top_margin = 60
+        extra_space = y_range * (0.15 + 0.07 * stack_counter)
+        fig.update_yaxes(range=[y_min, y_max + extra_space])
+
+    # --- FINAL LAYOUT ---
+    dynamic_height = 600 + (stack_counter * 40)
 
     fig.update_layout(
         showlegend=False,
         yaxis_title=y_metric,
         xaxis_title=x_col,
-        xaxis=dict(tickfont=dict(size=15)), # Increased Font Size
-        margin=dict(t=top_margin),
+        xaxis=dict(tickfont=dict(size=15)),
+        height=dynamic_height,
+        margin=dict(t=80),
         plot_bgcolor='rgba(0,0,0,0)'
     )
+
     fig.update_yaxes(showgrid=True, gridcolor='lightgrey')
+
     fig.show()
 
 # --- 5. EXECUTION LOOP ---
-print(":::::: {.panel-tabset}\n") # Level 1 Start
+print(":::::: {.panel-tabset}\n")  # Level 1 Start
 
 for metric in metrics_to_plot:
     print(f"## {metric}\n")
 
-    # Check patient count for split view
     if len(unique_patients) <= 10:
-        print("::::: {.panel-tabset}\n") # Level 2 Start
+        print("::::: {.panel-tabset}\n")  # Level 2 Start
 
         # --- TAB A: ALL SAMPLES ---
         print("### All Samples\n")
-        print(":::: {.panel-tabset}\n") # Level 3 Start
+        print(":::: {.panel-tabset}\n")  # Level 3 Start
         for group in group_opts_all:
             print(f"#### {group}\n")
             create_diversity_plot(plot_df, group, metric)
             print("\n")
-        print("::::\n") # Level 3 End
+        print("::::\n")  # Level 3 End
 
         # --- TAB B: BY PATIENT ---
         print("### By Patient\n")
-        print(":::: {.panel-tabset}\n") # Level 3 Start
+        print(":::: {.panel-tabset}\n")  # Level 3 Start
+
         for pat in unique_patients:
             print(f"#### {pat}\n")
             pat_df = plot_df[plot_df[subject_col] == pat]
 
-            for group in group_opts_patient: # Usually just timepoint_col
-                if pat_df[group].nunique() > 0:
-                    # Custom sorting for timepoints
-                    custom_order = None
-                    if group == timepoint_col and time_order_map:
-                        pat_tps = pat_df[group].dropna().unique().tolist()
-                        custom_order = sorted(pat_tps, key=lambda x: time_order_map.get(x, 999))
+            has_multi_origin = (
+                'origin' in pat_df.columns and
+                pat_df['origin'].nunique() > 1
+            )
 
-                    create_diversity_plot(pat_df, group, metric, custom_order)
-                else:
-                    print(f"No data for {group} in patient {pat}.")
-                print("\n")
-        print("::::\n") # Level 3 End
-        print(":::::\n") # Level 2 End
+            if has_multi_origin:
+                print("::: {.panel-tabset}\n")  # Level 4 Start
+                origins = sorted(pat_df['origin'].dropna().unique())
+
+                for origin in origins:
+                    print(f"##### {origin}\n")
+                    origin_df = pat_df[pat_df['origin'] == origin]
+
+                    for group in group_opts_patient:
+                        if origin_df[group].nunique() > 0:
+                            custom_order = None
+                            if group == timepoint_col and time_order_map:
+                                pat_tps = origin_df[group].dropna().unique().tolist()
+                                custom_order = sorted(
+                                    pat_tps,
+                                    key=lambda x: time_order_map.get(x, 999)
+                                )
+                            create_diversity_plot(
+                                origin_df, group, metric,
+                                custom_order, plot_type="line"
+                            )
+                        else:
+                            print(f"No data for {group} in {origin}, patient {pat}.")
+                        print("\n")
+
+                print(":::\n")  # Level 4 End ← was missing in some branches
+
+            else:
+                for group in group_opts_patient:
+                    if pat_df[group].nunique() > 0:
+                        custom_order = None
+                        if group == timepoint_col and time_order_map:
+                            pat_tps = pat_df[group].dropna().unique().tolist()
+                            custom_order = sorted(
+                                pat_tps,
+                                key=lambda x: time_order_map.get(x, 999)
+                            )
+                        create_diversity_plot(
+                            pat_df, group, metric,
+                            custom_order, plot_type="line"
+                        )
+                    else:
+                        print(f"No data for {group} in patient {pat}.")
+                    print("\n")
+
+        print("::::\n")   # Level 3 End
+        print(":::::\n")  # Level 2 End  ← moved OUTSIDE patient loop
 
     else:
-        # Standard View (>10 Patients)
-        print("::::: {.panel-tabset}\n")
+        # Standard View (>10 patients)
+        print("::::: {.panel-tabset}\n")  # Level 2 Start
         for group in group_opts_all:
             print(f"### {group}\n")
             create_diversity_plot(plot_df, group, metric)
             print("\n")
-        print(":::::\n")
+        print(":::::\n")  # Level 2 End
 
-print("::::::\n") # Level 1 End
+print("::::::\n")  # Level 1 End
 
 ```
 **Figure 1. Comparative Analysis of TCR Repertoire Diversity Metrics.** Boxplots display the distribution of  metrics across samples. The interactive panel allows toggling between diversity indices and grouping variables. This visualization facilitates the assessment of repertoire diversity and evenness across different experimental conditions and biological replicates.
@@ -676,7 +768,7 @@ Under normal biological conditions, the Gini coefficient and Shannon entropy sho
 #| fig-height: 5
 
 # 1. Setup Grouping Options
-exclude_cols = ['sample', 'file', 'total_counts', 'filename', 'sample_id',
+exclude_cols = ['sample', 'file', 'total_counts', 'timepoint_order', 'filename', 'sample_id',
                 'shannon_entropy', 'gini_coefficient', 'inverse_simpson',
                 'hill_q0', 'hill_q1', 'hill_q2', 'mean_len', 'std_len']
 
@@ -691,45 +783,38 @@ print("::: {.panel-tabset}")
 for col in group_opts:
     print(f"## {col}")
 
-    # Smaller Figure Size
-    plt.figure(figsize=(6, 5))
-
-    # "paper" context scales everything down compared to "talk"
-    sns.set_theme(style="whitegrid", context="paper")
-
-    hue_data = plot_df[col].astype(str)
-
-    sns.scatterplot(
-        data=plot_df,
+    fig = px.scatter(
+        plot_df,
         x='shannon_entropy',
         y='gini_coefficient',
-        hue=hue_data,
-        style=hue_data,
-        s=80,                # Smaller dots on the plot (was 150)
-        alpha=0.8,
-        palette='viridis',
-        edgecolor='black',
-        linewidth=0.5        # Thinner edge lines
+        color=col,
+        symbol=col,
+        template="simple_white",
+        width=600,
+        height=500,
+        title=f'Evenness by {col}',
+        hover_data={
+            'sample': True,
+            'alias': True if 'alias' in plot_df.columns else False,
+            'shannon_entropy': ':.3f',
+            'gini_coefficient': ':.3f',
+            col: True
+        }
     )
 
-    plt.title(f'Evenness by {col}', fontsize=12)
-    plt.xlabel('Shannon (Diversity)', fontsize=10)
-    plt.ylabel('Gini (Inequality)', fontsize=10)
-
-    # Compact Legend Control
-    plt.legend(
-        bbox_to_anchor=(1.02, 1),
-        loc='upper left',
-        title=col,
-        fontsize='small',        # Shrink text
-        title_fontsize='small',  # Shrink title
-        markerscale=0.7,         # Shrink dots inside legend
-        frameon=False            # Optional: Remove box border to save visual space
+    # Make points look like your seaborn version
+    fig.update_traces(
+        marker=dict(size=10, line=dict(width=1, color='black')),
+        opacity=0.8
     )
 
-    plt.tight_layout()
-    plt.show()
+    fig.update_layout(
+        xaxis_title='Shannon (Diversity)',
+        yaxis_title='Gini (Inequality)',
+        legend_title=col
+    )
 
+    fig.show()
     print("\n")
 
 print(":::")
@@ -756,7 +841,7 @@ The Inverse Simpson ($1/D$) is used to visualize the magnitude of the response. 
 #| fig-height: 5
 
 # 1. Setup Grouping Options
-exclude_cols = ['sample', 'file', 'total_counts', 'filename', 'sample_id',
+exclude_cols = ['sample', 'file', 'total_counts', 'timepoint_order', 'filename', 'sample_id',
                 'shannon_entropy', 'gini_coefficient', 'inverse_simpson',
                 'hill_q0', 'hill_q1', 'hill_q2', 'mean_len', 'std_len']
 
@@ -774,35 +859,54 @@ print("::: {.panel-tabset}")
 for col in group_opts:
     print(f"## {col}")
 
-    plt.figure(figsize=(6, 5))
-    sns.set_theme(style="whitegrid", context="paper")
-
-    hue_data = plot_df[col].astype(str)
-
-    # Scatter Plot
-    sns.scatterplot(
-        data=plot_df,
+    fig = px.scatter(
+        plot_df,
         x='inverse_simpson',
         y='hill_q0',
-        hue=hue_data,
-        style=hue_data,
-        s=80, alpha=0.8, palette='viridis', edgecolor='black', linewidth=0.5
+        color=col,
+        symbol=col,
+        template="simple_white",
+        width=600,
+        height=500,
+        title=f'Richness vs. Effective Clones by {col}',
+        hover_data={
+            'sample': True,
+            'alias': True if 'alias' in plot_df.columns else False,
+            'inverse_simpson': ':.3f',
+            'hill_q0': ':.3f',
+            col: True
+        }
     )
 
-    # Add Diagonal Line (y=x) for reference
-    # Points on this line are perfectly even. Points high above it are dominated by rare clones.
-    max_val = max(plot_df['hill_q0'].max(), plot_df['inverse_simpson'].max())
-    plt.plot([0, max_val], [0, max_val], ls="--", c=".3", label="Perfect Evenness (y=x)")
+    # Match seaborn styling
+    fig.update_traces(
+        marker=dict(size=10, line=dict(width=1, color='black')),
+        opacity=0.8
+    )
 
-    plt.title(f'Richness vs. Effective Clones by {col}', fontsize=12)
-    plt.xlabel('Inverse Simpson (Effective # Clones)', fontsize=10)
-    plt.ylabel('Hill q=0 (Total Richness)', fontsize=10)
+    # --- Add diagonal line (y = x) ---
+    max_val = max(
+        plot_df['hill_q0'].max(),
+        plot_df['inverse_simpson'].max()
+    )
 
-    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', title=col,
-               fontsize='small', title_fontsize='small', markerscale=0.7, frameon=False)
+    fig.add_trace(go.Scatter(
+        x=[0, max_val],
+        y=[0, max_val],
+        mode='lines',
+        line=dict(dash='dash', color='gray'),
+        name='Perfect Evenness (y=x)',
+        hoverinfo='skip'  # keeps hover clean
+    ))
 
-    plt.tight_layout()
-    plt.show()
+    # Layout
+    fig.update_layout(
+        xaxis_title='Inverse Simpson (Effective # Clones)',
+        yaxis_title='Hill q=0 (Total Richness)',
+        legend_title=col
+    )
+
+    fig.show()
     print("\n")
 
 print(":::")
@@ -820,39 +924,58 @@ This plot maps the trade-off between unevenness and effective size. Typically, t
 #| output: asis
 #| fig-width: 6
 #| fig-height: 5
-#|
+
 print("::: {.panel-tabset}")
 
 for col in group_opts:
     print(f"## {col}")
 
-    plt.figure(figsize=(6, 5))
-    sns.set_theme(style="whitegrid", context="paper")
-
-    hue_data = plot_df[col].astype(str)
-
-    sns.scatterplot(
-        data=plot_df,
+    # Create Plotly scatter
+    fig = px.scatter(
+        plot_df,
         x='inverse_simpson',
         y='gini_coefficient',
-        hue=hue_data,
-        style=hue_data,
-        s=80, alpha=0.8, palette='rocket', edgecolor='black', linewidth=0.5
+        color=col,
+        symbol=col,
+        template="simple_white",
+        width=600,
+        height=500,
+        title=f'Inequality vs. Diversity by {col}',
+        hover_data={
+            'sample': True,
+            'alias': True if 'alias' in plot_df.columns else False,
+            'inverse_simpson': ':.3f',
+            'gini_coefficient': ':.3f',
+            col: True
+        },
+        color_continuous_scale='rocket' if plot_df[col].dtype != object else None
     )
 
-    plt.title(f'Inequality vs. Diversity by {col}', fontsize=12)
-    plt.xlabel('Inverse Simpson (Effective # Clones)', fontsize=10)
-    plt.ylabel('Gini Coefficient (Inequality)', fontsize=10)
-    plt.ylim(0, 1.05) # Gini is bounded [0,1]
+    # Match marker style from seaborn
+    fig.update_traces(
+        marker=dict(size=10, line=dict(width=1, color='black')),
+        opacity=0.8
+    )
 
-    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', title=col,
-               fontsize='small', title_fontsize='small', markerscale=0.7, frameon=False)
+    # Fix y-axis for Gini (bounded [0,1])
+    fig.update_yaxes(range=[0, 1.05], title='Gini Coefficient (Inequality)')
 
-    plt.tight_layout()
-    plt.show()
+    # x-axis label
+    fig.update_xaxes(title='Inverse Simpson (Effective # Clones)')
+
+    # Layout adjustments
+    fig.update_layout(
+        legend_title=col,
+        title=dict(font=dict(size=14)),
+        width=600,
+        height=500
+    )
+
+    fig.show()
     print("\n")
 
 print(":::")
+
 ```
 
 **Figure 5. Relationship Between Repertoire Inequality and Effective Diversity**. The visualization demonstrates the inverse correlation typically observed in immune repertoires, where high inequality (dominance by a few clones) corresponds to a low effective population size. Deviations from this structural trend can identify samples with aberrant clonal distributions.
@@ -891,27 +1014,21 @@ In a successful immunotherapy response, track the patient's movement across the 
 
 ## TCR Overlap {#sec-tcr-overlap}
 
-We use two distinct metrics to compare repertoires. One measures membership (who is there?), and the other measures structure (who is dominant?).
+We use two distinct metrics to compare repertoires. One measures membership (who is there?), and the other measures structure (who is dominant?).  
 
-- **1. Jaccard Index:** Measures the overlap of unique sequences, ignoring frequency. It treats a singleton and a top clone equally.
-**Question:** "What fraction of the unique CDR3s are found in both samples?"
-**Range:** $0$ (No shared sequences) $\to$ $1$ (Identical unique sequence list).
+- **Jaccard Index:** Measures the overlap of unique sequences, ignoring frequency. It treats a singleton and a top clone equally.  
+**Question:** "What fraction of the unique CDR3s are found in both samples?"  
+**Range:** $0$ (No shared sequences) $\to$ $1$ (Identical unique sequence list).  
 **Formula:**
 $$J(A,B) = \frac{|A \cap B|}{|A \cup B|}$$
 Where $|A \cap B|$ is the count of unique clonotypes shared by both samples, and $|A \cup B|$ is the total count of unique clonotypes in the union of both samples.
-
-- **2. Morisita-Horn Index:** Measures the overlap of dominant populations. It accounts for clone abundance, meaning rare clones have mathematically negligible impact on the score.
-**Question**: "If I randomly draw two T-cells from these two samples, what is the probability they are the same clone?"
-**Range:** $0$ (Completely different dominant clones) $\to$ $1$ (Identical frequencies).
-**Formula:**
-$$C_{MH} = \frac{2 \sum_{i=1}^{S} p_{ai} p_{bi}}{\sum_{i=1}^{S} p_{ai}^2 + \sum_{i=1}^{S} p_{bi}^2}$$
-Where $p_{ai}$ and $p_{bi}$ are the relative frequencies of the $i$-th clonotype in Sample A and Sample B, respectively. Note that the denominator terms ($\sum p^2$) are essentially the Simpson Indices of the individual samples.
 
 ```{python}
 #| output: asis
 #| fig-width: 7
 #| fig-height: 7
 
+# --- 1. CALCULATION FUNCTION (Only Jaccard) ---
 def calculate_overlaps(df):
     samples = sorted(df['sample'].unique())
     clones = sorted(df['CDR3b'].unique())
@@ -939,104 +1056,68 @@ def calculate_overlaps(df):
                         out=np.zeros_like(intersection, dtype=float),
                         where=union_matrix!=0)
 
-    # Morisita (Frequency)
-    mat_freq = normalize(mat, norm='l1', axis=1)
-    simpson = mat_freq.power(2).sum(axis=1).A1
-    numerator = 2 * mat_freq.dot(mat_freq.T).toarray()
-    denominator = simpson[:, None] + simpson[None, :]
+    return pd.DataFrame(jaccard, index=samples, columns=samples)
 
-    morisita = np.divide(numerator, denominator,
-                         out=np.zeros_like(numerator),
-                         where=denominator!=0)
-
-    return pd.DataFrame(jaccard, index=samples, columns=samples), \
-           pd.DataFrame(morisita, index=samples, columns=samples)
 
 # --- 2. EXECUTE CALCULATION ---
-jaccard_df, morisita_df = calculate_overlaps(concat_df)
+jaccard_df = calculate_overlaps(concat_df)
 
 # --- 3. RENAME TO ALIAS ---
 if alias_col in meta.columns:
     sample_to_alias = meta.set_index('sample')[alias_col].to_dict()
     jaccard_df = jaccard_df.rename(index=sample_to_alias, columns=sample_to_alias)
-    morisita_df = morisita_df.rename(index=sample_to_alias, columns=sample_to_alias)
 
 # --- 4. CLUSTERING HELPER ---
 def get_clustered_order(matrix):
-    """
-    Returns the index/column names sorted by hierarchical clustering.
-    """
-    # Calculate distance (1 - similarity)
-    # Using 'cityblock' (Manhattan) often works well for abundance/binary data
+    """Return hierarchical clustering order of samples."""
     dist = pdist(matrix.values, metric='cityblock')
     link = linkage(dist, method='average')
     leaves = leaves_list(link)
-
-    # Return the labels in the clustered order
     return matrix.index[leaves].tolist()
 
 # --- 5. INTERACTIVE PLOTTING FUNCTION ---
 def plot_interactive_heatmap(matrix, title):
-    # 1. Get Clustered Order
     try:
         ordered_labels = get_clustered_order(matrix)
-        # Reorder the matrix
         matrix = matrix.loc[ordered_labels, ordered_labels]
     except Exception as e:
         print(f"Clustering failed, using default order: {e}")
 
-    # 2. Mask Diagonal for Color Scaling (optional, to see contrast better)
-    # Plotly doesn't natively mask, but we can set diagonal to NaN if we want it empty
-    # For now, we leave it as 1.0 (or max) but control the colorscale range
-
     vals = matrix.values
-    # Exclude diagonal from max calculation to prevent 1.0 from dominating small overlaps
     mask = ~np.eye(vals.shape[0], dtype=bool)
     max_val = vals[mask].max() if mask.any() else 1.0
-    if max_val < 0.05: max_val = 0.1 # Minimum floor
+    if max_val < 0.05: max_val = 0.1
 
-    # 3. Create Heatmap
     fig = px.imshow(
         matrix,
-        labels=dict(x="Sample", y="Sample", color="Overlap"),
+        labels=dict(x="Sample", y="Sample", color="Jaccard"),
         x=matrix.columns,
         y=matrix.index,
         color_continuous_scale="Reds",
-        range_color=[0, max_val], # Cap color scale at max non-diagonal value
+        range_color=[0, max_val],
         title=f"{title}<br>(Max Overlap: {max_val:.3f})"
     )
 
-    # 4. Refine Layout
     fig.update_layout(
         width=700,
         height=700,
         xaxis=dict(tickangle=90, tickfont=dict(size=10)),
         yaxis=dict(tickfont=dict(size=10)),
-        plot_bgcolor='black', # Background color for NaN/Empty
+        plot_bgcolor='black'
     )
-
-    # 5. Add Grid Lines (simulating linewidths)
-    # Plotly heatmaps don't have 'linewidth', but we can add gaps using gap
     fig.update_traces(xgap=1, ygap=1)
-
     fig.show()
 
-# --- 6. OUTPUT TABS ---
+# --- 6. OUTPUT TABSET (Only Jaccard) ---
 print("::: {.panel-tabset}\n")
-
 print("## Jaccard\n")
 plot_interactive_heatmap(jaccard_df, "Jaccard Index")
 print("\n")
-
-print("## Morisita\n")
-plot_interactive_heatmap(morisita_df, "Morisita Index")
-print("\n")
-
 print(":::\n")
 
 ```
 **Figure 6. Assessment of Clonal Overlap and Cross-Contamination.**
-Heatmaps display the pairwise similarity between TCR repertoires using the Jaccard (overlap) index, with an option to toggle to the Morisita (abundance-weighted) index. Hierarchical clustering groups samples based on their shared clonal content, facilitating the identification of biological replicates or potential cross-contamination events. The color intensity reflects the degree of similarity, where darker red indicates a higher proportion of shared clonotypes between sample pairs.
+Heatmaps display the pairwise similarity between TCR repertoires using the Jaccard (overlap) index. Hierarchical clustering groups samples based on their shared clonal content, facilitating the identification of biological replicates or potential cross-contamination events. The color intensity reflects the degree of similarity, where darker red indicates a higher proportion of shared clonotypes between sample pairs.
 
 ::: {.callout-tip title="Note"}
 When calculating Jaccard for this specific purpose (contamination), we are calculating it on the nucleotide sequence, not the amino acid sequence, **whenever the TCRseq whas done using DNA as input**.  Convergent recombination (different DNA making the same Amino Acid) is common in high-depth samples and will give you a false positive "contamination" signal if you stick to Amino Acids. Contamination should be measured at the physical level (DNA).
@@ -1045,12 +1126,7 @@ When calculating Jaccard for this specific purpose (contamination), we are calcu
 **<u>Technical QC 🚩</u>**  
 Use these overlap metrics to detect the two most dangerous errors in sequencing: **Sample Swapping and Physical Contamination.**
 
-- **1. Identity Validation: Morisita-Horn Index**
-    - Red Flag: A dark red square between two different Patient IDs Similarity ($> 0.90$; Dark Red).
-    - Diagnosis: Sample Swap / Duplication. Biologically, two humans cannot have identical repertoires and share the exact same dominant clones at identical frequencies ($>90\%$). You likely pipetted the same library into two wells, or the labels were swapped during handling.
-    - Action: If Patient_A and Patient_B have a Morisita of 0.98, the metadata is wrong. Treat them as the same source or <u>discard</u> both.
-
-- **2. Contamination Detection: Jaccard Index**  
+- **Contamination Detection: Jaccard Index**  
     - Red Flag: A block of red squares connecting unrelated samples (Overlap $> 0.05 - 0.1$ Pink/Red).
     - Diagnosis: Cross-Contamination. Because TCRs are hypervariable, <u>distinct individuals</u> should almost never share rare sequences (Jaccard should be near 0).
     - Scenario A (Splash): Patient_A and Patient_B share 20% of their unique sequences. Physical liquid likely splashed between wells during PCR setup.
@@ -1061,12 +1137,7 @@ Use these overlap metrics to detect the two most dangerous errors in sequencing:
 **<u>Biological Interpretation 🦠</u>**  
 Once technical artifacts are ruled out, overlap quantifies stability and shared biology.
 
-- **1. Longitudinal Stability: Morisita-Horn**
-Use this to track the persistence of the immune response over time within the same patient.
-    - High Overlap ($> 0.8$): Indicates Repertoire Stability. The dominant clones present at Timepoint 1 are still the dominant clones at Timepoint 2. This is expected in healthy controls or stable disease.
-    - Dropping Overlap: If Morisita drops significantly between Pre- and Post-treatment, it confirms Repertoire Reshaping. The drug has successfully forced the expansion of a new set of clones, replacing the old dominant population.
-
-- **2. Public Clones: Jaccard**  
+- **Public Clones: Jaccard**  
     - Low but Real Overlap (< 0.01):While distinct humans rarely share repertoires, they may share identical "Public Clones" (often viral-specific, e.g., CMV or EBV).
     - Interpretation: A very faint Jaccard signal (0.001 - 0.01) across a cohort can indicate a shared antigen exposure (e.g., a common viral infection in the population) or convergent recombination events.
 
@@ -1087,6 +1158,12 @@ To Ensure Confidence in Results: By confirming that your samples have a high per
 ```{python}
 #| output: asis
 #| echo: false
+
+import plotly.express as px
+import plotly.graph_objects as go
+from scipy.stats import mannwhitneyu
+from itertools import combinations
+import pandas as pd
 
 # Create a mapping for timepoint order using the 'meta' dataframe
 if 'meta' in locals() and timepoint_col in meta.columns and timepoint_order_col in meta.columns:
@@ -1120,9 +1197,10 @@ group_opts_patient = [timepoint_col] if timepoint_col in df.columns else []
 unique_patients = sorted(df[subject_col].dropna().unique().tolist())
 
 # --- 1. DEFINE PLOTTING FUNCTION ---
-def create_pct_prod_plot(data, group_col, custom_order=None):
+def create_pct_prod_plot(data, group_col, custom_order=None, plot_type="box"):
     """
     custom_order: Optional list of x-axis values in the desired order.
+    plot_type: "box" for standard comparisons, "line" for patient timelines.
     """
     if data.empty or data[group_col].dropna().empty:
         return
@@ -1133,61 +1211,101 @@ def create_pct_prod_plot(data, group_col, custom_order=None):
     else:
         unique_cats = sorted(data[group_col].dropna().unique().tolist())
 
-    # Base Plot
-    fig = px.box(
-        data,
-        x=group_col,
-        y='pct_prod', 
-        color=group_col,
-        points='all',
-        hover_data=['alias'],
-        category_orders={group_col: unique_cats},
-        template="simple_white",
-        title=f"Productive TCRs (%) by {group_col}"
-    )
+    # --- BASE PLOT ---
+    if plot_type == "box":
+        fig = px.box(
+            data,
+            x=group_col,
+            y='pct_prod', 
+            color=group_col,
+            points='all',
+            hover_data=['alias'],
+            category_orders={group_col: unique_cats},
+            template="simple_white",
+            title=f"Productive TCRs (%) by {group_col}"
+        )
 
-    # --- BIGGER DOTS (size=10) ---
-    fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
+        fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
 
-    for trace in fig.data:
-        if isinstance(trace, go.Box):
-            trace.pointpos = 0
-            trace.jitter = 0.2
+        for trace in fig.data:
+            if isinstance(trace, go.Box):
+                trace.pointpos = 0
+                trace.jitter = 0.2
 
-    # Stats
-    if len(unique_cats) >= 2:
+    elif plot_type == "line":
+        # Sort for proper line connection
+        data = data.copy()
+        data[group_col] = pd.Categorical(data[group_col], categories=unique_cats, ordered=True)
+        data = data.sort_values(group_col)
+
+        fig = px.scatter(
+            data,
+            x=group_col,
+            y='pct_prod',
+            color_discrete_sequence=["black"],
+            hover_data=['alias'],
+            template="simple_white",
+            title=f"Productive TCRs (%) by {group_col}"
+        )
+
+        # Add dotted line
+        fig.add_trace(go.Scatter(
+            x=data[group_col],
+            y=data['pct_prod'],
+            mode='lines+markers',
+            line=dict(dash='dot', width=2),
+            marker=dict(size=18, color='black'),
+            showlegend=False
+        ))
+
+    # --- STATISTICS (ONLY FOR BOXPLOTS) ---
+    stack_counter = 0
+
+    if plot_type == "box" and len(unique_cats) >= 2:
         pairs = list(combinations(unique_cats, 2))
+        
         y_max = data['pct_prod'].max()
-        y_range = y_max - data['pct_prod'].min()
-        if y_range == 0: y_range = 1
-        step_size = y_range * 0.13
-        stack_counter = 0
+        y_min = data['pct_prod'].min()
+        y_range = y_max - y_min
+        if y_range == 0: 
+            y_range = 1
+
+        # Updated to tighter spacing format
+        base_offset = y_range * 0.08
+        step_size = y_range * 0.06
+        text_offset = y_range * 0.015
 
         for t1, t2 in pairs:
             group1 = data[data[group_col] == t1]['pct_prod'].dropna()
             group2 = data[data[group_col] == t2]['pct_prod'].dropna()
 
-            if len(group1) < 2 or len(group2) < 2: continue
+            if len(group1) < 2 or len(group2) < 2: 
+                continue
 
             try:
                 stat, p_value = mannwhitneyu(group1, group2, alternative='two-sided')
-            except ValueError: continue
+            except ValueError: 
+                continue
 
-            if p_value >= 0.05: continue
+            if p_value >= 0.05: 
+                continue
 
             if p_value < 0.001: symbol = '***'
             elif p_value < 0.01: symbol = '**'
-            elif p_value < 0.05: symbol = '*'
+            else: symbol = '*'
 
-            y_bracket = y_max + (y_range * 0.15) + (stack_counter * step_size)
-            y_text = y_bracket + (y_range * 0.02)
+            y_bracket = y_max + base_offset + (stack_counter * step_size)
+            y_text = y_bracket + text_offset
 
-            # Draw Bracket
-            fig.add_shape(type="line", xref="x", yref="y",
+            # Draw Bracket Line
+            fig.add_shape(
+                type="line", xref="x", yref="y",
                 x0=t1, y0=y_bracket, x1=t2, y1=y_bracket,
-                line=dict(color="black", width=1.5))
+                line=dict(color="black", width=1.5)
+            )
 
-            tick_len = y_range * 0.02
+            # Draw Bracket Ticks
+            tick_len = y_range * 0.015
             fig.add_shape(type="line", xref="x", yref="y",
                 x0=t1, y0=y_bracket, x1=t1, y1=y_bracket - tick_len,
                 line=dict(color="black", width=1.5))
@@ -1195,28 +1313,36 @@ def create_pct_prod_plot(data, group_col, custom_order=None):
                 x0=t2, y0=y_bracket, x1=t2, y1=y_bracket - tick_len,
                 line=dict(color="black", width=1.5))
 
-            try: x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
-            except: x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
+            try: 
+                x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
+            except: 
+                x_center = 0
 
+            # Add P-Value Text
             fig.add_annotation(
                 x=x_center, y=y_text, text=f"{symbol}<br>p={p_value:.3f}",
                 showarrow=False, font=dict(size=10, color="black")
             )
+            
             stack_counter += 1
-        top_margin = 60 + (stack_counter * 40)
-    else:
-        top_margin = 60
+
+        extra_space = y_range * (0.15 + 0.07 * stack_counter)
+        fig.update_yaxes(range=[y_min, y_max + extra_space])
+
+    # --- FINAL LAYOUT ---
+    dynamic_height = 600 + (stack_counter * 40)
 
     fig.update_layout(
         xaxis_title=group_col,
         yaxis_title="Productive TCRs (%)",
         xaxis=dict(tickfont=dict(size=15)), 
-        margin=dict(t=top_margin),
+        margin=dict(t=80),
         showlegend=False,
-        width=600,
-        height=600,
+        width=700,
+        height=dynamic_height,
         plot_bgcolor='rgba(0,0,0,0)'
     )
+    
     fig.update_yaxes(showgrid=True, gridcolor='lightgrey')
     fig.show()
 
@@ -1230,7 +1356,7 @@ if len(unique_patients) <= 10:
     print(":::: {.panel-tabset}\n")
     for group in group_opts_all:
         print(f"### {group}\n")
-        create_pct_prod_plot(df, group)
+        create_pct_prod_plot(df, group, plot_type="box")
         print("\n")
     print("::::\n")
 
@@ -1243,19 +1369,59 @@ if len(unique_patients) <= 10:
 
         pat_df = df[df[subject_col] == pat]
 
-        for group in group_opts_patient:
-            if pat_df[group].nunique() > 0:
+        # --- NEW: Origin tab layer ---
+        if 'origin' in pat_df.columns and pat_df['origin'].nunique() > 1:
+            print(":::: {.panel-tabset}\n")  # Level 4 Start (Origins)
 
-                # --- APPLY CUSTOM SORTING IF AVAILABLE ---
-                custom_order = None
-                if group == timepoint_col and time_order_map:
-                    pat_tps = pat_df[group].dropna().unique().tolist()
-                    custom_order = sorted(pat_tps, key=lambda x: time_order_map.get(x, 999))
+            origins = sorted(pat_df['origin'].dropna().unique())
 
-                create_pct_prod_plot(pat_df, group, custom_order)
-            else:
-                print(f"No data for {group} in patient {pat}.")
-            print("\n")
+            for origin in origins:
+                print(f"#### {origin}\n")
+
+                origin_df = pat_df[pat_df['origin'] == origin]
+
+                for group in group_opts_patient:
+                    if origin_df[group].nunique() > 0:
+                        custom_order = None
+                        if group == timepoint_col and time_order_map:
+                            pat_tps = origin_df[group].dropna().unique().tolist()
+                            custom_order = sorted(
+                                pat_tps, 
+                                key=lambda x: time_order_map.get(x, 999)
+                            )
+
+                        create_pct_prod_plot(
+                            origin_df, 
+                            group, 
+                            custom_order, 
+                            plot_type="line"
+                        )
+                    else:
+                        print(f"No data for {group} in {origin}, patient {pat}.")
+                    print("\n")
+            
+            print("::::\n")  # Level 4 End
+            
+        else:
+            # Fallback if no origin variation
+            for group in group_opts_patient:
+                if pat_df[group].nunique() > 0:
+
+                    # --- APPLY CUSTOM SORTING IF AVAILABLE ---
+                    custom_order = None
+                    if group == timepoint_col and time_order_map:
+                        pat_tps = pat_df[group].dropna().unique().tolist()
+                        custom_order = sorted(pat_tps, key=lambda x: time_order_map.get(x, 999))
+
+                    create_pct_prod_plot(
+                        pat_df, 
+                        group, 
+                        custom_order, 
+                        plot_type="line"
+                    )
+                else:
+                    print(f"No data for {group} in patient {pat}.")
+                print("\n")
 
     print("::::\n")
     print(":::::\n")
@@ -1265,7 +1431,7 @@ else:
     print("::: {.panel-tabset}\n")
     for group in group_opts_all:
         print(f"## {group}\n")
-        create_pct_prod_plot(df, group)
+        create_pct_prod_plot(df, group, plot_type="box")
         print("\n")
     print(":::\n")
 
@@ -1320,9 +1486,10 @@ group_opts_patient = [timepoint_col] if timepoint_col in df.columns else []
 unique_patients = sorted(df[subject_col].dropna().unique().tolist())
 
 # --- 1. DEFINE PLOTTING FUNCTION ---
-def create_cdr3_len_plot(data, group_col, custom_order=None):
+def create_cdr3_len_plot(data, group_col, custom_order=None, plot_type="box"):
     """
     custom_order: Optional list of x-axis values in the desired order.
+    plot_type: "box" for standard comparisons, "line" for patient timelines.
     """
     if data.empty or data[group_col].dropna().empty:
         return
@@ -1333,61 +1500,102 @@ def create_cdr3_len_plot(data, group_col, custom_order=None):
     else:
         unique_cats = sorted(data[group_col].dropna().unique().tolist())
 
-    # Base Plot
-    fig = px.box(
-        data,
-        x=group_col,
-        y='productive_cdr3_avg_len', 
-        color=group_col,
-        points='all',
-        hover_data=['alias'],
-        category_orders={group_col: unique_cats},
-        template="simple_white",
-        title=f"CDR3 Length by {group_col}"
-    )
+    # --- BASE PLOT ---
+    if plot_type == "box":
+        fig = px.box(
+            data,
+            x=group_col,
+            y='productive_cdr3_avg_len', 
+            color=group_col,
+            points='all',
+            hover_data=['alias'],
+            category_orders={group_col: unique_cats},
+            template="simple_white",
+            title=f"CDR3 Length by {group_col}"
+        )
 
-    # --- BIGGER DOTS (size=10) ---
-    fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
+        # --- BIGGER DOTS (size=10) ---
+        fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
 
-    for trace in fig.data:
-        if isinstance(trace, go.Box):
-            trace.pointpos = 0
-            trace.jitter = 0.2
+        for trace in fig.data:
+            if isinstance(trace, go.Box):
+                trace.pointpos = 0
+                trace.jitter = 0.2
 
-    # Stats
-    if len(unique_cats) >= 2:
+    elif plot_type == "line":
+        # Sort for proper line connection
+        data = data.copy()
+        data[group_col] = pd.Categorical(data[group_col], categories=unique_cats, ordered=True)
+        data = data.sort_values(group_col)
+
+        fig = px.scatter(
+            data,
+            x=group_col,
+            y='productive_cdr3_avg_len',
+            color_discrete_sequence=["black"],
+            hover_data=['alias'],
+            template="simple_white",
+            title=f"CDR3 Length by {group_col}"
+        )
+
+        # Add dotted line
+        fig.add_trace(go.Scatter(
+            x=data[group_col],
+            y=data['productive_cdr3_avg_len'],
+            mode='lines+markers',
+            line=dict(dash='dot', width=2),
+            marker=dict(size=18, color='black'),
+            showlegend=False
+        ))
+
+    # --- STATISTICS (ONLY FOR BOXPLOTS) ---
+    stack_counter = 0
+
+    if plot_type == "box" and len(unique_cats) >= 2:
         pairs = list(combinations(unique_cats, 2))
+        
         y_max = data['productive_cdr3_avg_len'].max()
-        y_range = y_max - data['productive_cdr3_avg_len'].min()
-        if y_range == 0: y_range = 1
-        step_size = y_range * 0.13
-        stack_counter = 0
+        y_min = data['productive_cdr3_avg_len'].min()
+        y_range = y_max - y_min
+        if y_range == 0: 
+            y_range = 1
+
+        # Tighter spacing format
+        base_offset = y_range * 0.08
+        step_size = y_range * 0.06
+        text_offset = y_range * 0.015
 
         for t1, t2 in pairs:
             group1 = data[data[group_col] == t1]['productive_cdr3_avg_len'].dropna()
             group2 = data[data[group_col] == t2]['productive_cdr3_avg_len'].dropna()
 
-            if len(group1) < 2 or len(group2) < 2: continue
+            if len(group1) < 2 or len(group2) < 2: 
+                continue
 
             try:
                 stat, p_value = mannwhitneyu(group1, group2, alternative='two-sided')
-            except ValueError: continue
+            except ValueError: 
+                continue
 
-            if p_value >= 0.05: continue
+            if p_value >= 0.05: 
+                continue
 
             if p_value < 0.001: symbol = '***'
             elif p_value < 0.01: symbol = '**'
-            elif p_value < 0.05: symbol = '*'
+            else: symbol = '*'
 
-            y_bracket = y_max + (y_range * 0.15) + (stack_counter * step_size)
-            y_text = y_bracket + (y_range * 0.02)
+            y_bracket = y_max + base_offset + (stack_counter * step_size)
+            y_text = y_bracket + text_offset
 
-            # Draw Bracket
-            fig.add_shape(type="line", xref="x", yref="y",
+            # Draw Bracket Line
+            fig.add_shape(
+                type="line", xref="x", yref="y",
                 x0=t1, y0=y_bracket, x1=t2, y1=y_bracket,
-                line=dict(color="black", width=1.5))
+                line=dict(color="black", width=1.5)
+            )
 
-            tick_len = y_range * 0.02
+            # Draw Bracket Ticks
+            tick_len = y_range * 0.015
             fig.add_shape(type="line", xref="x", yref="y",
                 x0=t1, y0=y_bracket, x1=t1, y1=y_bracket - tick_len,
                 line=dict(color="black", width=1.5))
@@ -1395,26 +1603,33 @@ def create_cdr3_len_plot(data, group_col, custom_order=None):
                 x0=t2, y0=y_bracket, x1=t2, y1=y_bracket - tick_len,
                 line=dict(color="black", width=1.5))
 
-            try: x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
-            except: x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
+            try: 
+                x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
+            except: 
+                x_center = 0
 
+            # Add P-Value Text
             fig.add_annotation(
                 x=x_center, y=y_text, text=f"{symbol}<br>p={p_value:.3f}",
                 showarrow=False, font=dict(size=10, color="black")
             )
+            
             stack_counter += 1
-        top_margin = 60 + (stack_counter * 40)
-    else:
-        top_margin = 60
+
+        extra_space = y_range * (0.15 + 0.07 * stack_counter)
+        fig.update_yaxes(range=[y_min, y_max + extra_space])
+
+    # --- FINAL LAYOUT ---
+    dynamic_height = 600 + (stack_counter * 40)
 
     fig.update_layout(
         xaxis_title=group_col,
         yaxis_title="Avg CDR3 Length (ntds)",
         xaxis=dict(tickfont=dict(size=15)), 
-        margin=dict(t=top_margin),
+        margin=dict(t=80),
         showlegend=False,
-        width=600,
-        height=600,
+        width=700,
+        height=dynamic_height,
         plot_bgcolor='rgba(0,0,0,0)'
     )
     fig.update_yaxes(showgrid=True, gridcolor='lightgrey')
@@ -1430,7 +1645,7 @@ if len(unique_patients) <= 10:
     print(":::: {.panel-tabset}\n")
     for group in group_opts_all:
         print(f"### {group}\n")
-        create_cdr3_len_plot(df, group)
+        create_cdr3_len_plot(df, group, plot_type="box")
         print("\n")
     print("::::\n")
 
@@ -1443,19 +1658,59 @@ if len(unique_patients) <= 10:
 
         pat_df = df[df[subject_col] == pat]
 
-        for group in group_opts_patient:
-            if pat_df[group].nunique() > 0:
+        # --- Origin tab layer ---
+        if 'origin' in pat_df.columns and pat_df['origin'].nunique() > 1:
+            print(":::: {.panel-tabset}\n")  # Level 4 Start (Origins)
 
-                # --- APPLY CUSTOM SORTING IF AVAILABLE ---
-                custom_order = None
-                if group == timepoint_col and time_order_map:
-                    pat_tps = pat_df[group].dropna().unique().tolist()
-                    custom_order = sorted(pat_tps, key=lambda x: time_order_map.get(x, 999))
+            origins = sorted(pat_df['origin'].dropna().unique())
 
-                create_cdr3_len_plot(pat_df, group, custom_order)
-            else:
-                print(f"No data for {group} in patient {pat}.")
-            print("\n")
+            for origin in origins:
+                print(f"#### {origin}\n")
+
+                origin_df = pat_df[pat_df['origin'] == origin]
+
+                for group in group_opts_patient:
+                    if origin_df[group].nunique() > 0:
+                        custom_order = None
+                        if group == timepoint_col and time_order_map:
+                            pat_tps = origin_df[group].dropna().unique().tolist()
+                            custom_order = sorted(
+                                pat_tps, 
+                                key=lambda x: time_order_map.get(x, 999)
+                            )
+
+                        create_cdr3_len_plot(
+                            origin_df, 
+                            group, 
+                            custom_order, 
+                            plot_type="line"
+                        )
+                    else:
+                        print(f"No data for {group} in {origin}, patient {pat}.")
+                    print("\n")
+            
+            print("::::\n")  # Level 4 End
+            
+        else:
+            # Fallback if no origin variation
+            for group in group_opts_patient:
+                if pat_df[group].nunique() > 0:
+
+                    # --- APPLY CUSTOM SORTING IF AVAILABLE ---
+                    custom_order = None
+                    if group == timepoint_col and time_order_map:
+                        pat_tps = pat_df[group].dropna().unique().tolist()
+                        custom_order = sorted(pat_tps, key=lambda x: time_order_map.get(x, 999))
+
+                    create_cdr3_len_plot(
+                        pat_df, 
+                        group, 
+                        custom_order, 
+                        plot_type="line"
+                    )
+                else:
+                    print(f"No data for {group} in patient {pat}.")
+                print("\n")
 
     print("::::\n")
     print(":::::\n")
@@ -1465,7 +1720,7 @@ else:
     print("::: {.panel-tabset}\n")
     for group in group_opts_all:
         print(f"## {group}\n")
-        create_cdr3_len_plot(df, group)
+        create_cdr3_len_plot(df, group, plot_type="box")
         print("\n")
     print(":::\n")
 
@@ -1483,10 +1738,112 @@ else:
 - A sharp peak at a single length in a sample expected to be naive or healthy suggests PCR bias or amplicon contamination rather than true biological expansion.
 - An abundance of unusually short (<15 ntds or <5 AA) or long (>90 ntds or >30 AA) CDR3s often indicates misalignment, primer dimers, or non-specific amplification products that survived upstream filtering.
 
+## Number of unique TCRs per sample (Richness) {#sec-richness}
+
+
+```{python}
+#| output: asis
+
+
+# --- 1. Define General Exclusions ---
+# Exclude continuous metrics, identifiers, and derived stats from being used as tabs
+exclude_cols = [
+    'sample', 'file', 'total_counts', 'filename', 'sample_id', 'alias',
+    'shannon_entropy', 'gini_coefficient', 'inverse_simpson',
+    'hill_q0', 'hill_q1', 'hill_q2', 'mean_len', 'std_len',
+    'clonality', 'counts', 'num_clones', 'num_TCRs', 'simpson_index',
+    'simpson_index_corrected', 'num_prod', 'num_nonprod', 'pct_prod', 'pct_nonprod',
+    'productive_cdr3_avg_len', 'num_convergent', 'ratio_convergent'
+]
+
+# Add timepoint_order_col if it exists in the environment
+if 'timepoint_order_col' in locals() or 'timepoint_order_col' in globals():
+    exclude_cols.append(timepoint_order_col)
+
+# --- 2. Setup Grouping Options ---
+# Automatically grab any categorical columns with reasonable cardinality (< 35 unique values)
+group_opts = [
+    col for col in df.columns
+    if col not in exclude_cols and df[col].nunique() < 35
+]
+
+# --- 3. DEFINE PLOTTING FUNCTION ---
+def create_richness_plot(data, group_col, custom_order=None):
+    """
+    Plots the number of TCRs (richness) as a boxplot with individual sample dots.
+    """
+    if data.empty or data[group_col].dropna().empty:
+        return
+
+    # Determine order: Use custom list if provided, otherwise sort alphabetically
+    if custom_order:
+        unique_cats = [x for x in custom_order if x in data[group_col].unique()]
+    else:
+        unique_cats = sorted(data[group_col].dropna().unique().tolist())
+
+    # Safely handle hover data depending on available columns
+    hover_cols = ['sample']
+    if 'alias' in data.columns:
+        hover_cols.append('alias')
+
+    # --- BASE PLOT ---
+    fig = px.box(
+        data,
+        x=group_col,
+        y='num_TCRs', 
+        color=group_col,
+        points='all', 
+        hover_data=hover_cols, 
+        category_orders={group_col: unique_cats},
+        template="simple_white",
+        title=f"TCR Richness by {group_col}"
+    )
+
+    # --- DOT STYLING ---
+    fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
+
+    # Center the dots and apply jitter so they don't overlap entirely
+    for trace in fig.data:
+        if isinstance(trace, go.Box):
+            trace.pointpos = 0  
+            trace.jitter = 0.2  
+
+    # --- FINAL LAYOUT ---
+    fig.update_layout(
+        xaxis_title=group_col,
+        yaxis_title="Number of Unique TCRs",
+        xaxis=dict(tickfont=dict(size=15)), 
+        margin=dict(t=60),
+        showlegend=False,
+        width=700,
+        height=600,
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
+    
+    fig.update_yaxes(showgrid=True, gridcolor='lightgrey')
+    
+    fig.show()
+
+# --- 4. EXECUTION LOOP ---
+print("::: {.panel-tabset}\n\n")
+
+for group in group_opts:
+    if df[group].dropna().empty:
+        continue
+        
+    print(f"## {group}\n\n")
+    create_richness_plot(df, group)
+    print("\n")
+
+print(":::\n\n")
+
+
+```
+**Figure 9. TCR Richness** Visualizes the number of unique CDR3 sequence. Richness is the simplest measure of diversity, counting how many different clones are present in a sample. It is highly sensitive to sequencing depth and undersampling, which can lead to an underestimation of true diversity if not properly accounted for.
 
 ## Sequencing Depth vs Richness {#sec-depth-richness}
 
-**<u>Does a sample appears "diverse" because it is biologically complex, or simply because it was sequenced more deeply than others?</u>**
+**<u>Does a sample appears "diverse" because it is biologically complex, or simply because it was sequenced more deeply than others?</u>**  
 In an ideal experiment, **we would sequence until we reach saturation** (the point where sequencing more reads no longer reveals new clonotypes). On this plot (log-log scale), a saturated cohort appears as a horizontal plateau: increasing Total Counts (x-axis) does not significantly increase Richness (y-axis). This indicates that the library has captured the true biological ceiling of the sample, allowing for valid comparisons between patients.
 
 ```{python}
@@ -1495,8 +1852,6 @@ In an ideal experiment, **we would sequence until we reach saturation** (the poi
 #| fig-height: 5
 
 # --- 1. Merge the missing counts data ---
-
-# Merge: Inner join ensures we only plot samples present in both
 total_counts = concat_df.groupby('sample')['counts'].sum().to_frame(name='total_counts')
 bias_plot_df = plot_df.merge(total_counts, on='sample', how='inner')
 
@@ -1510,14 +1865,23 @@ group_opts = [
     if col not in exclude_cols and bias_plot_df[col].nunique() < 35
 ]
 
-# --- 3. Start Quarto Tabset ---
-print("::: {.panel-tabset}")
+# --- 3. CALCULATE UNIFIED AXIS LIMITS ---
+# Find the absolute min and max across BOTH axes to ensure a perfect 1:1 square
+all_vals = pd.concat([bias_plot_df['total_counts'], bias_plot_df['hill_q0']])
+global_min = all_vals[all_vals > 0].min()
+global_max = all_vals.max()
+
+# Plotly expects log bounds in log10 format
+log_min = np.log10(global_min) - 0.15  
+log_max = np.log10(global_max) + 0.15
+
+# --- 4. Start Quarto Tabset ---
+print("::: {.panel-tabset}\n")
 
 for col in group_opts:
-    print(f"## {col}")
+    print(f"## {col}\n")
 
     # Calculate Correlation (Log-Log)
-    # We use log because diversity vs depth follows a power law.
     x_val = bias_plot_df['total_counts']
     y_val = bias_plot_df['hill_q0'] # Richness
 
@@ -1528,65 +1892,87 @@ for col in group_opts:
     if len(x_log) > 1:
         corr, _ = pearsonr(x_log, y_log)
         status = "⚠️ BIAS" if corr > 0.8 else "Pass"
-        title_str = f'Depth Bias by {col}\nR = {corr:.2f} ({status})'
+        title_str = f'Depth Bias by {col}<br>R = {corr:.2f} ({status})' 
     else:
         corr = 0
-        title_str = f'Depth Bias by {col}\n(Not enough data)'
-
-    # Create Plot
-    plt.figure(figsize=(6, 5))
-    sns.set_theme(style="whitegrid", context="paper")
+        title_str = f'Depth Bias by {col}<br>(Not enough data)'
 
     # Force Categorical Coloring
-    hue_data = bias_plot_df[col].astype(str)
+    bias_plot_df[col] = bias_plot_df[col].astype(str)
 
-    ax = sns.scatterplot(
-        data=bias_plot_df,
+    # Determine hover columns safely
+    hover_cols = ['sample']
+    if 'alias' in bias_plot_df.columns:
+        hover_cols.append('alias')
+
+    # --- PLOTLY CONVERSION ---
+    fig = px.scatter(
+        bias_plot_df,
         x='total_counts',
         y='hill_q0',
-        hue=hue_data,
-        style=hue_data,
-        s=80,
-        alpha=0.8,
-        palette='viridis',
-        edgecolor='black',
-        linewidth=0.5
+        color=col,
+        symbol=col,
+        hover_data=hover_cols, 
+        log_x=True, 
+        log_y=True,
+        template="simple_white",
+        title=title_str,
+        labels={
+            'total_counts': 'Sequencing Depth (Total Counts)',
+            'hill_q0': 'Richness (Unique Clones)'
+        }
     )
 
-    # Log Scales are crucial for this specific plot
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-
-    plt.title(title_str, fontsize=12)
-    plt.xlabel('Sequencing Depth (Total Counts)', fontsize=10)
-    plt.ylabel('Richness (Unique Clones)', fontsize=10)
+    # Marker styling
+    fig.update_traces(marker=dict(size=10, opacity=0.8, line=dict(width=1, color='DarkSlateGrey')))
 
     # Add diagonal warning if correlation is high
     if corr > 0.8:
-        plt.text(0.05, 0.9, "Strong Depth Bias",
-                 transform=ax.transAxes, color='red', fontsize=9, weight='bold')
+        fig.add_annotation(
+            x=0.05,
+            y=0.95,
+            xref="paper",
+            yref="paper",
+            text="<b>Strong Depth Bias</b>",
+            showarrow=False,
+            font=dict(color="red", size=14)
+        )
 
-    # Compact Legend
-    plt.legend(
-        bbox_to_anchor=(1.02, 1),
-        loc='upper left',
-        title=col,
-        fontsize='small',
-        title_fontsize='small',
-        markerscale=0.7,
-        frameon=False
+    # --- ENFORCE 1:1 SCALE & CLEAN LOG GRIDS ---
+    fig.update_layout(
+        width=700,
+        height=700, 
+        margin=dict(t=80),
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
+    
+    fig.update_xaxes(
+        showgrid=True, 
+        gridcolor='lightgrey',
+        range=[log_min, log_max],
+        dtick=1,                        # Forces major ticks to exact powers of 10
+        minor=dict(showgrid=False)      # Hides the clustered minor grid lines
+    )
+    
+    fig.update_yaxes(
+        showgrid=True, 
+        gridcolor='lightgrey',
+        range=[log_min, log_max],
+        scaleanchor="x", 
+        scaleratio=1,
+        dtick=1,                        # Forces major ticks to exact powers of 10
+        minor=dict(showgrid=False)      # Hides the clustered minor grid lines
     )
 
-    plt.tight_layout()
-    plt.show()
+    fig.show()
 
     print("\n")
 
-print(":::")
+print(":::\n")
 
 ```
 
-**Figure 9. Evaluation of Sequencing Depth Bias.** This scatter plot correlates sequencing depth (Total Counts, x-axis) with observed richness (Unique Clones, y-axis) on a log-log scale.
+**Figure 10. Evaluation of Sequencing Depth Bias.** This scatter plot correlates sequencing depth (Total Counts, x-axis) with observed richness (Unique Clones, y-axis) on a log-log scale.
 
 A **strong positive correlation** (Pearson’s $R > 0.8$) **typically signals a technical failure in experimental design**. If your samples form a strict **diagonal line from the bottom-left to the top-right**, your **"diversity" metric is merely a proxy for library size**. In this scenario, **samples with higher read counts will artificially appear more diverse, not because of biology, but because the sampling depth was insufficient to capture the rare tail of the repertoire**. Diversity **comparisons** in such a cohort **are statistically invalid without subsampling (rarefaction)**.
 
@@ -1687,8 +2073,9 @@ max_limit = qc_stats['sequencing_depth'].quantile(0.90)
 fig_rare.update_xaxes(range=[0, max_limit])
 
 fig_rare.show()
+
 ```
-**Figure 10. Rarefaction Analysis of TCR Repertoire Diversity.** Rarefaction curves depict the accumulation of unique clonotypes (richness) as a function of sequencing depth (Total Counts) for each sample. The dotted vertical line marks the depth of the smallest library.
+**Figure 11. Rarefaction Analysis of TCR Repertoire Diversity.** Rarefaction curves depict the accumulation of unique clonotypes (richness) as a function of sequencing depth (Total Counts) for each sample. The dotted vertical line marks the depth of the smallest library.
 
 Follow each sample's line from left to right to track how new clonotypes are discovered as sequencing depth increases. In an **ideal scenario**, you want to see a **saturation Plateau**: the curve shoots up initially and then flattens out into a horizontal line. This indicates success; you have sequenced the sample deeply enough to exhaust the available diversity, and spending more money on reads would yield no new information.
 
@@ -1735,36 +2122,26 @@ def analyze_v_usage(df):
     """
     Expects df with columns: ['sample', 'TRBV', 'counts']
     """
-    # Sum counts if a sample has multiple clones with same V
     matrix = df.groupby(['sample', 'TRBV'])['counts'].sum().unstack(fill_value=0)
-
-    # Normalize (frequencies)
     freq_matrix = matrix.div(matrix.sum(axis=1), axis=0)
-
-    # Standardize and PCA
+    
     scaler = StandardScaler()
     scaled_data = scaler.fit_transform(freq_matrix)
-
+    
     pca = PCA(n_components=2)
     components = pca.fit_transform(scaled_data)
-
+    
     pca_df = pd.DataFrame(data=components, columns=['PC1', 'PC2'], index=freq_matrix.index)
-
     return freq_matrix, pca_df
 
 # --- 2. Run Analysis & Prepare Data ---
-# Calculate PCA
 _, pca_df = analyze_v_usage(concat_df)
 
-# Reset index so 'sample' becomes a column we can merge on
 if pca_df.index.name == 'sample' or 'sample' not in pca_df.columns:
     pca_df = pca_df.reset_index()
-    # Ensure the column is named 'sample' (sometimes it resets to 'index')
     if 'index' in pca_df.columns and 'sample' not in pca_df.columns:
         pca_df = pca_df.rename(columns={'index': 'sample'})
 
-# Merge with Metadata
-# inner join ensures we only plot samples we have metadata for
 plot_data = pd.merge(pca_df, meta, on='sample', how='inner')
 
 # --- 3. Determine Grouping Columns ---
@@ -1774,76 +2151,75 @@ group_opts = [
     if col not in exclude_cols and meta[col].nunique() < 35
 ]
 
-# --- 4. Generate Tabs  ---
-print("::: {.panel-tabset}")
+# --- 4. Generate Tabs & Plotly Charts ---
+print("::: {.panel-tabset}\n")
 
 for col in group_opts:
-    print(f"## {col}")
-
-    plt.figure(figsize=(7, 6)) # Slightly larger to accommodate outliers
-    sns.set_theme(style="whitegrid", context="paper")
+    print(f"## {col}\n")
 
     # Force categorical coloring
-    hue_data = plot_data[col].astype(str)
+    plot_data[col] = plot_data[col].astype(str)
 
-    # Main Scatter Plot
-    sns.scatterplot(
-        data=plot_data,
+    # Safely determine hover columns
+    hover_cols = ['sample']
+    if 'alias' in plot_data.columns:
+        hover_cols.append('alias')
+
+    # --- PLOTLY SCATTER PLOT ---
+    fig = px.scatter(
+        plot_data,
         x='PC1',
         y='PC2',
-        hue=hue_data,
-        style=hue_data,
-        s=100,
-        alpha=0.8,
-        palette='viridis',
-        edgecolor='black',
-        linewidth=0.5
+        color=col,
+        symbol=col,
+        hover_data=hover_cols, # <-- Adds the hover over info
+        template='simple_white',
+        title=f'TRBV Gene Usage PCA (Colored by {col})'
     )
 
-    # --- Outlier Labeling Logic ---
-    # Label points that are > 3 Std Devs away from the center
-    # This helps identify samples with "Weird" V-Gene usage (e.g. PCR failure)
+    # Match the Seaborn styling (large dots, transparency, black outlines)
+    fig.update_traces(marker=dict(size=12, opacity=0.8, line=dict(width=1, color='DarkSlateGrey')))
+
+    # --- OUTLIER LABELING LOGIC ---
     outlier_mask = (np.abs(plot_data['PC1']) > 3 * plot_data['PC1'].std()) | \
                    (np.abs(plot_data['PC2']) > 3 * plot_data['PC2'].std())
 
     outliers = plot_data[outlier_mask]
 
-    # Draw text for outliers
-    # We use a slight offset so text doesn't sit exactly on the dot
+    # Add permanent text labels next to outlier points
     for _, row in outliers.iterrows():
-        plt.text(
-            row['PC1'] + 0.1,
-            row['PC2'] + 0.1,
-            str(row['sample']),
-            fontsize=8,
-            color='black',
-            weight='bold'
+        fig.add_annotation(
+            x=row['PC1'],
+            y=row['PC2'],
+            text=f"<b>{row['sample']}</b>",
+            showarrow=False,
+            xshift=15, # Shifts text to the right
+            yshift=15, # Shifts text up
+            font=dict(size=10, color="black")
         )
 
-    plt.title(f'TRBV Gene Usage PCA (Colored by {col})', fontsize=12)
-    plt.xlabel(f'PC1 ({col})', fontsize=10)
-    plt.ylabel('PC2', fontsize=10)
-
-    # Legend
-    plt.legend(
-        bbox_to_anchor=(1.02, 1),
-        loc='upper left',
-        title=col,
-        fontsize='small',
-        title_fontsize='small',
-        markerscale=0.7,
-        frameon=False
+    # --- FINAL LAYOUT ---
+    fig.update_layout(
+        xaxis_title="PC1",
+        yaxis_title="PC2",
+        width=700,
+        height=600,
+        margin=dict(t=60),
+        plot_bgcolor='rgba(0,0,0,0)'
     )
+    
+    # Add gridlines and emphasize the 0,0 origin axes
+    fig.update_xaxes(showgrid=True, gridcolor='lightgrey', zeroline=True, zerolinecolor='gray', zerolinewidth=1.5)
+    fig.update_yaxes(showgrid=True, gridcolor='lightgrey', zeroline=True, zerolinecolor='gray', zerolinewidth=1.5)
 
-    plt.tight_layout()
-    plt.show()
+    fig.show()
 
     print("\n")
 
-print(":::")
+print(":::\n")
 
 ```
-**Figure 11. Dimensionality Reduction of TRBV Gene Usage.** Principal Component Analysis (PCA) plot visualizing the variation in T-cell Receptor Beta Variable (TRBV) gene usage frequencies across samples, colored by metadata variables.
+**Figure 12. Dimensionality Reduction of TRBV Gene Usage.** Principal Component Analysis (PCA) plot visualizing the variation in T-cell Receptor Beta Variable (TRBV) gene usage frequencies across samples, colored by metadata variables.
 
 This plot compresses the high-dimensional complexity of T-cell receptor usage (e.g., TRBV1, TRBV2... TRBV30) into a 2D map. Each dot represents a sample, and the **distance between dots represents the similarity of their "V-gene fingerprints."** **If two samples are close together, they are using the V-genes in almost identical proportions**. If they are far apart, their repertoire structures are radically different.
 
