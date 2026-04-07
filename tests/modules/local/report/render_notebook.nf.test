@@ -31,10 +31,10 @@ nextflow_process {
 
         then {
             assert process.success
-            assert process.out.size() == 1
-            assert path(process.out[0]).exists()
-            assert path(process.out[0]).getName().endsWith(".html")
-            assert path(process.out[0]).getName() == "sample_report.html"
+            assert process.out[0].size() == 1
+            assert path(process.out[0][0]).exists()
+            assert path(process.out[0][0]).getName().endsWith(".html")
+            assert path(process.out[0][0]).getName() == "sample_report.html"
         }
     }
 
@@ -65,8 +65,8 @@ nextflow_process {
 
         then {
             assert process.success
-            assert process.out.size() == 1
-            assert path(process.out[0]).getName() == "sharing_report.html"
+            assert process.out[0].size() == 1
+            assert path(process.out[0][0]).getName() == "sharing_report.html"
         }
     }
 }
