@@ -21,7 +21,7 @@ process RENDER_NOTEBOOK {
         -P project_name:${project_name} \\
         -P workflow_cmd:'${workflow_cmd}' \\
         -P project_dir:${data_dir} \\
-        -P sample_table:${params.samplesheet} \\
+        -P sample_table:${file(params.samplesheet)} \\
         --to html
     """
 
