@@ -9,10 +9,7 @@ include { SAMPLE_AGGREGATE as SAMPLE_AGG_STAT_PHENO } from '../../modules/local/
 include { SAMPLE_AGGREGATE as SAMPLE_AGG_V_PHENO } from '../../modules/local/sample/sample_aggregate'
 include { SAMPLE_AGGREGATE as SAMPLE_AGG_D_PHENO } from '../../modules/local/sample/sample_aggregate'
 include { SAMPLE_AGGREGATE as SAMPLE_AGG_J_PHENO } from '../../modules/local/sample/sample_aggregate'
-include { SAMPLE_PLOT as SAMPLE_PLOT_PHENO } from '../../modules/local/sample/sample_plot'
-
 include { COMPARE_CALC as COMPARE_CALC_PHENO } from '../../modules/local/compare/compare_calc'
-include { COMPARE_PLOT as COMPARE_PLOT_PHENO } from '../../modules/local/compare/compare_plot'
 include { ANNOTATE_CONCATENATE as COMPARE_CONCATENATE_PHENO } from '../../modules/local/annotate'
 
 workflow PSEUDOBULK_PHENOTYPE {
@@ -65,13 +62,6 @@ workflow PSEUDOBULK_PHENOTYPE {
         SAMPLE_AGG_V_PHENO(v_family_csv_files, "v_family.csv")
         SAMPLE_AGG_D_PHENO(d_family_csv_files, "d_family.csv")
         SAMPLE_AGG_J_PHENO(j_family_csv_files, "j_family.csv")
-
-        SAMPLE_PLOT_PHENO(
-            samplesheet_pheno,
-            file(params.sample_stats_template),
-            SAMPLE_AGG_STAT_PHENO.out.aggregated_csv,
-            SAMPLE_AGG_V_PHENO.out.aggregated_csv
-            )
     }
 
     ch_phenotype_files_transformed
@@ -84,15 +74,6 @@ workflow PSEUDOBULK_PHENOTYPE {
 
         COMPARE_CONCATENATE_PHENO( samplesheet_pheno,
             all_sample_files )
-
-        COMPARE_PLOT_PHENO( samplesheet_pheno,
-            COMPARE_CALC_PHENO.out.jaccard_mat,
-            COMPARE_CALC_PHENO.out.sorensen_mat,
-            COMPARE_CALC_PHENO.out.morisita_mat,
-            file(params.compare_stats_template),
-            params.project_name,
-            all_sample_files
-        )
     }
 
     emit:
