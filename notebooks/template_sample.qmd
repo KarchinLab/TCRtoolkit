@@ -360,7 +360,7 @@ create_expansion_stacked_barplot_per_individual(
 
 ```
 
-**Figure 1. Clonal Expansion Categories Relative to Sequencing Depth.** This stacked bar chart illustrates the percentage of clones categorized as non-Frequent, Frequent, or highly Frequent for each sample. The overlaid black dotted line tracks the total sequencing read count on a secondary axis, highlighting the influece of  sampling depth and the detection of Frequent clones. A vertical red threshold line ($>3,000$ counts) demarcates samples with sufficient data for reliable clonality assessment from low-depth libraries where expansion metrics may be unstable.
+**Figure 1. Clonal Expansion Categories Relative to Sequencing Depth.** This stacked bar chart illustrates the percentage of clones categorized as non-Frequent, Frequent, or highly Frequent for each sample. The overlaid black dotted line tracks the total sequencing read count on a secondary axis, highlighting the influence of  sampling depth and the detection of Frequent clones. A vertical red threshold line ($>3,000$ counts) demarcates samples with sufficient data for reliable clonality assessment from low-depth libraries where expansion metrics may be unstable.
 
 **<u>Understanding Each Category</u>**
 
