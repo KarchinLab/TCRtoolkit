@@ -17,6 +17,7 @@ include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 include { ANNOTATE }            from '../subworkflows/local/annotate'
+include { REPORT }              from '../subworkflows/local/report'
 
 include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
 
@@ -98,6 +99,9 @@ workflow TCRTOOLKIT {
         ANNOTATE( sample_map_final )
     }
 
+    // Accumulate reporting tuples: (report_name, notebook_path, data_dir)
+    ch_reports = Channel.empty()
+
     // Running sample level analysis
     if (levels.contains('sample')) {
         SAMPLE(
@@ -105,11 +109,21 @@ workflow TCRTOOLKIT {
             ANNOTATE.out.cdr3_pgen,
             ANNOTATE.out.olga_stats
         )
+        ch_reports = ch_reports.mix(
+            SAMPLE.out.outdir.map { dir ->
+                tuple("sample_report", file(params.sample_stats_template), dir)
+            }
+        )
     }
 
     // Running patient analysis
     if (levels.contains('patient')) {
         PATIENT( ANNOTATE.out.processed_samples )
+        ch_reports = ch_reports.mix(
+            PATIENT.out.gliph2_outdir.map { dir ->
+                tuple("gliph2_report", file(params.gliph2_report_template), dir)
+            }
+        )
     }
 
     // Running comparison analysis
@@ -118,7 +132,14 @@ workflow TCRTOOLKIT {
             ANNOTATE.out.concat_cdr3_sorted,
             ANNOTATE.out.cdr3_pgen
         )
+        ch_reports = ch_reports.mix(
+            COMPARE.out.outdir.map { dir ->
+                tuple("sharing_report", file(params.compare_stats_template), dir)
+            }
+        )
     }
+
+    REPORT( ch_reports )
 }
 
 /*

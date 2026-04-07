@@ -1,0 +1,508 @@
+---
+title: "TCRtoolkit Phenotype (Bulk)"
+format:
+  html:
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    code-fold: true
+    embed-resources: true
+    number-sections: true
+    smooth-scroll: true
+    grid:
+      body-width: 1000px
+      margin-width: 300px
+jupyter: python3
+---
+
+```{python}
+#| tags: [parameters]
+#| include: false
+
+# ---------------------------------------------------------
+# BASE PARAMETERS
+# ---------------------------------------------------------
+workflow_cmd = '<command used to run the pipeline>'
+project_name = '<project_name>'
+project_dir = '<path/to/project_dir>'
+sample_table = '<path/to/sample_table.csv>'
+
+```
+
+
+```{python}
+#| include: false
+
+# ---------------------------------------------------------
+# DERIVED PATHS 
+# ---------------------------------------------------------
+
+# Define files 
+project_dir=f"{project_dir}"
+
+sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
+concat_csv = f"{project_dir}/annotate/concatenated_cdr3.tsv" 
+
+v_family_csv= project_dir + '/sample/v_family.csv'
+j_family_csv= project_dir + '/sample/j_family.csv'
+
+# Define dirs
+tcrdist_dir = project_dir + '/tcrdist3/'
+olga_dir = project_dir + '/olga/'
+tcrpheno_dir = f"{project_dir}/tcrpheno/"
+pseudobulk_dir = f"{project_dir}/pseudobulk/"
+VDJdb_dir = project_dir+ '/vdjdb/'
+convergence_dir = project_dir+ '/convergence/'
+
+```
+
+```{python}
+#| code-fold: true
+
+# 1. Load Packages
+import datetime
+import glob
+import itertools
+import math
+import os
+import sys
+import h5py
+import igraph as ig
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+# import networkx as nx
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import scipy.cluster.hierarchy as sch
+import seaborn as sns
+from IPython.display import Image
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.sparse import csr_matrix
+from scipy.stats import gaussian_kde
+import plotly.io as pio
+from scipy import stats
+from itertools import combinations
+from scipy.stats import mannwhitneyu
+from plotly.subplots import make_subplots
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="plotly"
+)
+
+# 2. Print pipeline parameters
+
+# print('Project Name:          ' + project_name)
+# print('Workflow command:      ' + workflow_cmd)
+# print('Date and time:         ' + str(datetime.datetime.now()))
+
+# 3. Loading data
+## Reading sample metadata
+meta = pd.read_csv(sample_table, sep=',')
+meta.drop(columns=['file'], inplace=True)
+meta_cols = meta.columns.tolist()
+
+## Reading combined repertoire statistics
+df = pd.read_csv(sample_stats_csv, sep=',')
+df = pd.merge(df, meta, on='sample', how='left')
+df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
+
+## Reading V gene family usage
+v_family = pd.read_csv(v_family_csv, sep=',')
+v_family = pd.merge(v_family, meta, on='sample', how='left')
+v_family = v_family[meta_cols + [c for c in v_family.columns if c not in meta_cols]]
+v_family = v_family.sort_values(by=[subject_col])
+
+## Reading J gene family usage
+j_family = pd.read_csv(j_family_csv, sep=',')
+j_family = pd.merge(j_family, meta, on='sample', how='left')
+j_family = j_family[meta_cols + [c for c in j_family.columns if c not in meta_cols]]
+j_family = j_family.sort_values(by=[subject_col])
+
+## Reading concatenated cdr3 file
+concat_df = pd.read_csv(concat_csv, sep='\t')
+concat_df = concat_df.merge(meta[['sample', subject_col, 'alias', 'timepoint', 'timepoint_order']], on='sample', how='left')
+
+
+```
+
+
+
+## From TCR sequence to Phenotype: TCRpheno {#sec-TCRPheno unless="show_sc"}
+
+::: {.callout-warning title="Bulk data ONLY"}
+If you are dealing with **single-cell TCR data, please please disregard section.**
+:::
+
+[TCRpheno](https://www.cell.com/cell-reports/fulltext/S2211-1247(24)01449-9#fig1) is a machine learning model that predicts the likely functional phenotype of a T-cell based solely on its TCR sequence. This is powerful because it allows you to infer the roles of different T-cells (e.g., killer, regulator, memory) from your bulk sequencing data without needing corresponding cell surface marker information.
+
+**<u>How to Interpret the Scores?</u>** 🔍  
+**The output from TCRpheno is a set of scores, not a definitive classification.** For each TCR, a higher score in a category indicates a higher probability that the T-cell belongs to that functional group.
+
+- **TCRbeta.CD8:** A high score here suggests the TCR likely belongs to a cytotoxic CD8+ T-cell. These are the **"killers" of the adaptive immune system**, responsible for destroying virus-infected cells and tumor cells. A repertoire with many high-scoring CD8 TCRs indicates a strong, active anti-pathogen or anti-tumor response.
+
+- **TCRbeta.reg:** This score corresponds to regulatory T-cells (Tregs). These are the **"peacekeepers" that suppress other immune cells** to prevent autoimmune reactions and maintain tolerance. A high Treg score for a TCR suggests it plays a role in immune suppression.
+
+- **TCRbeta.mem:** This indicates a likely memory T-cell phenotype. These are the l**ong-lived "veterans" of the immune system that persist after an infection is cleared**, providing rapid protection upon re-exposure to the same pathogen.
+
+- **TCRbeta.innate:** A high score in this category suggests the TCR may belong to an innate-like T-cell, such as a MAIT or NKT cell. These cells bridge the gap between the innate and adaptive immune systems, **acting as rapid first responders to certain types of threats.**
+
+It's important to remember that a single TCR can have moderate scores in multiple categories, reflecting the **potential for cellular plasticity** or shared sequence features between different T-cell types. **The phenotype with the highest score is considered the most likely identity for that TCR.**
+
+```{python}
+#| output: asis
+#| echo: false
+
+import os
+import glob
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+
+def create_phenotype_tabs(meta_df):
+    """
+    1. Reads TCRpheno files.
+    2. Merges with metadata.
+    3. Creates Quarto tabs containing stacked bar charts per patient.
+    """
+    
+    # --- 1. Find and Load Data ---
+    # Ensure tcrpheno_dir is defined in your environment
+    file_pattern = os.path.join(tcrpheno_dir, '*_tcrpheno.tsv')
+    pheno_files = glob.glob(file_pattern)
+
+    if not pheno_files:
+        print(f"Error: No files found matching {file_pattern}")
+        return
+
+    all_results = []
+    phenotype_cols = ["TCRbeta.innate", "TCRbeta.CD8", "TCRbeta.reg", "TCRbeta.mem"]
+    clean_names = [p.replace('TCRbeta.', '') for p in phenotype_cols]
+
+    for file_path in pheno_files:
+        try:
+            filename = os.path.basename(file_path)
+            sample_id = filename.replace('_tcrpheno.tsv', '')
+            
+            df = pd.read_csv(file_path, sep='\t')
+            
+            if not all(col in df.columns for col in phenotype_cols):
+                continue
+
+            df_cleaned = df.dropna(subset=phenotype_cols).copy()
+            if df_cleaned.empty: continue
+            
+            df_cleaned['dominant_phenotype'] = df_cleaned[phenotype_cols].idxmax(axis=1)
+
+            composition = df_cleaned['dominant_phenotype'].value_counts(normalize=True).reset_index()
+            composition.columns = ['phenotype', 'percentage']
+            composition['percentage'] *= 100
+            composition['sample'] = sample_id
+            
+            # --- Merge Metadata ---
+            meta_row = meta_df[meta_df['sample'] == sample_id]
+            if not meta_row.empty:
+                composition['subject_id'] = meta_row.iloc[0]['subject_id']
+                composition['alias'] = meta_row.iloc[0]['alias']
+                composition['sort_order'] = meta_row.iloc[0]['timepoint_order'] if 'timepoint_order' in meta_df.columns else 0
+            else:
+                composition['subject_id'] = np.nan
+                composition['alias'] = sample_id
+                composition['sort_order'] = 0
+                
+            all_results.append(composition)
+
+        except Exception as e:
+            print(f"Error processing {sample_id}: {e}")
+
+    if not all_results:
+        print("No valid data found.")
+        return
+
+    master_df = pd.concat(all_results, ignore_index=True)
+    master_df = master_df.dropna(subset=['subject_id'])
+
+    # --- 2. Setup Plotting & Quarto Tabs ---
+    color_map = {
+        "TCRbeta.innate": "rgb(99, 110, 250)", 
+        "TCRbeta.CD8": "rgb(239, 85, 59)",      
+        "TCRbeta.reg": "rgb(0, 204, 150)",      
+        "TCRbeta.mem": "rgb(171, 99, 250)"      
+    }
+
+    patients = sorted(master_df['subject_id'].unique())
+    
+    # Open Quarto Tabset
+    print("::: {.panel-tabset}\n")
+
+    # --- 3. Create a Standalone Chart for Each Patient ---
+    for patient in patients:
+        print(f"## {patient}\n")
+        
+        fig = go.Figure()
+        
+        pt_df = master_df[master_df['subject_id'] == patient].copy()
+        pt_df.sort_values(by=['sort_order', 'alias'], inplace=True)
+        aliases = pt_df['alias'].unique()
+        
+        for i, pheno in enumerate(phenotype_cols):
+            # Pivot ensures we have a value for every alias
+            pivot_df = pt_df.pivot(index='alias', columns='phenotype', values='percentage').fillna(0)
+            pivot_df = pivot_df.reindex(aliases)
+            
+            # Safeguard: If a patient has 0% of a phenotype across all timepoints, the column won't exist.
+            if pheno not in pivot_df.columns:
+                pivot_df[pheno] = 0
+                
+            fig.add_trace(go.Bar(
+                x=pivot_df.index,
+                y=pivot_df[pheno],
+                name=clean_names[i],
+                marker_color=color_map.get(pheno)
+            ))
+            
+        fig.update_layout(
+            barmode='stack',
+            title_text=f'Phenotype Composition: {patient}',
+            xaxis_title='Timepoint',
+            yaxis_title='Percentage (%)',
+            legend_title='Phenotype',
+            template="plotly_white",
+            margin=dict(t=40, b=20, l=10, r=10) 
+        )
+
+        fig.show()
+        print("\n\n")
+
+    # Close Quarto Tabset
+    print(":::\n")
+
+create_phenotype_tabs(meta)
+
+```
+**Figure 9: Composition of Unique TCR Clonotypes by Predicted Phenotype** Stacked bar chart showing the proportional diversity of predicted T-cell phenotypes (memory, regulatory, CD8, or innate-like) for each sample, independent of clonal expansion. Each bar indicates the percentage of clones assigned to each category based on their highest TCRpheno score.
+
+By analyzing the proportions of TCR phenotypes (such as innate, CD8+, regulatory, and memory T-cells) across different timepoints or samples, we can understand the quality and strategy of the immune response.
+
+Here is why tracking these phenotypic shifts is critical:  
+
+- **Contextualizing Clonal Dynamics:** A highly clonal sample might initially look like a strong, active immune response. However, if phenotypic analysis reveals that the expansion is entirely driven by regulatory T-cells (Tregs), the immune system is likely being suppressed—a crucial distinction when analyzing tumor   microenvironments or immune evasion.
+
+- **Tracking Treatment Response and Evolution:** In longitudinal data, tracking the ratio of cytotoxic cells (CD8+) to regulatory cells over time can serve as a biomarker for disease progression or treatment efficacy. You are looking for shifts in momentum, such as a sudden spike in CD8+ activity following an intervention.  
+
+- **Identifying Memory Formation:** Observing a transition from an active, innate, or CD8-dominated phenotype toward a memory-dominated phenotype in later timepoints helps confirm that the immune system has successfully cataloged the antigen for long-term protection.  
+
+::: {.callout-important title="Important"}
+On overinterpreting TCRPheno scores:
+"...our TCR scoring functions are consistent across individuals and antigens, but **they are insufficient to accurately classify T cell states.** After all, **the TCR sequence is only one minor influence on the transcriptional state of a given T cell.**"
+- Lagattuta, Kaitlyn A. et al. Cell Reports
+:::
+
+This plot answers the question: *<u>"Of all the different types of T-cell soldiers available, what is the breakdown of their specialties?"</u>*
+
+It reflects the underlying potential of the repertoire. Comparing "Base" vs. "Post" samples can reveal if a treatment induced the emergence of many new and different types of T-cells with a certain phenotype.
+
+
+**<u>The Importance of Clonally-Weighted Phenotyping</u>**   
+An unweighted analysis treats every unique TCR sequence as equals—a clone represented by a single read carries the exact same visual weight as a massively expanded clone with 10,000 reads. While unweighted data is great for understanding the breadth of the immune repertoire, it can completely mask what the immune system is actively doing at scale.
+
+By weighting the phenotypes by clonal size (TCR counts), we reveal the true effector capacity or suppressive burden circulating in the patient. Here is why this distinction is critical:
+
+- **Revealing Hidden Expansions:** For instance, the proportion of unique clones assigned to the regulatory (reg) phenotype can stay relatively stable across all timepoints. However, if after looking at the clonally-weighted plot, the reg compartment explodes later one, this tells us that while the number of unique regulatory clones didn't change much, a select few of those regulatory clones underwent massive physical expansion.
+
+- **Capturing True Biological Impact:** In a cancer context, a tumor microenvironment isn't suppressed by the diversity of Tregs; it is suppressed by the sheer volume of them. Weighting by clonal size gives you a much more accurate picture of the suppressive pressure the effector T-cells are actually facing.
+
+- **Distinguishing Broad vs. Focused Responses:** If an innate or CD8+ phenotype spikes in the unweighted plot but remains flat in the weighted plot, it indicates a broad, low-level mobilization of many different T-cells. If it spikes in the weighted plot, it confirms a highly focused, antigen-driven clonal expansion.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import pandas as pd
+import plotly.graph_objects as go
+import glob
+import os
+
+def create_weighted_phenotype_plot(meta_df):
+    """
+    Merges TCR counts with phenotype predictions to create a stacked bar chart
+    where phenotype composition is weighted by clonal expansion.
+    - Generates one Quarto tab per patient.
+    - Uses 'alias' for the X-axis.
+    - Sorts chronologically using 'timepoint_order'.
+    """
+    # --- Define file paths ---
+    # Assuming concat_csv and tcrpheno_dir are defined globally
+    counts_file = concat_csv 
+    
+    # --- Load the primary TCR counts data ---
+    try:
+        counts_df = pd.read_csv(counts_file, sep='\t')
+    except FileNotFoundError:
+        print(f"Error: Counts file not found at {counts_file}")
+        return
+
+    # --- Find all phenotype files ---
+    file_pattern = os.path.join(tcrpheno_dir, '*_tcrpheno.tsv')
+    pheno_files = sorted(glob.glob(file_pattern))
+
+    if not pheno_files:
+        print(f"Error: No files found matching the pattern: {file_pattern}")
+        return
+
+    # --- Process each sample ---
+    all_results = []
+    phenotype_cols = ["TCRbeta.innate", "TCRbeta.CD8", "TCRbeta.reg", "TCRbeta.mem"]
+    
+    # Cleaner names for legend
+    legend_names = {k: k.replace('TCRbeta.', '') for k in phenotype_cols}
+
+    color_map = {
+        "TCRbeta.innate": "rgb(99, 110, 250)", # Periwinkle
+        "TCRbeta.CD8": "rgb(239, 85, 59)",     # Red
+        "TCRbeta.reg": "rgb(0, 204, 150)",     # Teal
+        "TCRbeta.mem": "rgb(171, 99, 250)"     # Purple
+    }
+
+    for pheno_file_path in pheno_files:
+        try:
+            # Extract sample name
+            sample_name = os.path.basename(pheno_file_path).replace('_tcrpheno.tsv', '')
+            
+            # --- Metadata Lookup ---
+            meta_row = meta_df[meta_df['sample'] == sample_name]
+            if meta_row.empty:
+                # Skip samples not in metadata, or define defaults
+                continue
+                
+            subject_id = meta_row.iloc[0]['subject_id']
+            alias = meta_row.iloc[0]['alias']
+            # Default to 0 if order column is missing
+            tp_order = meta_row.iloc[0]['timepoint_order'] if 'timepoint_order' in meta_df.columns else 0
+
+            # --- Load Data ---
+            pheno_df = pd.read_csv(pheno_file_path, sep='\t')
+            
+            if 'sample' not in counts_df.columns:
+                print(f"Error: 'sample' column missing in {counts_file}")
+                return
+                
+            sample_counts_df = counts_df[counts_df['sample'] == sample_name].copy()
+
+            if sample_counts_df.empty:
+                continue
+
+            # --- Merge & Weight ---
+            # Match phenotype (junction_aa) with counts (CDR3b)
+            merged_df = pd.merge(pheno_df, sample_counts_df[['CDR3b', 'counts']], 
+                                 left_on='junction_aa', right_on='CDR3b', how='inner')
+            
+            merged_df = merged_df.dropna(subset=phenotype_cols + ['counts'])
+            
+            if merged_df.empty:
+                continue
+
+            # Determine dominant phenotype
+            merged_df['dominant_phenotype'] = merged_df[phenotype_cols].idxmax(axis=1)
+
+            # Sum counts per phenotype (Weighted Composition)
+            composition = merged_df.groupby('dominant_phenotype')['counts'].sum().reset_index()
+            
+            # Calculate percentages
+            total_sample_counts = composition['counts'].sum()
+            composition['percentage'] = (composition['counts'] / total_sample_counts) * 100
+            
+            # Add identifiers
+            composition.rename(columns={'dominant_phenotype': 'phenotype'}, inplace=True)
+            composition['sample'] = sample_name
+            composition['subject_id'] = subject_id
+            composition['alias'] = alias
+            composition['timepoint_order'] = tp_order
+            
+            all_results.append(composition)
+
+        except Exception as e:
+            print(f"Error processing {sample_name}: {e}")
+
+    if not all_results:
+        print("No valid data could be processed.")
+        return
+
+    # --- Combine Results ---
+    results_df = pd.concat(all_results, ignore_index=True)
+
+    # --- Generate Tabs per Patient ---
+    unique_patients = sorted(results_df['subject_id'].unique())
+
+    print("::: {.panel-tabset}\n")
+
+    for pat in unique_patients:
+        print(f"## {pat}\n")
+        
+        # Filter and Sort by Timepoint Order
+        pat_data = results_df[results_df['subject_id'] == pat].copy()
+        pat_data.sort_values(by=['timepoint_order', 'alias'], inplace=True)
+        
+        # Get unique aliases in correct order for X-axis category array
+        # This ensures the plot respects the sort order even if data is missing for one bar
+        sorted_aliases = pat_data['alias'].unique()
+
+        fig = go.Figure()
+
+        for phenotype in phenotype_cols:
+            # We filter for the phenotype
+            pheno_data = pat_data[pat_data['phenotype'] == phenotype]
+            
+            # We reindex or merge to ensure every alias on the X-axis has a value (even if 0)
+            # Use a pivot to align data to the sorted aliases
+            # Columns=Phenotype, Index=Alias
+            pivot_data = pat_data.pivot_table(index='alias', columns='phenotype', values='percentage', fill_value=0)
+            
+            # Reindex to ensure we have all timepoints in correct order
+            pivot_data = pivot_data.reindex(sorted_aliases, fill_value=0)
+            
+            # Check if phenotype exists in this patient's data
+            y_values = pivot_data[phenotype] if phenotype in pivot_data.columns else [0]*len(sorted_aliases)
+
+            fig.add_trace(go.Bar(
+                x=sorted_aliases, # Use the sorted list
+                y=y_values,
+                name=legend_names[phenotype], 
+                marker_color=color_map.get(phenotype, 'grey')
+            ))
+
+        fig.update_layout(
+            barmode='stack',
+            title_text=f'<b>Weighted Phenotype Composition: {pat}</b>',
+            xaxis_title='Sample (Alias)',
+            yaxis_title='Weighted Composition (%)',
+            yaxis=dict(range=[0, 105]),
+            legend_title='<b>Phenotype</b>',
+            width=800,
+            height=500,
+            template="simple_white",
+            # Explicitly enforce the sort order on the X-axis
+            xaxis={'categoryorder': 'array', 'categoryarray': sorted_aliases}
+        )
+        
+        fig.show()
+        print("\n")
+
+    print(":::\n")
+
+# Run the function with your metadata dataframe
+create_weighted_phenotype_plot(meta)
+
+```
+
+**Figure 10: Clonally-Weighted TCR Phenotype Composition** Stacked bar chart showing the proportional abundance of predicted T-cell phenotypes for each sample, weighted by clonal size. The size of each segment is determined by summing the read counts of all TCRs assigned to that functional category, thus directly reflecting clonal expansion.
+
+::: {.callout-important title="Important"}
+On overinterpreting TCRPheno scores:
+"...our TCR scoring functions are consistent across individuals and antigens, but **they are insufficient to accurately classify T cell states.** After all, **the TCR sequence is only one minor influence on the transcriptional state of a given T cell.**"
+- Lagattuta, Kaitlyn A. et al. Cell Reports
+:::

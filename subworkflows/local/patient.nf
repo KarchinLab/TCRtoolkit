@@ -50,5 +50,18 @@ workflow PATIENT {
         GLIPH2_TURBOGLIPH(
             PATIENT_CONCATENATE.out.patient_cdr3
         )
+        ch_gliph2_outdir = GLIPH2_TURBOGLIPH.out.all_motifs
+            .first()
+            .map { _ -> file(params.outdir).toAbsolutePath().toString() }
+    } else {
+        ch_gliph2_outdir = Channel.empty()
     }
+
+    emit:
+    // Emits the absolute output directory path once patient-level results are ready.
+    patient_outdir = PATIENT_CALC.out.jaccard_mat
+        .first()
+        .map { _ -> file(params.outdir).toAbsolutePath().toString() }
+    // Emits only when use_gliph2 = true; empty channel otherwise.
+    gliph2_outdir = ch_gliph2_outdir
 }

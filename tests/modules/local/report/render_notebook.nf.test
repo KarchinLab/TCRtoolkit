@@ -1,0 +1,72 @@
+nextflow_process {
+
+    name "Test RENDER_NOTEBOOK"
+    script "modules/local/report/render_notebook.nf"
+    process "RENDER_NOTEBOOK"
+
+    test("Should produce an HTML output file (stub)") {
+
+        tag "stub"
+
+        options "-stub"
+
+        when {
+            params {
+                project_name = "test_project"
+                samplesheet  = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+                outdir       = "out"
+            }
+            process {
+                """
+                input[0] = tuple(
+                    "sample_report",
+                    file("${projectDir}/notebooks/template_sample.qmd"),
+                    "${projectDir}/out"
+                )
+                input[1] = "test_project"
+                input[2] = "nextflow run main.nf"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.size() == 1
+            assert path(process.out[0]).exists()
+            assert path(process.out[0]).getName().endsWith(".html")
+            assert path(process.out[0]).getName() == "sample_report.html"
+        }
+    }
+
+    test("Should handle compare report name (stub)") {
+
+        tag "stub"
+
+        options "-stub"
+
+        when {
+            params {
+                project_name = "compare_project"
+                samplesheet  = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+                outdir       = "out"
+            }
+            process {
+                """
+                input[0] = tuple(
+                    "sharing_report",
+                    file("${projectDir}/notebooks/template_sharing.qmd"),
+                    "${projectDir}/out"
+                )
+                input[1] = "compare_project"
+                input[2] = "nextflow run main.nf --workflow_level compare"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.size() == 1
+            assert path(process.out[0]).getName() == "sharing_report.html"
+        }
+    }
+}

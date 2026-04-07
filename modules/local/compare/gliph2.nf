@@ -50,36 +50,3 @@ process GLIPH2_TURBOGLIPH {
     cat \$input_file > ${patient}/local_similarities.txt
     """
 }
-
-process GLIPH2_PLOT {
-    label 'process_low'
-
-    input:
-    path gliph2_report_template
-    path(motifs)
-    path(clone_network)
-    path(cluster_member_details)
-    path(convergence_groups)
-    path(global_similarities)
-    path(local_similarities)
-    path(parameter)
-
-    output:
-    path 'gliph2_report.html'
-
-    script:   
-    """
-    ## copy quarto notebook to output directory
-    cp $gliph2_report_template gliph2_report.qmd
-
-    ## render qmd report to html
-    quarto render gliph2_report.qmd \
-        -P project_name:$params.project_name \
-        -P workflow_cmd:'$workflow.commandLine' \
-        -P results_dir:'./' \
-
-        # -P clusters:$cluster_member_details \
-        # -P cluster_stats:$convergence_groups \
-        --to html
-    """
-}

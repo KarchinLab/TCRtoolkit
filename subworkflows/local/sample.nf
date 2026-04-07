@@ -6,7 +6,6 @@
 */
 
 include { SAMPLE_CALC } from '../../modules/local/sample/sample_calc'
-include { SAMPLE_PLOT } from '../../modules/local/sample/sample_plot'
 include { SAMPLE_AGGREGATE as SAMPLE_AGG_STAT } from '../../modules/local/sample/sample_aggregate' 
 include { SAMPLE_AGGREGATE as SAMPLE_AGG_V } from '../../modules/local/sample/sample_aggregate'
 include { SAMPLE_AGGREGATE as SAMPLE_AGG_D } from '../../modules/local/sample/sample_aggregate'
@@ -45,15 +44,6 @@ workflow SAMPLE {
     SAMPLE_AGG_V(v_family_csv_files, "v_family.csv")
     SAMPLE_AGG_D(d_family_csv_files, "d_family.csv")
     SAMPLE_AGG_J(j_family_csv_files, "j_family.csv")
-
-    /////// =================== PLOT SAMPLE ===================  ///////
-
-    SAMPLE_PLOT (
-        file(params.samplesheet),
-        file(params.sample_stats_template),
-        SAMPLE_AGG_STAT.out.aggregated_csv,
-        SAMPLE_AGG_V.out.aggregated_csv
-        )
 
     TCRDIST3_MATRIX(
         sample_map,
@@ -110,5 +100,10 @@ workflow SAMPLE {
     VDJDB_GET ()
 
     VDJDB_VDJMATCH (sample_map, VDJDB_GET.out.ref_db)
+
+    emit:
+    // Emits the absolute output directory path once SAMPLE_AGG_STAT completes,
+    // signalling that sample-level results are ready for reporting.
+    outdir = SAMPLE_AGG_STAT.out.aggregated_csv.map { _ -> file(params.outdir).toAbsolutePath().toString() }
 
 }

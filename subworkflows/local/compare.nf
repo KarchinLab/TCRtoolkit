@@ -33,4 +33,12 @@ workflow COMPARE {
     TCRSHARING_SCATTERPLOT(
         TCRSHARING_CALC.out.shared_cdr3
     )
+
+    emit:
+    // Emits the absolute output directory path once compare-level results are ready
+    // for reporting. Collects from both final plotting processes to ensure both complete.
+    outdir = TCRSHARING_HISTOGRAM.out
+        .mix(TCRSHARING_SCATTERPLOT.out)
+        .collect()
+        .map { _ -> file(params.outdir).toAbsolutePath().toString() }
 }

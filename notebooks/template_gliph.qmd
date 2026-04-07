@@ -1,0 +1,516 @@
+---
+title: "TCRtoolkit GLIPH2 Report"
+format:
+  html:
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    code-fold: true
+    embed-resources: true
+    number-sections: true
+    smooth-scroll: true
+    grid:
+      body-width: 1000px
+      margin-width: 300px
+jupyter: python3
+---
+
+```{python}
+#| tags: [parameters]
+#| include: false
+
+# ---------------------------------------------------------
+# BASE PARAMETERS
+# ---------------------------------------------------------
+workflow_cmd = '<command used to run the pipeline>'
+project_name = '<project_name>'
+project_dir = '<path/to/project_dir>'
+sample_table = '<path/to/sample_table.csv>'
+
+```
+
+```{python}
+#| include: false
+
+# ---------------------------------------------------------
+# DERIVED PATHS 
+# ---------------------------------------------------------
+
+# Define files 
+project_dir=f"{project_dir}"
+
+sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
+concat_csv = f"{project_dir}/annotate/concatenated_cdr3.tsv"  # f"{project_dir}/compare/concatenated_cdr3.txt" 
+
+cluster_details_csv = f"{project_dir}/gliph2/cluster_member_details.txt"
+clone_network_csv = f"{project_dir}/gliph2/clone_network.txt"
+all_motifs_csv = f"{project_dir}/gliph2/all_motifs.txt"
+cluster_member_details_csv = f"{project_dir}/gliph2/cluster_member_details.txt"
+global_similarities_csv = f"{project_dir}/gliph2/global_similarities.txt"
+local_similarities_csv = f"{project_dir}/gliph2/local_similarities.txt"
+convergence_groups_csv = f"{project_dir}/gliph2/convergence_groups.txt"
+
+# Define dirs
+tcrpheno_dir = f"{project_dir}/tcrpheno/"
+pseudobulk_dir = f"{project_dir}/pseudobulk/"
+
+```
+
+```{python}
+# Load Packages
+from IPython.display import Image
+import os
+import datetime
+import sys
+import pandas as pd
+import math
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+import matplotlib.ticker as ticker
+from scipy.stats import gaussian_kde
+import h5py
+import glob
+from scipy.sparse import csr_matrix
+import scipy.cluster.hierarchy as sch
+# import networkx as nx
+import itertools
+import igraph as ig
+import logomaker
+import io
+import base64
+import json
+from IPython.display import HTML, display
+import warnings
+import matplotlib.pyplot as plt
+from upsetplot import from_contents, plot as upset_plot
+
+
+# Print pipeline parameters
+
+print('Project Name:          ' + project_name)
+print('Workflow command:      ' + workflow_cmd)
+print('Pipeline Directory:    ' + project_dir)
+print('Date and time:         ' + str(datetime.datetime.now()))
+
+# - Loading data
+
+# Load metadata
+## Reading sample metadata
+meta = pd.read_csv(sample_table, sep=',')
+
+## Reading concatenated cdr3 file
+concat_df = pd.read_csv(concat_csv, sep='\t')
+
+# Reading compare outputs
+cluster_details = pd.read_csv(cluster_details_csv, sep='\t')
+clone_network = pd.read_csv(clone_network_csv, sep='\t', header=None)
+all_motifs = pd.read_csv(all_motifs_csv, sep='\t')
+cluster_member_details = pd.read_csv(cluster_member_details_csv, sep='\t')
+global_similarities = pd.read_csv(global_similarities_csv, sep='\t')
+local_similarities = pd.read_csv(local_similarities_csv, sep='\t')
+convergence_groups = pd.read_csv(convergence_groups_csv, sep='\t')
+
+```
+
+## GLIPH2: TCRB CDR3 motif clusters {#sec-GLIPH2}
+
+**GLIPH2** (Grouping of Lymphocyte Interactions by Paratope Hotspots, version 2) is a computational tool used in TCR sequence analysis to **identify clusters of TCRs that likely recognize the same or similar antigens**.
+
+By grouping TCRs with shared sequence motifs, particularly in the CDR3 regions (the main antigen-binding region), GLIPH2 helps infer functional relationships and **predict which TCRs might target the same or related epitopes**.
+
+For the current stage of analysis, we are focusing solely on the **CDR3 region of the TCR beta chain (TCRB)**. a network was created to facilitate result visualization.
+
+```{python}
+#| label: fig-gliph-network
+#| fig-cap: "**Specificity groups across patients** Each circle (node) represents a unique TCR clonotype across all data. Nodes are connected if they share a common sequence motif, placing them into the same specificity group."
+
+import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+import igraph as ig
+
+# --- 1. Prepare Data & Hover Info ---
+# Merge metadata
+# Ensure 'cluster_details' has 'CDR3b' column matching 'source'/'target'
+merged_meta = pd.merge(cluster_details, meta[['sample', subject_col, alias_col]], on='sample', how='left').dropna(subset=[subject_col])
+
+# A. Categorize Nodes (Public vs Private)
+# Count unique subjects per CDR3
+cdr3_subject_counts = merged_meta.groupby('CDR3b')[subject_col].nunique()
+public_cdr3s = set(cdr3_subject_counts[cdr3_subject_counts > 1].index)
+
+# B. Create Detailed Hover Text
+# Group by CDR3b -> Subject -> List of Aliases
+def create_hover_string(group):
+    patient_summaries = []
+    # Sort subjects for consistent order
+    for subj, subgroup in group.groupby(subject_col):
+        aliases = ", ".join(sorted(subgroup[alias_col].unique().astype(str)))
+        patient_summaries.append(f"{subj} ({aliases})")
+    return "<br>".join(patient_summaries)
+
+# Apply to all CDR3s
+hover_map = merged_meta.groupby('CDR3b').apply(create_hover_string, include_groups=False).to_dict()
+
+# C. Create Category Map
+# Map private clones to their subject_id
+private_df = merged_meta[~merged_meta['CDR3b'].isin(public_cdr3s)]
+# Take the first subject found (since there is only one)
+category_map = dict(zip(private_df['CDR3b'], private_df[subject_col]))
+
+def get_node_category(cdr3):
+    if cdr3 in public_cdr3s:
+        return "Shared"
+    return category_map.get(cdr3, "Unknown")
+
+# --- 2. Build Graph ---
+clone_network.columns = ["source", "target", "type", "group"]
+clone_network = clone_network[clone_network['type'] != 'singleton']
+
+edges = clone_network[["source", "target"]].values.tolist()
+g = ig.Graph.TupleList(edges, directed=False)
+
+# Assign attributes
+g.vs['category'] = [get_node_category(v['name']) for v in g.vs]
+# Pre-fetch hover text for efficiency
+g.vs['hover_detail'] = [hover_map.get(v['name'], "No Data") for v in g.vs]
+
+# Layout
+layout = g.layout("fr")
+coords = list(map(tuple, layout))
+
+# --- 3. Plotting ---
+fig = go.Figure()
+
+# -- Edge Trace --
+edge_x, edge_y = [], []
+for edge in g.es:
+    src, tgt = edge.tuple
+    x0, y0 = coords[src]
+    x1, y1 = coords[tgt]
+    edge_x.extend([x0, x1, None])
+    edge_y.extend([y0, y1, None])
+
+fig.add_trace(go.Scatter(
+    x=edge_x, y=edge_y,
+    line=dict(width=0.5, color='#cccccc'),
+    hoverinfo='none',
+    mode='lines',
+    showlegend=False
+))
+
+# -- Node Traces --
+categories = sorted(list(set(g.vs['category'])))
+
+# Define Colors
+base_colors = px.colors.qualitative.Bold
+color_map = {cat: base_colors[i % len(base_colors)] for i, cat in enumerate(categories)}
+color_map["Shared"] = "black" # Shared = Black
+
+for cat in categories:
+    indices = [i for i, v in enumerate(g.vs) if v['category'] == cat]
+    if not indices: continue
+
+    node_x = [coords[i][0] for i in indices]
+    node_y = [coords[i][1] for i in indices]
+
+    # Retrieve hover text
+    hover_texts = [
+        f"<b>CDR3:</b> {g.vs[i]['name']}<br><b>Found in:</b><br>{g.vs[i]['hover_detail']}"
+        for i in indices
+    ]
+
+    # --- SIZE ADJUSTMENT HERE ---
+    # Shared = 18 (Big), Private = 12 (Medium)
+    node_size = 18 if cat == "Shared" else 12
+
+    # Add border to shared nodes for clarity
+    line_width = 2 if cat == "Shared" else 1
+    line_color = 'white'
+
+    fig.add_trace(go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers',
+        name=str(cat),
+        text=hover_texts,
+        hoverinfo='text',
+        marker=dict(
+            color=color_map[cat],
+            size=node_size,
+            line=dict(width=line_width, color=line_color)
+        )
+    ))
+
+# --- 4. Final Layout ---
+fig.update_layout(
+    title='TCRB Network',
+    plot_bgcolor='white',
+    width=1000, height=800, # Increased width slightly
+    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    margin=dict(t=40, b=20, l=10, r=10),
+    legend_title_text='Category'
+)
+
+fig.show()
+
+
+```
+
+**<u>How to Extract Biological Knowledge from the Figure?</u>**
+
+The GLIPH2 network visualizes structural convergence within the T-cell repertoire. Each node represents a unique TCR clonotype, and edges connect clonotypes that share a conserved sequence motif. By evaluating the topology and composition of these clusters, we can infer the nature of the immune response.  
+
+1. Cluster Size and Density (Assessing Convergence)  
+The size of a cluster directly correlates with the degree of immune convergence against a specific target.  
+
+    - Large, Dense Clusters: Indicate a highly convergent, immunodominant response. Multiple distinct T-cell lineages have been recruited and expanded to target the exact same antigen.  
+
+    - Small, Fragmented Clusters (Dyads/Triads): A landscape of isolated pairs suggests a highly diverse repertoire. The immune responses here are broadly distributed across many different targets rather than focused heavily on a single dominant antigen.    
+
+2. Cluster Composition (Public vs. Private Immunity)  
+By mapping metadata (such as cohort or patient ID) to the node colors, we can classify the structural responses as private or shared:  
+
+    - Monochromatic Clusters (Private Convergence): Clusters composed entirely of nodes from a single origin (e.g., only purple DFCI1 nodes) represent an intra-patient convergent response. The individual generated multiple distinct TCR variants against a private target, such as a patient-specific tumor neoantigen.   
+
+    - Mixed Clusters (Public Convergence): Clusters containing nodes from multiple different origins (e.g., connected purple and green nodes) represent public convergent immunity. Different individuals independently generated structurally similar TCRs, strongly implying a shared target, such as a common viral epitope or a shared driver mutation.   
+
+3. Analyzing "Shared" Nodes  
+Nodes specifically designated as "Shared" (colored black) represent exact amino acid sequences found in multiple individuals. Observing the edges connected to these exact public clones reveals the broader structural "neighborhood" of private TCRs that likely recognize the same public antigen.   
+
+
+```{python}
+#| label: fig-gliph-motifs
+#| fig-cap: "**TCRB CDR3 motif lengths.** Histogram showing the distribution of amino acid motif lengths identified by GLIPH2 across all TCRs in the dataset."
+
+# Calculate motif lengths
+all_motifs["motif_length"] = all_motifs["motif"].str.len()
+
+# Count how many motifs of each length
+length_counts = all_motifs["motif_length"].value_counts().reset_index()
+length_counts.columns = ["motif_length", "count"]
+length_counts = length_counts.sort_values("motif_length")
+
+# Plot bar chart
+plt.figure(figsize=(8, 5))
+plt.bar(length_counts["motif_length"], length_counts["count"],
+        color="darkgreen", edgecolor="black")
+
+plt.title("Motif Length Distribution")
+plt.xlabel("Motif Length")
+plt.ylabel("Number of Motifs")
+plt.xticks(length_counts["motif_length"])
+plt.grid(axis='y', linestyle='--', alpha=0.5)
+plt.tight_layout()
+plt.show()
+
+```
+
+Knowing the length of the amino acid motifs is useful because it provides insight into both the biological plausibility of the findings and the likely functional relationship between the clustered T-cells.
+
+**<u>Reflecting the Biophysics of Binding</u>**  
+From a biological standpoint, **the interaction between a TCR and its target peptide-MHC is often driven by a small number of critical "contact points" or "hotspots" within the CDR3 loop.** These hotspots typically consist of a short stretch of 2-5 amino acids. When GLIPH2 identifies a large number of **motifs with a length of 3 or 4**, it serves as a crucial sanity check. It suggests the algorithm **is not just finding random statistical noise, but is successfully identifying patterns that are biologically plausible** and reflect the known mechanics of T-cell recognition.
+
+**<u>Short Motifs (2-3 amino acids):</u>** These are like a broad. They are **more likely to occur by chance** and may define more "promiscuous" groups of TCRs that share a common structural feature but might still bind to a range of similar peptides.
+
+**<u>Long Motifs (4-5 amino acids):</u>** These are like a specific. They are statistically much rarer and impose a much stronger constraint on the TCR's structure. Therefore, a group of TCRs defined by a **longer motif is very likely to be highly specific for the exact same antigen.**
+
+```{python}
+#| output: asis
+#| label: fig-motif-interactive-plotly
+#| fig-cap: "**Top 10 TCR specificity motifs ranked by member count.** Bar chart displaying the most prevalent amino acid motifs identified by the GLIPH2 algorithm, ranked by the number of unique T-cell receptors (TCRs) that share each motif."
+
+import plotly.graph_objects as go
+
+def create_motif_tabs(all_motifs):
+    """
+    Creates Quarto tabs containing a Plotly bar plot of top TCR motifs
+    for each motif length.
+    """
+    # --- 1. Prepare the data ---
+    all_motifs['motif_length'] = all_motifs['motif'].str.len()
+    all_motifs.dropna(subset=['motif', 'motif_length'], inplace=True)
+    all_motifs['motif_length'] = all_motifs['motif_length'].astype(int)
+
+    unique_lengths = sorted(all_motifs['motif_length'].unique())
+
+    if not unique_lengths:
+        print("No valid motif lengths found to plot.")
+        return
+
+    # --- 2. Start Quarto Tabset ---
+    print("::: {.panel-tabset}\n")
+
+    # --- 3. Process each motif length and create a separate plot ---
+    for length in unique_lengths:
+        # Print the tab header
+        print(f"## Length {length}\n")
+
+        # Filter data and grab top 10
+        df_by_length = all_motifs[all_motifs['motif_length'] == length]
+        top10 = df_by_length.sort_values("num_in_sample", ascending=False).head(10)
+
+        # Build a standalone figure just for this length
+        fig = go.Figure(
+            data=[
+                go.Bar(
+                    x=top10["motif"],
+                    y=top10["num_in_sample"],
+                    marker_color='tomato',
+                    marker_line_color='black',
+                    marker_line_width=1.5
+                )
+            ]
+        )
+
+        # Keep the layout clean and tight for the tab environment
+        fig.update_layout(
+            title_text=f"Top 10 Motifs of Length {length} by TCR Members",
+            xaxis_title="Motif",
+            yaxis_title="Number of TCRs",
+            font=dict(size=12),
+            plot_bgcolor='white',
+            margin=dict(t=40, b=20, l=10, r=10) 
+        )
+
+        fig.show()
+        
+        # Add necessary spacing so Quarto doesn't blend the HTML and Markdown
+        print("\n\n")
+
+    # --- 4. Close Quarto Tabset ---
+    print(":::\n")
+
+# --- Run ---
+create_motif_tabs(all_motifs)
+
+```
+
+This bar chart ranks the top conserved amino acid motifs found by GLIPH2 based on the number of unique T-cell receptors (TCRs) that belong to each specificity group. Each bar represents a specific motif (e.g., 'GG'), and its height indicates the size of that "TCR neighborhood"—the total number of different TCRs that share this core binding pattern.
+
+Identifying the motifs shared by the largest number of unique TCRs helps **pinpoint the most immunodominant recognition strategies used by the T-cells** in your dataset; you are effectively highlighting the **most common solutions the immune system has evolved to target key antigens**, thus providing a data-driven way to prioritize the most significant TCR communities for further study. However, it is crucial to interpret these findings with care, as **the most frequent motifs are often short and may not always define the most functionally specific T-cell groups compared to smaller groups with longer, more complex motifs.**
+
+## GLIPH2 global Motifs
+GLIPH2 identifies TCRB CDR3 clusters based on either local motifs (short, position-restricted patterns within 3 amino acids) or **global similarity (requiring identical CDR3 length and differences at the same positions).** Visualizing global motifs as sequence logos reveals the conserved amino acid preferences at each position, and can provide insights into the sequence features that potentially drive shared antigen recognition.
+
+```{python}
+#| echo: false
+#| label: fig-motif-logo
+#| fig-cap: "**Logo visualization of the top 10 global motifs based on TCR members.**"
+
+# 1. Sort and select top 10 motifs
+top10 = global_similarities.sort_values("cluster_size", ascending=False).head(10).copy()
+
+# 2. Generate plots and store them as in-memory images
+plot_data = []
+
+# --- WARNING SUPPRESSION START ---
+# We catch warnings here because logomaker uses deprecated pandas setting methods
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", FutureWarning)
+
+    for i, row in top10.iterrows():
+        motif_name = f"Motif {row['cluster_tag']} (Size: {row['cluster_size']})"
+        seqs = [s.strip() for s in str(row["CDR3b"]).split(" ") if s.strip()]
+
+        if len(seqs) >= 2:
+            try:
+                # Create a counts matrix
+                counts_mat = logomaker.alignment_to_matrix(seqs, to_type="probability")
+
+                # Create plot but don't show it
+                fig, ax = plt.subplots(figsize=(10, 3))
+                logo = logomaker.Logo(counts_mat, ax=ax)
+                ax.set_title(motif_name)
+                fig.tight_layout()
+
+                # Save plot to an in-memory buffer
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', bbox_inches='tight')
+                buf.seek(0)
+
+                # Encode image to Base64 and decode to a string
+                img_str = base64.b64encode(buf.read()).decode('utf-8')
+
+                # Add data to our list
+                plot_data.append({
+                    "title": motif_name,
+                    "image_src": f"data:image/png;base64,{img_str}"
+                })
+
+                # Close the figure to free up memory
+                plt.close(fig)
+
+            except Exception as e:
+                print(f"Could not process motif {row['cluster_tag']}: {e}")
+# --- WARNING SUPPRESSION END ---
+
+# 3. Create the HTML and JavaScript component for the interactive viewer
+# Convert the Python list of plot data into a JSON string for JavaScript
+plots_json = json.dumps(plot_data)
+
+html_template = f"""
+<div style="border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; margin: auto; text-align: center; font-family: sans-serif;">
+    <h3 id="plot-title" style="margin-top: 0;"></h3>
+    <img id="plot-image" src="" style="width: 100%; height: auto; border-radius: 4px;">
+    <div style="margin-top: 16px; display: flex; justify-content: space-between; align-items: center;">
+        <button id="prev-btn" style="padding: 8px 16px; border-radius: 5px; border: 1px solid #ccc; background-color: #f0f0f0; cursor: pointer;">&larr; Previous</button>
+        <span id="page-counter"></span>
+        <button id="next-btn" style="padding: 8px 16px; border-radius: 5px; border: 1px solid #ccc; background-color: #f0f0f0; cursor: pointer;">Next &rarr;</button>
+    </div>
+</div>
+
+<script>
+(function() {{
+    const plots = {plots_json};
+    let currentIndex = 0;
+
+    const titleElement = document.getElementById('plot-title');
+    const imageElement = document.getElementById('plot-image');
+    const prevButton = document.getElementById('prev-btn');
+    const nextButton = document.getElementById('next-btn');
+    const pageCounter = document.getElementById('page-counter');
+
+    function showPlot(index) {{
+        if (plots.length === 0) return;
+        const plot = plots[index];
+        titleElement.textContent = plot.title;
+        imageElement.src = plot.image_src;
+        pageCounter.textContent = `Plot ${{index + 1}} of ${{plots.length}}`;
+
+        // Disable/Enable buttons at the start/end
+        prevButton.disabled = (index === 0);
+        nextButton.disabled = (index === plots.length - 1);
+    }}
+
+    prevButton.addEventListener('click', () => {{
+        if (currentIndex > 0) {{
+            currentIndex--;
+            showPlot(currentIndex);
+        }}
+    }});
+
+    nextButton.addEventListener('click', () => {{
+        if (currentIndex < plots.length - 1) {{
+            currentIndex++;
+            showPlot(currentIndex);
+        }}
+    }});
+
+    // Initial load
+    showPlot(currentIndex);
+}})();
+</script>
+"""
+
+# 4. Display the HTML component in the notebook
+if plot_data:
+    display(HTML(html_template))
+else:
+    print("No valid motifs with 2 or more sequences were found to plot.")
+
+```

@@ -29,6 +29,15 @@ notebooks/*
 !notebooks/sample_stats_template.qmd
 !notebooks/compare_stats_template.qmd
 !notebooks/gliph2_report_template.qmd
+!notebooks/template_qc.qmd
+!notebooks/template_sample.qmd
+!notebooks/template_sharing.qmd
+!notebooks/template_overlap.qmd
+!notebooks/template_pheno_bulk.qmd
+!notebooks/template_pheno_sc.qmd
+!notebooks/template_gliph.qmd
+!notebooks/template_details_part1.qmd
+!notebooks/template_details_part2.qmd
 
 ## Bash
 tmp
