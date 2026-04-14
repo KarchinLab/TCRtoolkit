@@ -5,7 +5,7 @@ process TCRSHARING_CALC {
     path concat_cdr3
 
     output:
-    path "cdr3_sharing_pgen.tsv", emit: "shared_cdr3"
+    path "cdr3_sharing.tsv", emit: "shared_cdr3"
     path "sample_mapping.tsv", emit: "sample_mapping"
 
     script:
@@ -17,6 +17,9 @@ process TCRSHARING_CALC {
 
     # Load data
     df = pd.read_csv("${concat_cdr3}", sep="\t")
+
+    # Remove rows where pgen = 0
+    df = df[df['pgen'] != 0]
 
     # Map sample to integer codes
     df['sample'] = df['sample'].astype('category')
@@ -31,9 +34,12 @@ process TCRSHARING_CALC {
 
     # Get unique sample_ids per CDR3b — vectorized
     grouped = (
-        df.groupby('CDR3b')['sample_id']
-        .unique()     # UNIQUE — fast & vectorized
-        .apply(np.sort)  # SORT — vectorized
+        df.groupby('CDR3b')
+        .agg(
+            sample_id=('sample_id', 'unique'),
+            pgen=('pgen', 'first'),
+            log10_pgen=('log10_pgen', 'first')
+        )
         .reset_index()
     )
 
@@ -44,28 +50,11 @@ process TCRSHARING_CALC {
     )
 
     # Drop raw list
-    final_df = grouped[['CDR3b', 'total_samples', 'samples_present']]
+    final_df = grouped[['CDR3b', 'pgen', 'log10_pgen', 'total_samples', 'samples_present']]
     final_df = final_df.sort_values(by="total_samples", ascending=False)
 
     # Export final list
     final_df.to_csv("cdr3_sharing.tsv", sep="\t", index=False)
-    EOF
-
-
-    olga-compute_pgen --humanTRB -i cdr3_sharing.tsv -o pgen_sharing.tsv
-
-
-    python - <<EOF
-    import pandas as pd
-    
-    # Load TSVs for shared cdr3s and corresponding pgen values
-    left_df = pd.read_csv('pgen_sharing.tsv', sep='\t', header=None, usecols=[0, 1], names=['CDR3b', 'pgen'])
-    right_df = pd.read_csv('cdr3_sharing.tsv', sep='\t')
-
-    # Drop rows where pgen == 0 and merge
-    left_df = left_df[left_df['pgen'] != 0]
-    merged_df = pd.merge(left_df, right_df, on='CDR3b', how='left')
-    merged_df.to_csv('cdr3_sharing_pgen.tsv', sep='\t', index=False)
     EOF
     """
 }
@@ -86,7 +75,7 @@ process TCRSHARING_HISTOGRAM {
     import pandas as pd
     import matplotlib.pyplot as plt
     
-    merged_df = pd.read_csv('$shared_cdr3', sep='\t')
+    merged_df = pd.read_csv('${shared_cdr3}', sep='\t')
 
     # Plot histogram
     sharing = merged_df['total_samples'].values
@@ -127,10 +116,9 @@ process TCRSHARING_SCATTERPLOT {
     import matplotlib.pyplot as plt
     from matplotlib.ticker import MaxNLocator
 
-    merged_df = pd.read_csv('$shared_cdr3', sep='\t')
+    merged_df = pd.read_csv('${shared_cdr3}', sep='\t')
 
     # Create scatter plot with log-transform pgen
-    merged_df["log10_pgen"] = np.log10(merged_df["pgen"])
     plt.figure(figsize=(8, 6))
     plt.grid(True)
     plt.scatter(merged_df["log10_pgen"], merged_df["total_samples"], c='blue', alpha=0.7)

@@ -112,7 +112,7 @@ def main():
                         help='sample name')
     parser.add_argument('-c', '--count_table', 
                         metavar='count_table', 
-                        type=argparse.FileType('r'), 
+                        type=str, 
                         help='counts file in TSV format')
 
     args = parser.parse_args() 
@@ -122,11 +122,11 @@ def main():
     # Read in the counts file
     counts = pd.read_csv(args.count_table, sep='\t')
 
-    calc_gene_family(sample, counts, 'v_call', 'TRBV', 30, f'vdj/v_family_{sample}.csv')
-    calc_gene_family(sample, counts, 'd_call', 'TRBD', 2, f'vdj/d_family_{sample}.csv')
-    calc_gene_family(sample, counts, 'j_call', 'TRBJ', 2, f'vdj/j_family_{sample}.csv')
-    
-    calc_sample_stats(sample, counts, f'stats/sample_stats_{sample}.csv')
+    calc_gene_family(sample, counts, 'v_call', 'TRBV', 30, f'v_family_{sample}.csv')
+    calc_gene_family(sample, counts, 'd_call', 'TRBD', 2, f'd_family_{sample}.csv')
+    calc_gene_family(sample, counts, 'j_call', 'TRBJ', 2, f'j_family_{sample}.csv')
+
+    calc_sample_stats(sample, counts, f'sample_stats_{sample}.csv')
 
 if __name__ == "__main__":
     main()

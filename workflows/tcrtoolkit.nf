@@ -10,11 +10,15 @@
 //
 
 include { INPUT_CHECK }         from '../subworkflows/local/input_check'
-include { AIRR_CONVERT }        from '../subworkflows/local/airr_convert'
+include { CONVERT }             from '../subworkflows/local/convert'
 include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
+include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
+include { ANNOTATE }            from '../subworkflows/local/annotate'
+
+include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -40,32 +44,80 @@ workflow TCRTOOLKIT {
         }
     }
 
+    if (levels.contains('patient')) {
+        def samplesheet_header = file(params.samplesheet).readLines().first().split(',')
+        def has_patient = samplesheet_header.contains('patient')
+        
+        if (!has_patient) {
+            println("\u001B[33m[WARN]\u001B[0m Patient workflow was specified but metadata was not found in samplesheet; please specify patient IDs for samples using the 'patient' column or remove 'patient' from workflow_level.")
+            return
+        }
+    }
+
     // Checking input tables
     INPUT_CHECK( file(params.samplesheet) )
+    ch_samplesheet_utf8 = INPUT_CHECK.out.samplesheet_utf8
 
-    if (input_format in ['adaptive', 'cellranger']) {
-        AIRR_CONVERT( INPUT_CHECK.out.sample_map,
+    if (input_format == 'adaptive') {
+        CONVERT(
+            INPUT_CHECK.out.sample_map,
             input_format
+        )
+        .sample_map_converted
+        .set { sample_map_final }
+
+    } else if (input_format == 'cellranger') {
+        CONVERT(
+            INPUT_CHECK.out.sample_map,
+            input_format
+        )
+        .sample_map_converted
+        .set { sample_map_final }
+
+        if (params.sobject_gex) {
+            // Current SCRATCH-annotate gex input:
+            // data/SCRATCH_ANNOTATION:SCTYPE_STATE_ANNOTATION/data/project_T_Cells_annotation_object.RDS
+            PSEUDOBULK_PHENOTYPE(
+                CONVERT.out.pseudobulk_phenotype_files,
+                INPUT_CHECK.out.samplesheet_utf8,
+                levels
             )
-            .sample_map_converted
-            .set { sample_map_final }
+        }
+
     } else {
         INPUT_CHECK.out.sample_map
             .set { sample_map_final }
     }
 
-    RESOLVE_SAMPLESHEET( INPUT_CHECK.out.samplesheet_utf8,
-        sample_map_final )
+    // --- Main Analysis ---
+
+    // RESOLVE_SAMPLESHEET( ch_samplesheet_utf8,
+    //     sample_map_final )
+
+    if (levels.intersect(['sample','patient','compare'])) {
+        ANNOTATE( sample_map_final )
+    }
 
     // Running sample level analysis
     if (levels.contains('sample')) {
-        SAMPLE( sample_map_final )
+        SAMPLE(
+            sample_map_final,
+            ANNOTATE.out.cdr3_pgen,
+            ANNOTATE.out.olga_stats
+        )
+    }
+
+    // Running patient analysis
+    if (levels.contains('patient')) {
+        PATIENT( ANNOTATE.out.processed_samples )
     }
 
     // Running comparison analysis
     if (levels.contains('compare')) {
-        COMPARE( RESOLVE_SAMPLESHEET.out.samplesheet_resolved,
-            RESOLVE_SAMPLESHEET.out.all_sample_files)
+        COMPARE(
+            ANNOTATE.out.concat_cdr3_sorted,
+            ANNOTATE.out.cdr3_pgen
+        )
     }
 }
 

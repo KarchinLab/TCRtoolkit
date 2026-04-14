@@ -12,7 +12,7 @@ include { SAMPLE_AGGREGATE as SAMPLE_AGG_V } from '../../modules/local/sample/sa
 include { SAMPLE_AGGREGATE as SAMPLE_AGG_D } from '../../modules/local/sample/sample_aggregate'
 include { SAMPLE_AGGREGATE as SAMPLE_AGG_J } from '../../modules/local/sample/sample_aggregate'
 include { TCRDIST3_MATRIX; TCRDIST3_HISTOGRAM_CALC; TCRDIST3_HISTOGRAM_PLOT} from '../../modules/local/sample/tcrdist3'
-include { OLGA_PGEN_CALC; OLGA_HISTOGRAM_CALC; OLGA_HISTOGRAM_PLOT; OLGA_WRITE_MAX } from '../../modules/local/sample/olga'
+include { OLGA_SAMPLE_MERGE; OLGA_HISTOGRAM_CALC; OLGA_HISTOGRAM_PLOT } from '../../modules/local/olga'
 include { CONVERGENCE } from '../../modules/local/sample/convergence'
 include { TCRPHENO } from '../../modules/local/sample/tcrpheno'
 include { VDJDB_GET; VDJDB_VDJMATCH } from '../../modules/local/sample/tcrspecificity'
@@ -27,6 +27,8 @@ workflow SAMPLE {
 
     take:
     sample_map
+    cdr3_pgen
+    olga_stats
 
     main:
 
@@ -86,23 +88,11 @@ workflow SAMPLE {
         global_y_max_value
     )
 
-    OLGA_PGEN_CALC ( sample_map )
+    OLGA_SAMPLE_MERGE ( sample_map,
+        cdr3_pgen.first(),
+        olga_stats )
 
-    OLGA_PGEN_CALC.out.olga_xmin
-        .map { xmin -> xmin.text.trim().toDouble() }
-        .collect()
-        .map { values -> values.min() }
-        .set { olga_x_min_value }
-    olga_x_min_value.view { olga_xmin -> "Olga x min matrix value: $olga_xmin" }
-
-    OLGA_PGEN_CALC.out.olga_xmax
-        .map { xmax -> xmax.text.trim().toDouble() }
-        .collect()
-        .map { values -> values.max() }
-        .set { olga_x_max_value }
-    olga_x_max_value.view { olga_xmax -> "Olga x max matrix value: $olga_xmax" }
-
-    OLGA_HISTOGRAM_CALC ( OLGA_PGEN_CALC.out.olga_pgen, olga_x_min_value, olga_x_max_value )
+    OLGA_HISTOGRAM_CALC ( OLGA_SAMPLE_MERGE.out.olga_pgen, olga_stats )
 
     OLGA_HISTOGRAM_CALC.out.olga_ymax
         .map { ymax -> ymax.text.trim().toDouble() }
@@ -113,12 +103,6 @@ workflow SAMPLE {
 
     OLGA_HISTOGRAM_PLOT( OLGA_HISTOGRAM_CALC.out.olga_histogram, olga_y_max_value )
 
-    OLGA_WRITE_MAX(
-        olga_x_min_value,
-        olga_x_max_value,
-        olga_y_max_value
-    )
-
     CONVERGENCE ( sample_map )
 
     TCRPHENO ( sample_map )
@@ -127,9 +111,4 @@ workflow SAMPLE {
 
     VDJDB_VDJMATCH (sample_map, VDJDB_GET.out.ref_db)
 
-    // emit:
-    // sample_stats_csv
-    // v_family_csv
-    // sample_meta_csv
-    // versions = SAMPLESHEET_CHECK.out.versions // channel: [ versions.yml ]
 }

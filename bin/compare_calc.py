@@ -52,8 +52,13 @@ if __name__ == "__main__":
     # -------------------------
     # Load samplesheet
     # -------------------------
-    sample_df = pd.read_csv(args.sample_utf8)
+    sample_df = pd.read_csv(args.sample_utf8, index_col=None)
 
+    # Basic hygiene: drop rows missing sample or file
+    sample_df = sample_df.dropna(subset=["sample", "file"])
+    print(sample_df.head())
+    print(sample_df.columns.tolist())
+    
     samples = sample_df["sample"].tolist()
     files = sample_df["file"].tolist()
     n = len(samples)
@@ -64,44 +69,46 @@ if __name__ == "__main__":
     # Preload data structures
     # -------------------------
     junction_sets = {}
-    count_vectors = {}
+    count_series = {}
 
     for sample, file in zip(samples, files):
         df = pd.read_csv(file, sep="\t", usecols=["junction_aa", "duplicate_count"])
         df = df.dropna(subset=["junction_aa"])
 
+        # Ensure counts are numeric
+        df["duplicate_count"] = pd.to_numeric(df["duplicate_count"], errors="coerce").fillna(0)
+
         # Set for presence/absence metrics
         junction_sets[sample] = set(df["junction_aa"])
 
-        # Counts for Morisita–Horn
-        count_vectors[sample] = (
+        # Counts for Morisita–Horn as a pandas Series (index = junction_aa)
+        counts = (
             df.groupby("junction_aa")["duplicate_count"]
             .sum()
         )
-
+        # Ensure we have a Series with a named index
+        if not isinstance(counts, pd.Series):
+            counts = pd.Series(counts)
+        count_series[sample] = counts
 
     # -------------------------
-    # Align count vectors across union space
+    # Build union index and align counts
     # -------------------------
-    all_junctions = sorted(
-        set().union(*junction_sets.values())
-    )
+    union_set = set().union(*junction_sets.values()) if junction_sets else set()
+    all_junctions = pd.Index(sorted(union_set))
 
+    aligned_vectors = {}
     for sample in samples:
-        count_vectors[sample] = (
-            count_vectors[sample]
-            .reindex(all_junctions, fill_value=0)
-            .to_numpy()
-        )
-
+        aligned = count_series[sample].reindex(all_junctions, fill_value=0)
+        # Store as numpy for MH computation
+        aligned_vectors[sample] = aligned.to_numpy(dtype=float)
 
     # -------------------------
     # Initialize matrices
     # -------------------------
-    jaccard_mat = np.zeros((n, n))
-    sorensen_mat = np.zeros((n, n))
-    morisita_mat = np.zeros((n, n))
-
+    jaccard_mat = np.zeros((n, n), dtype=float)
+    sorensen_mat = np.zeros((n, n), dtype=float)
+    morisita_mat = np.zeros((n, n), dtype=float)
 
     # -------------------------
     # Compute upper triangle only
@@ -111,7 +118,7 @@ if __name__ == "__main__":
     for i in range(n):
         s1 = samples[i]
         set1 = junction_sets[s1]
-        counts1 = count_vectors[s1]
+        counts1 = aligned_vectors[s1]
 
         # Diagonal
         jaccard_mat[i, i] = 1.0
@@ -120,15 +127,13 @@ if __name__ == "__main__":
 
         for j in range(i + 1, n):
             s2 = samples[j]
-
             j_val = jaccard_index(set1, junction_sets[s2])
             s_val = sorensen_index(set1, junction_sets[s2])
-            m_val = morisita_horn_index(counts1, count_vectors[s2])
+            m_val = morisita_horn_index(counts1, aligned_vectors[s2])
 
             jaccard_mat[i, j] = jaccard_mat[j, i] = j_val
             sorensen_mat[i, j] = sorensen_mat[j, i] = s_val
             morisita_mat[i, j] = morisita_mat[j, i] = m_val
-
 
     # -------------------------
     # Write outputs

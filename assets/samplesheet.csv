@@ -1,5 +1,0 @@
-sample_id,subject_id,file_path
-sampleA,subject1,/path/to/sampleA_patient1_cdr3.tsv
-sampleB,subject1,/path/to/sampleB_patient1_cdr3.tsv
-sampleC,subject2,/path/to/sampleC_patient2_cdr3.tsv
-sampleD,subject2,/path/to/sampleD_patient2_cdr3.tsv

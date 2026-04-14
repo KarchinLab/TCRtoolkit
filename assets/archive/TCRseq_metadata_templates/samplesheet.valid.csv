@@ -1,7 +1,0 @@
-sample_id,filename,patient_id,timepoint,origin
-s1_T1,./assets/s1.csv,A,0,PBMC
-s2_T1,./assets/s2.csv,A,7,PBMC
-s3_T1,./assets/s3.csv,A,0,Tumor
-s4_T1,./assets/s4.csv,B,0,PBMC
-s5_T1,./assets/s5.csv,B,7,PBMC
-s6_T1,./assets/s6.csv,B,0,Tumor
