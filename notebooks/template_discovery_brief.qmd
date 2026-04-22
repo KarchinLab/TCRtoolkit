@@ -76,9 +76,8 @@ subject_col = 'subject_id'
 project_dir=f"{project_dir}/{project_name}"
 
 sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
-concat_file = f"{project_dir}/annotate/concatenated_cdr3.tsv"  
+concat_file = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"  
 pgen_csv = f"{project_dir}/tcrsharing/cdr3_sharing.tsv"
-giana_tsv = f"{project_dir}/giana/giana_RotationEncodingBL62.txt"
 
 # Define dirs
 tcrdist_dir = f"{project_dir}/tcrdist3/"
@@ -88,6 +87,8 @@ pseudobulk_dir = f"{project_dir}/pseudobulk/"
 VDJdb_dir = f"{project_dir}/vdjdb/"
 convergence_dir = f"{project_dir}/convergence/"
 convert_dir = f"{project_dir}/convert/"
+giana_dir = f"{project_dir}/giana/"
+notebook_results_dir = f"{project_dir}/notebook-analysis/"
 
 ```
 
@@ -160,9 +161,8 @@ df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
 ## reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_file, sep='\t')
 
-# Read Pgen and GIANA data
+# # Read Pgen data
 prob_generation_df = pd.read_csv(pgen_csv, sep='\t')
-giana_df = pd.read_csv(giana_tsv, comment='#', sep='\t')
 
 ```
 
@@ -208,100 +208,145 @@ group_opts_patient = [timepoint_col] if timepoint_col in df.columns else []
 unique_patients = sorted(df[subject_col].dropna().unique().tolist())
 
 # --- 1. DEFINE PLOTTING FUNCTION ---
-def create_clonality_plot(data, group_col, custom_order=None):
-    """
-    custom_order: Optional list of x-axis values in the desired order.
-    """
+def create_clonality_plot(data, group_col, custom_order=None, plot_type="box"):
     if data.empty or data[group_col].dropna().empty:
         return
 
-    # Determine order: Use custom list if provided, otherwise sort alphabetically
     if custom_order:
         unique_cats = [x for x in custom_order if x in data[group_col].unique()]
     else:
         unique_cats = sorted(data[group_col].dropna().unique().tolist())
 
-    # Base Plot
-    fig = px.box(
-        data,
-        x=group_col,
-        y='clonality',
-        color=group_col,
-        points='all',
-        hover_data=['alias'],
-        category_orders={group_col: unique_cats}, 
-        template="simple_white",
-        title=f"TCR Clonality by {group_col}"
-    )
-    fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
+    # --- BASE PLOT ---
+    if plot_type == "box":
+        fig = px.box(
+            data,
+            x=group_col,
+            y='clonality',
+            color=group_col,
+            points='all',
+            hover_data=['alias'],
+            category_orders={group_col: unique_cats},
+            template="simple_white",
+            width=700,
+            height=600,
+            title=f"TCR Clonality by {group_col}"
+        )
+        fig.update_traces(width=0.5, marker=dict(size=10, opacity=0.7))
 
-    for trace in fig.data:
-        if isinstance(trace, go.Box):
-            trace.pointpos = 0
-            trace.jitter = 0.2
+        for trace in fig.data:
+            if isinstance(trace, go.Box):
+                trace.pointpos = 0
+                trace.jitter = 0.2
 
-    # Stats
-    if len(unique_cats) >= 2:
-        # Use unique_cats (which is now ordered) for pair generation
+    elif plot_type == "line":
+        data = data.copy()
+        data[group_col] = pd.Categorical(data[group_col], categories=unique_cats, ordered=True)
+        data = data.sort_values(group_col)
+
+        fig = px.scatter(
+            data,
+            x=group_col,
+            y='clonality',
+            color_discrete_sequence=["black"],
+            hover_data=['alias'],
+            template="simple_white",
+            width=700,
+            height=500,
+            title=f"TCR Clonality by {group_col}"
+        )
+
+        fig.add_trace(go.Scatter(
+            x=data[group_col],
+            y=data['clonality'],
+            mode='lines+markers',
+            line=dict(dash='dot', width=2),
+            marker=dict(size=18, color='black'),
+            showlegend=False
+        ))
+
+    # --- STATISTICS (ONLY FOR BOXPLOTS) ---
+    stack_counter = 0
+
+    if plot_type == "box" and len(unique_cats) >= 2:
         pairs = list(combinations(unique_cats, 2))
+
         y_max = data['clonality'].max()
-        y_range = y_max - data['clonality'].min()
-        if y_range == 0: y_range = 1
-        step_size = y_range * 0.13
-        stack_counter = 0
+        y_min = data['clonality'].min()
+        y_range = y_max - y_min
+        if y_range == 0:
+            y_range = 1
+
+        base_offset = y_range * 0.08
+        step_size   = y_range * 0.06
+        text_offset = y_range * 0.015
 
         for t1, t2 in pairs:
-            group1 = data[data[group_col] == t1]['clonality'].dropna()
-            group2 = data[data[group_col] == t2]['clonality'].dropna()
+            g1 = data[data[group_col] == t1]['clonality'].dropna()
+            g2 = data[data[group_col] == t2]['clonality'].dropna()
 
-            if len(group1) < 2 or len(group2) < 2: continue
+            if len(g1) < 2 or len(g2) < 2:
+                continue
 
             try:
-                stat, p_value = mannwhitneyu(group1, group2, alternative='two-sided')
-            except ValueError: continue
+                stat, p_value = mannwhitneyu(g1, g2, alternative='two-sided')
+            except ValueError:
+                continue
 
-            if p_value >= 0.05: continue
+            if p_value >= 0.05:
+                continue
 
-            if p_value < 0.001: symbol = '***'
-            elif p_value < 0.01: symbol = '**'
-            elif p_value < 0.05: symbol = '*'
+            if p_value < 0.001:   symbol = '***'
+            elif p_value < 0.01:  symbol = '**'
+            else:                 symbol = '*'
 
-            y_bracket = y_max + (y_range * 0.15) + (stack_counter * step_size)
-            y_text = y_bracket + (y_range * 0.02)
+            y_bracket = y_max + base_offset + (stack_counter * step_size)
+            y_text    = y_bracket + text_offset
 
-            # Draw Bracket
-            fig.add_shape(type="line", xref="x", yref="y",
+            fig.add_shape(
+                type="line", xref="x", yref="y",
                 x0=t1, y0=y_bracket, x1=t2, y1=y_bracket,
-                line=dict(color="black", width=1.5))
+                line=dict(color="black", width=1.5)
+            )
 
-            tick_len = y_range * 0.02
+            tick_len = y_range * 0.0015
             fig.add_shape(type="line", xref="x", yref="y",
-                x0=t1, y0=y_bracket, x1=t1, y1=y_bracket - tick_len,
-                line=dict(color="black", width=1.5))
+                x0=t1, y0=y_bracket, x1=t1, y1=y_bracket - tick_len)
             fig.add_shape(type="line", xref="x", yref="y",
-                x0=t2, y0=y_bracket, x1=t2, y1=y_bracket - tick_len,
-                line=dict(color="black", width=1.5))
+                x0=t2, y0=y_bracket, x1=t2, y1=y_bracket - tick_len)
 
-            try: x_center = (t1 + t2) / 2
-            except: x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
+            try:
+                x_center = (unique_cats.index(t1) + unique_cats.index(t2)) / 2
+            except:
+                x_center = 0
 
             fig.add_annotation(
-                x=x_center, y=y_text, text=f"{symbol}<br>p={p_value:.3f}",
-                showarrow=False, font=dict(size=10, color="black")
+                x=x_center,
+                y=y_text,
+                text=f"{symbol}<br>p={p_value:.3f}",
+                showarrow=False,
+                font=dict(size=10)
             )
             stack_counter += 1
-        top_margin = 60 + (stack_counter * 40)
-    else:
-        top_margin = 60
+
+        extra_space = y_range * (0.15 + 0.07 * stack_counter)
+        fig.update_yaxes(range=[y_min, y_max + extra_space])
+
+    # --- FINAL LAYOUT ---
+    dynamic_height = 600 + (stack_counter * 40)  # Expands with each bracket added
 
     fig.update_layout(
-        xaxis_title=group_col, yaxis_title="Clonality",
+        showlegend=False,
+        yaxis_title="Clonality",
+        xaxis_title=group_col,
         xaxis=dict(tickfont=dict(size=15)),
-        margin=dict(t=top_margin), showlegend=False,
-        width=600, height=600, plot_bgcolor='rgba(0,0,0,0)'
+        height=dynamic_height,
+        margin=dict(t=80),
+        plot_bgcolor='rgba(0,0,0,0)'
     )
     fig.update_yaxes(showgrid=True, gridcolor='lightgrey')
     fig.show()
+
 
 # --- 2. GENERATE TABS ---
 
@@ -313,7 +358,7 @@ if len(unique_patients) <= 10:
     print(":::: {.panel-tabset}\n")
     for group in group_opts_all:
         print(f"### {group}\n")
-        create_clonality_plot(df, group) 
+        create_clonality_plot(df, group)
         print("\n")
     print("::::\n")
 
@@ -323,28 +368,54 @@ if len(unique_patients) <= 10:
 
     for pat in unique_patients:
         print(f"### {pat}\n")
-
         pat_df = df[df[subject_col] == pat]
 
-        for group in group_opts_patient:
-            if pat_df[group].nunique() > 0:
+        has_multi_origin = (
+            'origin' in pat_df.columns and
+            pat_df['origin'].nunique() > 1
+        )
 
-                # --- APPLY CUSTOM SORTING IF AVAILABLE ---
-                custom_order = None
-                if group == timepoint_col and time_order_map:
-                    # Get unique timepoints for this patient
-                    pat_tps = pat_df[group].dropna().unique().tolist()
-                    # Sort them based on the map we created from 'meta'
-                    # Use .get(x, 999) to handle missing keys gracefully by putting them at the end
-                    custom_order = sorted(pat_tps, key=lambda x: time_order_map.get(x, 999))
+        if has_multi_origin:
+            print("::: {.panel-tabset}\n")  # Level 4 Start
+            origins = sorted(pat_df['origin'].dropna().unique())
 
-                create_clonality_plot(pat_df, group, custom_order)
-            else:
-                print(f"No data for {group} in patient {pat}.")
-            print("\n")
+            for origin in origins:
+                print(f"#### {origin}\n")
+                origin_df = pat_df[pat_df['origin'] == origin]
 
-    print("::::\n")
-    print(":::::\n")
+                for group in group_opts_patient:
+                    if origin_df[group].nunique() > 0:
+                        custom_order = None
+                        if group == timepoint_col and time_order_map:
+                            pat_tps = origin_df[group].dropna().unique().tolist()
+                            custom_order = sorted(
+                                pat_tps,
+                                key=lambda x: time_order_map.get(x, 999)
+                            )
+                        create_clonality_plot(origin_df, group, custom_order, plot_type="line")
+                    else:
+                        print(f"No data for {group} in {origin}, patient {pat}.")
+                    print("\n")
+
+            print(":::\n")  # Level 4 End
+
+        else:
+            for group in group_opts_patient:
+                if pat_df[group].nunique() > 0:
+                    custom_order = None
+                    if group == timepoint_col and time_order_map:
+                        pat_tps = pat_df[group].dropna().unique().tolist()
+                        custom_order = sorted(
+                            pat_tps,
+                            key=lambda x: time_order_map.get(x, 999)
+                        )
+                    create_clonality_plot(pat_df, group, custom_order, plot_type="line")
+                else:
+                    print(f"No data for {group} in patient {pat}.")
+                print("\n")
+
+    print("::::\n")   # Level 3 End
+    print(":::::\n")  # Level 2 End
 
 else:
     # --- STANDARD VIEW (>10 Patients) ---
@@ -591,7 +662,45 @@ def create_upset_tabs(df, patient_list):
 
         # Generate Matplotlib figure
         mpl_fig = plt.figure(figsize=(12, 7))
-        upsetplot.plot(upset_data, fig=mpl_fig, sort_by='cardinality', show_counts=True)
+        
+        # Capture the dictionary of axes returned by the plot function
+        axes_dict = upsetplot.plot(upset_data, fig=mpl_fig, sort_by='cardinality', show_counts=False)
+        
+        # --- 1. Annotate Intersections (Vertical Bars) ---
+        ax_intersections = axes_dict['intersections']
+        for bar in ax_intersections.patches:
+            h = bar.get_height()
+            if h > 0:
+                ax_intersections.text(
+                    bar.get_x() + bar.get_width() / 2, 
+                    h + 0.1,
+                    str(int(h)), 
+                    ha='center', va='bottom', fontsize=9
+                )
+
+        # --- 2. Annotate Set Sizes / Totals (Horizontal Bars) ---
+        ax_totals = axes_dict['totals']
+        
+        # Calculate a dynamic offset (5% of the max width) to prevent text touching the bar
+        max_width = max([bar.get_width() for bar in ax_totals.patches] + [1])
+        offset = max_width * 0.05
+
+        for bar in ax_totals.patches:
+            w = bar.get_width()
+            if w > 0:
+                # Because the axis is inverted, adding to 'w' pushes the text left
+                ax_totals.text(
+                    w + offset,
+                    bar.get_y() + bar.get_height() / 2,
+                    str(int(w)),
+                    ha='right', va='center', fontsize=9
+                )
+                
+        # Expand the x-axis limits slightly to ensure the text isn't cut off
+        # Note: current_xlim[0] is the max value (left side) because of the inversion
+        current_xlim = ax_totals.get_xlim()
+        ax_totals.set_xlim(current_xlim[0] * 1.25, current_xlim[1])
+        
         plt.suptitle(f'UpSet Plot for {patient_id}', fontsize=16)
         plt.show()
         plt.close(mpl_fig)
@@ -614,7 +723,7 @@ if upset_patients:
     create_upset_tabs(concat_df, upset_patients)
 else:
     print("No patients with multiple timepoints found for UpSet plotting.")
-
+    
 ```
 **Figure 3. Clonal sharing.** Upset plot showing the raw number of shared clones between 2 or more samples.
 
@@ -630,6 +739,63 @@ A line connecting two or more solid dots (⚫--⚫) indicates that the bar above
 
 **3. Left Bar Chart: Total Set Size**
 This horizontal bar chart on the left shows the total number of unique clones in each original sample. This gives you a quick overview of the repertoire diversity for each timepoint before looking at the overlaps.
+
+```{python}
+
+# Define and create the output directory
+persistent_clones_dir = f"{notebook_results_dir}/persistent_clones/" 
+os.makedirs(persistent_clones_dir, exist_ok=True)
+
+# Loop through the patients that actually have multiple timepoints
+for patient_id in upset_patients:
+    patient_df = concat_df[concat_df[subject_col] == patient_id]
+    
+    # 1. Aggregate counts for each clone at each timepoint
+    # (Using 'counts' as the abundance metric based on your previous structures)
+    clone_tp_data = patient_df.groupby(['CDR3b', timepoint_col])['counts'].sum().reset_index()
+    
+    # 2. Calculate the number of timepoints and list them for each clone
+    clone_stats = clone_tp_data.groupby('CDR3b').agg(
+        n_timepoints=(timepoint_col, 'nunique'),
+        timepoints_present=(timepoint_col, lambda x: ', '.join(sorted(x.astype(str))))
+    )
+    
+    # 3. Filter for persistent clones (>= 2 timepoints)
+    persistent_stats = clone_stats[clone_stats['n_timepoints'] >= 2]
+    
+    if persistent_stats.empty:
+        continue
+        
+    # 4. Pivot the data to get frequencies (counts) as separate columns per timepoint
+    persistent_clones = persistent_stats.index
+    persistent_counts_df = clone_tp_data[clone_tp_data['CDR3b'].isin(persistent_clones)]
+    
+    wide_counts = persistent_counts_df.pivot(
+        index='CDR3b', 
+        columns=timepoint_col, 
+        values='counts'
+    ).fillna(0) # Fill missing timepoints with 0 counts
+    
+    # Prefix the timepoint columns so they are clearly identifiable as counts
+    wide_counts.columns = [f"count_{col}" for col in wide_counts.columns]
+    
+    # 5. Merge the stats and the wide counts into a final clean table
+    final_df = persistent_stats.join(wide_counts).reset_index()
+    
+    # Sort by number of timepoints shared, then by total overall counts
+    final_df['total_count'] = final_df[[c for c in final_df.columns if str(c).startswith('count_')]].sum(axis=1)
+    final_df.sort_values(by=['n_timepoints', 'total_count'], ascending=[False, False], inplace=True)
+    final_df.drop(columns=['total_count'], inplace=True)
+    
+    # 6. Save to CSV
+    file_path = os.path.join(persistent_clones_dir, f"{patient_id}_persistent_clones.csv")
+    final_df.to_csv(file_path, index=False)
+
+# print(f"Persistent clone summary files successfully generated in: {persistent_clones_dir}")
+
+
+
+```
 
 ## Clonal Dynamics  {#sec-expansion}
 
@@ -1197,8 +1363,7 @@ Baseline (Black): The initial pool of clones detected at the very first sampling
 - **Stable (Grey):** Pre-existing clones (in at least one previous timepoint) that are neither significantly expanding nor contracting. They are persisting in the repertoire as background or memory populations.
 
 ```{python}
-
-# --- Save Detailed Clone Categories with Info ---
+# --- Save Detailed Clone Categories with Info for further analysis ---
 
 # Merge the categorical statuses back with the original data to keep counts, frequencies, and gene usage
 export_cols = [subject_col, timepoint_col, 'CDR3b', 'TRBV', 'TRBJ', 'counts', 'frequency']
@@ -1217,6 +1382,316 @@ detailed_export_df = detailed_export_df.sort_values(
     ascending=[True, True, True, False]
 )
 ```
+
+
+```{python}
+#| echo: false
+
+# ----------- Save clone categories in output folder -----------
+
+
+# 1. Define and create the output directory
+output_dir = f"{notebook_results_dir}/dynamic_clones/"
+os.makedirs(output_dir, exist_ok=True)
+
+# 2. Filter for the dynamic statuses requested from the plot logic
+target_statuses = ['New', 'Expanded', 'Contracted']
+dynamic_clones_df = plot_df[plot_df['Status'].isin(target_statuses)].copy()
+dynamic_clones_df = dynamic_clones_df.rename(columns={timepoint_col: 't_post'})
+
+# 3. Gather all significant statistical comparisons (Expansions & Contractions)
+sig_stats_list = []
+
+# Get Expansions
+if 'detailed_comparisons_table' in locals() and not detailed_comparisons_table.empty:
+    sig_exp = detailed_comparisons_table[
+        (detailed_comparisons_table['fold_change'] > fc_thold_up) &
+        (pd.to_numeric(detailed_comparisons_table['q_value'], errors='coerce') < signif_thold)
+    ].copy()
+    sig_stats_list.append(sig_exp)
+
+# Get Contractions
+if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_table_cont.empty:
+    sig_cont = detailed_comparisons_table_cont[
+        (detailed_comparisons_table_cont['fold_change'] < fc_thold_down) &
+        (pd.to_numeric(detailed_comparisons_table_cont['q_value'], errors='coerce') < signif_thold)
+    ].copy()
+    sig_stats_list.append(sig_cont)
+
+# Combine them
+if sig_stats_list:
+    all_sig_stats = pd.concat(sig_stats_list, ignore_index=True)
+    stats_to_merge = all_sig_stats[[subject_col, 'origin', 't_post', 'CDR3b', 't_pre', 'freq_pre', 'freq_post', 'p_value']]
+else:
+    # Fallback if there are absolutely zero significant clones in the entire dataset
+    stats_to_merge = pd.DataFrame(columns=[subject_col, 'origin', 't_post', 'CDR3b', 't_pre', 'freq_pre', 'freq_post', 'p_value'])
+
+# 4. Merge the plotting classifications with the exact statistical comparisons
+# Note: A clone might match multiple 't_pre' comparisons. This merge will mathematically branch 
+# those into separate rows so you can see every valid comparison.
+merged_df = pd.merge(
+    dynamic_clones_df,
+    stats_to_merge,
+    on=[subject_col, 'origin', 't_post', 'CDR3b'],
+    how='left'
+)
+
+# 5. Fetch actual frequencies for "New" clones (since they don't have a Fisher test row)
+current_freqs = clonotypes_df[[subject_col, 'origin', timepoint_col, 'CDR3b', 'frequency', 'TRBV', 'TRBJ']].rename(
+    columns={timepoint_col: 't_post', 'frequency': 'current_frequency'}
+).drop_duplicates()
+
+merged_df = pd.merge(merged_df, current_freqs, on=[subject_col, 'origin', 't_post', 'CDR3b'], how='left')
+
+# Fill in the blanks for the "New" clones
+merged_df['freq_post'] = merged_df['freq_post'].fillna(merged_df['current_frequency'])
+merged_df['freq_pre'] = merged_df['freq_pre'].fillna(0.0)
+merged_df['t_pre'] = merged_df['t_pre'].fillna("Not Present Previously")
+# p_value is intentionally left as NaN for 'New' clones since no test was run.
+
+# 6. Clean up and Rename Columns for the final export
+final_cols = [
+    subject_col, 'origin', 'CDR3b', 'TRBV', 'TRBJ', 
+    'Status', 't_post', 't_pre', 'freq_post', 'freq_pre', 'p_value'
+]
+export_df = merged_df[[c for c in final_cols if c in merged_df.columns]].copy()
+
+export_df.rename(columns={
+    'Status': 'dynamic_status',
+    't_post': 'current_timepoint',
+    't_pre': 'compared_to_timepoint',
+    'freq_post': 'freq_current_timepoint',
+    'freq_pre': 'freq_compared_timepoint',
+}, inplace=True)
+
+
+# 7. Save the results into individual CSV files per patient
+saved_files = 0
+for subject, subj_df in export_df.groupby(subject_col):
+    if subj_df.empty:
+        continue
+        
+    file_path = os.path.join(output_dir, f"{subject}_dynamic_clones.csv")
+    
+    # Sort for readability: Origin -> Current Timepoint -> Status -> Highest Frequency
+    subj_df = subj_df.sort_values(
+        by=['origin', 'current_timepoint', 'dynamic_status', 'freq_current_timepoint'], 
+        ascending=[True, True, True, False]
+    )
+    
+    subj_df.to_csv(file_path, index=False)
+    saved_files += 1
+
+```
+
+The following tables provide a granular breakdown of clone status distributions for each patient across longitudinal timepoints. By categorizing clones based on their persistence and detection patterns, we can track the evolution of the clonal architecture. Total counts are provided per timepoint to contextualize the relative prevalence of each status category.
+
+```{python}
+#| echo: false
+#| output: asis
+from IPython.display import HTML, display
+
+# --- Clone Status Summary Table: one tab per patient ---
+print("::: {.panel-tabset}\n")
+# Added observed=False to the groupby
+for subject, subj_agg in agg_df.groupby(subject_col, observed=False):
+    print(f"## {subject}\n")
+    origins = subj_agg['origin'].unique()
+    
+    for orig in origins:
+        orig_agg = subj_agg[subj_agg['origin'] == orig].copy()
+        
+        # Added observed=False to the pivot_table
+        pivot = orig_agg.pivot_table(
+            index=[timepoint_order_col, timepoint_col],
+            columns='Status',
+            values='Count',
+            aggfunc='sum',
+            fill_value=0,
+            observed=False 
+        )
+        
+        pivot = pivot.sort_index(level=0).reset_index()
+        pivot = pivot.drop(columns=[timepoint_order_col])
+        pivot.rename(columns={timepoint_col: 'Timepoint'}, inplace=True)
+        
+        # Added observed=False to this groupby as well
+        pivot = pivot.groupby('Timepoint', sort=False, observed=False).sum().reset_index()
+
+        for s in status_order:
+            if s not in pivot.columns:
+                pivot[s] = 0
+        
+        pivot['Total'] = pivot[status_order].sum(axis=1)
+        
+        display_cols = ['Timepoint'] + status_order + ['Total']
+        pivot = pivot[[c for c in display_cols if c in pivot.columns]]
+        
+        title = f"{subject} — {orig}" if len(origins) > 1 else str(subject)
+        table_html = create_styled_table(
+            pivot,
+            title=f"Clone Status Counts: {title}",
+            max_height='300px'
+        )
+        
+        if table_html is not None:
+            display(table_html)
+            
+    print("\n")
+print(":::\n")
+
+```
+
+**Table 1: Longitudinal Clonal Status Distribution.** This table summarizes the absolute counts of detected clones categorized by their temporal status for each patient and sample origin. Columns represent specific clonal classifications as defined in the study's tracking pipeline.
+
+
+These scatter plots map the longitudinal trajectory of individual clones between pairs of timepoints. Each point represents a unique clone, plotted by its relative frequency at an earlier (x-axis) versus later (y-axis) timepoint on a logarithmic scale. The dashed diagonal line represents perfect stability. Most clones cluster along this line in gray, indicating no significant change in abundance. Clones that deviate sharply reflect active repertoire dynamics: statistically significant expansions shift above the diagonal (highlighted in red), while significant contractions fall below it (highlighted in blue).
+
+```{python}
+#| echo: false
+#| output: asis
+
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+import itertools
+
+# --- 1. Prepare Significance Mapping ---
+# Create fast lookups for significant clones across all comparisons
+sig_exp_lookup = set()
+if 'detailed_comparisons_table' in locals() and not detailed_comparisons_table.empty:
+    sig_exp = detailed_comparisons_table[
+        (detailed_comparisons_table['fold_change'] > fc_thold_up) &
+        (pd.to_numeric(detailed_comparisons_table['q_value'], errors='coerce') < signif_thold)
+    ]
+    # Store tuple of (subject, origin, t_pre, t_post, CDR3b)
+    sig_exp_lookup = set(zip(sig_exp[subject_col], sig_exp['origin'], sig_exp['t_pre'], sig_exp['t_post'], sig_exp['CDR3b']))
+
+sig_cont_lookup = set()
+if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_table_cont.empty:
+    sig_cont = detailed_comparisons_table_cont[
+        (detailed_comparisons_table_cont['fold_change'] < fc_thold_down) &
+        (pd.to_numeric(detailed_comparisons_table_cont['q_value'], errors='coerce') < signif_thold)
+    ]
+    sig_cont_lookup = set(zip(sig_cont[subject_col], sig_cont['origin'], sig_cont['t_pre'], sig_cont['t_post'], sig_cont['CDR3b']))
+
+# Define our color palette
+color_discrete_map = {
+    "Expanded": "#ef553b",       # Red
+    "Contracted": "#636efa",     # Blue
+    "Not Significant": "#d3d3d3" # Light Gray
+}
+
+# --- 2. Generate Plots per Patient and Comparison ---
+print("::: {.panel-tabset}\n")
+
+for subject, subj_df in clonotypes_df.groupby(subject_col):
+    print(f"## {subject}\n")
+    print("::: {.panel-tabset}\n")
+    
+    origins = subj_df['origin'].unique()
+    
+    for origin in origins:
+        orig_df = subj_df[subj_df['origin'] == origin]
+        timepoints = orig_df.sort_values('timepoint_rank')[timepoint_col].unique().tolist()
+        
+        if len(timepoints) < 2:
+            continue
+            
+        # Create all unique combinations of timepoints (chronological based on rank)
+        for t1, t2 in itertools.combinations(timepoints, 2):
+            tab_title = f"{t1} vs {t2}" if len(origins) == 1 else f"{origin}: {t1} vs {t2}"
+            print(f"### {tab_title}\n")
+            
+            # Pivot data for these two specific timepoints
+            pair_df = orig_df[orig_df[timepoint_col].isin([t1, t2])]
+            pivot = pair_df.pivot_table(
+                index=['CDR3b', 'TRBV', 'TRBJ'], 
+                columns=timepoint_col, 
+                values='frequency', 
+                fill_value=0
+            ).reset_index()
+            
+            # If a clone only exists in one timepoint, it will be 0 in the other. 
+            # Log scale cannot plot 0, so we replace 0 with a very small pseudocount.
+            min_freq = 1e-6
+            pivot['freq_t1_plot'] = pivot[t1].replace(0, min_freq)
+            pivot['freq_t2_plot'] = pivot[t2].replace(0, min_freq)
+            
+            # Assign highlight status using our sets
+            def assign_status(row):
+                key = (subject, origin, t1, t2, row['CDR3b'])
+                if key in sig_exp_lookup:
+                    return "Expanded"
+                elif key in sig_cont_lookup:
+                    return "Contracted"
+                else:
+                    return "Not Significant"
+                    
+            pivot['Status'] = pivot.apply(assign_status, axis=1)
+            
+            # Sort so that colored points render on top of gray points
+            pivot['sort_order'] = pivot['Status'].map({"Not Significant": 0, "Expanded": 1, "Contracted": 2})
+            pivot = pivot.sort_values('sort_order')
+            
+            # Build the scatter plot
+            fig = px.scatter(
+                pivot,
+                x='freq_t1_plot',
+                y='freq_t2_plot',
+                color='Status',
+                color_discrete_map=color_discrete_map,
+                hover_data={
+                    'CDR3b': True,
+                    'TRBV': True,
+                    t1: ':.6f', # Show the true frequency on hover (including actual 0s)
+                    t2: ':.6f',
+                    'freq_t1_plot': False,
+                    'freq_t2_plot': False,
+                    'sort_order': False,
+                    'Status': True
+                },
+                labels={
+                    'freq_t1_plot': f"Frequency at {t1} (log)",
+                    'freq_t2_plot': f"Frequency at {t2} (log)"
+                },
+                title=f"Clonal Frequency: {t1} vs {t2} ({subject} - {origin})",
+                opacity=0.8
+            )
+            
+            # Log axes and layout adjustments
+            fig.update_layout(
+                xaxis_type="log",
+                yaxis_type="log",
+                plot_bgcolor='white',
+                xaxis=dict(range=[np.log10(min_freq / 2), 0], showline=True, linecolor='black', gridcolor='lightgray'),
+                yaxis=dict(range=[np.log10(min_freq / 2), 0], showline=True, linecolor='black', gridcolor='lightgray'),
+                width=700,
+                height=600
+            )
+            
+            # Add a diagonal reference line (y = x)
+            fig.add_shape(
+                type="line",
+                x0=min_freq / 2,
+                y0=min_freq / 2,
+                x1=1,
+                y1=1,
+                line=dict(color="black", width=1, dash="dash"),
+                layer="below"
+            )
+            
+            fig.show()
+            print("\n")
+            
+    print(":::\n")
+print(":::\n")
+```
+
+**Figure X: Pairwise longitudinal dynamics of clonal frequencies.**
+Scatter plots depicting the relative frequency of individual clones between two distinct timepoints for each patient and sample origin.
+
+
 
 ## Similar TCR sequences within samples {#sec-tcrdist}
 
@@ -1858,96 +2333,100 @@ The primary reason public TCRs are important is convergent selection. The genera
 
 ```{python}
 
+import os
 import plotly.graph_objects as go
 import pandas as pd
 
-def create_top_shared_clones_table(concat_df, meta, pgen_df, n_top_clones=10):
-    """
-    Creates an interactive Plotly table showing the top N most shared TCR clones,
-    with distinct columns for each patient showing which samples (aliases) the clone was found in.
-    """
-
-    # --- 2. Create the "Wide" Matrix (One Column per Patient) ---
+# --- 1. DATA PROCESSING (Calculate Once) ---
+def get_public_clones_df(concat_df, pgen_df):
+    """Calculates and formats the full table of public (shared) clones."""
+    # Create the "Wide" Matrix (One Column per Patient)
     patient_map = concat_df.groupby(['CDR3b', subject_col])[alias_col].apply(
         lambda x: ', '.join(sorted(x.unique().astype(str)))
     ).unstack(fill_value='-')
     
-    # --- 3. Calculate Summary Stats (Total Patients) ---
+    # Calculate Summary Stats (Total Patients)
     stats_df = concat_df.groupby('CDR3b').agg(
         total_patients=(subject_col, 'nunique')
     ).reset_index()
 
-    # --- 4. Merge Everything Together ---
-    final_df = pd.merge(stats_df, pgen_df[['CDR3b', 'pgen']], on='CDR3b', how='inner')
-    final_df = pd.merge(final_df, patient_map, on='CDR3b', how='inner')
+    # Merge Everything Together
+    df = pd.merge(stats_df, pgen_df[['CDR3b', 'pgen']], on='CDR3b', how='inner')
+    df = pd.merge(df, patient_map, on='CDR3b', how='inner')
 
-    # --- 5. Filter and Sort ---
-    final_df = final_df[final_df['total_patients'] > 1]
-    
-    # MODIFIED: Sort by Shared Count (Desc) then Pgen (Asc - lowest first)
-    final_df = final_df.sort_values(by=['total_patients', 'pgen'], ascending=[False, True]).head(n_top_clones)
+    # Filter for public clones (>1 patient) and Sort
+    df = df[df['total_patients'] > 1].copy()
+    df = df.sort_values(by=['total_patients', 'pgen'], ascending=[False, True])
 
-    # --- 6. Formatting for Display ---
-    final_df['pgen'] = final_df['pgen'].apply(lambda x: f"{x:.2e}")
-    
-    rename_dict = {
+    # Formatting for Display/Export
+    df['pgen'] = df['pgen'].apply(lambda x: f"{x:.2e}")
+    df.rename(columns={
         'CDR3b': 'CDR3b Sequence',
-        'total_patients': '# Shared Individuals',
+        'total_patients': 'No_Shared_Individuals',  # Updated column name
         'pgen': 'Pgen'
-    }
-    final_df.rename(columns=rename_dict, inplace=True)
+    }, inplace=True)
     
-    standard_cols = ['CDR3b Sequence', '# Shared Individuals', 'Pgen']
-    patient_cols = sorted([c for c in final_df.columns if c not in standard_cols])
+    standard_cols = ['CDR3b Sequence', 'No_Shared_Individuals', 'Pgen']
+    patient_cols = sorted([c for c in df.columns if c not in standard_cols])
     
-    display_df = final_df[standard_cols + patient_cols]
+    return df[standard_cols + patient_cols]
 
-    # --- Calculate Dynamic Widths ---
+
+# --- 2. VISUALIZATION (Plotting) ---
+def create_top_shared_clones_table(public_df, n_top_clones=10):
+    """Generates the Plotly table from an already processed DataFrame."""
+    display_df = public_df.head(n_top_clones)
+    
+    # Updated to match the new column name
+    patient_cols = [c for c in display_df.columns if c not in ['CDR3b Sequence', 'No_Shared_Individuals', 'Pgen']]
+    
+    # Calculate Dynamic Widths
     col_widths = [180, 140, 100] + [180] * len(patient_cols)
     total_table_width = sum(col_widths)
 
-    # --- 7. Create Plotly Table ---
     fig = go.Figure(data=[go.Table(
         columnwidth=col_widths, 
         header=dict(
             values=list(display_df.columns),
-            fill_color='paleturquoise',
-            align='left',
+            fill_color='paleturquoise', align='left',
             font=dict(size=12, color='black', weight='bold'),
             line_color='darkslategray'
         ),
         cells=dict(
             values=[display_df[col] for col in display_df.columns],
-            fill_color='lavender',
-            align='left',
+            fill_color='lavender', align='left',
             font=dict(size=11, color='black'),
             line_color='darkslategray'
         )
     )])
 
-    # --- 8. Update Layout ---
     fig.update_layout(
         title_text=f"Top {n_top_clones} Public Clones",
-        title_x=0.5,
-        margin=dict(l=10, r=10, t=50, b=10),
+        title_x=0.5, margin=dict(l=10, r=10, t=50, b=10),
         width=max(total_table_width, 800) 
     )
-    
     return fig
 
-# ---- Usage
-top_clones_table_fig = create_top_shared_clones_table(
-    concat_df=concat_df, 
-    meta=meta, 
-    pgen_df=prob_generation_df, 
-    n_top_clones=10
-)
+# Calculate the data exactly once
+public_clones_df = get_public_clones_df(concat_df, prob_generation_df)
 
+# Render the top 10 in the notebook
+top_clones_table_fig = create_top_shared_clones_table(public_clones_df, n_top_clones=10)
 top_clones_table_fig.show()
 
 ```
 
 **Table 1. Top 10 most shared TCR clones** Public TCRs order by number of samples they are seen.
+
+```{python}
+
+# Save the full dataset to CSV
+os.makedirs(notebook_results_dir, exist_ok=True)
+out_file = f"{notebook_results_dir}/public_clones.csv"
+public_clones_df.to_csv(out_file, index=False)
+
+```
+
 
 The upset Plot below show the number of clones shared between different combinations of patients. 
 
@@ -1962,271 +2441,81 @@ def plot_public_clones_upset(concat_df, subject_col, min_shared_patients=2):
     Filters out private clones to focus exclusively on public clones.
     """
     
-    # --- 1. Extract Unique Clones per Patient ---
-    # Group by patient and aggregate unique CDR3b sequences into a list
-    # Because we don't group by timepoint/origin, it automatically flattens them per patient
-    patient_clones = concat_df.groupby(subject_col)['CDR3b'].unique().to_dict()
+    # --- DEFENSIVE FIX 1: Drop NaNs ---
+    # Missing sequences cause duplicate MultiIndex entries, breaking Matplotlib text rendering
+    df_clean = concat_df.dropna(subset=[subject_col, 'CDR3b']).copy()
     
-    # Convert numpy arrays to standard lists for the upsetplot library
+    # --- 1. Extract Unique Clones per Patient ---
+    patient_clones = df_clean.groupby(subject_col)['CDR3b'].unique().to_dict()
     patient_contents = {str(patient): list(clones) for patient, clones in patient_clones.items()}
     
     # --- 2. Convert to UpSet Multi-Index Format ---
     upset_data = from_contents(patient_contents)
     
+    if upset_data.empty:
+        print("No data available to plot.")
+        return
+    
     # --- 3. Build and Render the UpSet Plot ---
-    # min_degree=2 ensures we only look at clones shared by at least 2 patients
-    upset = UpSet(upset_data, 
-                  subset_size='count', 
-                  min_degree=min_shared_patients, 
-                  show_counts=True, 
-                  sort_by='cardinality',  # Sorts the intersection bars from highest to lowest
-                  facecolor='black')    # Red color to match your previous expansion plots
-    
-    # Create the figure
-    fig = plt.figure(figsize=(12, 6))
-    upset.plot(fig=fig)
-    
-    # UpSet creates multiple subplots, so we use suptitle for the main title
-    plt.suptitle(f"Public Clones (Shared by \u2265 {min_shared_patients} Patients)", fontsize=16, y=1.05)
-    plt.show()
+    try:
+        upset = UpSet(upset_data, 
+              subset_size='count', 
+              min_degree=min_shared_patients, 
+              show_counts=False,
+              sort_by='-degree',  
+              facecolor='black')
 
+        fig = plt.figure(figsize=(12, 6))
+        axes = upset.plot(fig=fig)
+
+        # --- Annotate Intersection Sizes (Vertical Bars) ---
+        ax = axes['intersections']
+        for bar in ax.patches:
+            h = bar.get_height()
+            if h > 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    h + 0.1,
+                    str(int(h)),
+                    ha='center', va='bottom', fontsize=9
+                )
+
+        # --- Annotate Set Sizes / Totals (Horizontal Bars) ---
+        ax_totals = axes['totals']
+        
+        # Calculate a dynamic offset (5% of the max width) to prevent text touching the bar
+        max_width = max([bar.get_width() for bar in ax_totals.patches] + [1])
+        offset = max_width * 0.05
+
+        for bar in ax_totals.patches:
+            w = bar.get_width()
+            if w > 0:
+                # Because the axis is inverted, adding to 'w' pushes the text left
+                ax_totals.text(
+                    w + offset,
+                    bar.get_y() + bar.get_height() / 2,
+                    str(int(w)),
+                    ha='right', va='center', fontsize=9
+                )
+                
+        # Expand the x-axis limits slightly to ensure the text isn't cut off
+        # Note: current_xlim[0] is the max value (left side) because of the inversion
+        current_xlim = ax_totals.get_xlim()
+        ax_totals.set_xlim(current_xlim[0] * 1.25, current_xlim[1])
+
+        plt.suptitle(f"Public Clones (Shared by \u2265 {min_shared_patients} Patients)", fontsize=16, y=1.05)
+        
+    except TypeError as e:
+        print(f"Warning: UpSetPlot encountered a rendering error ({e}).")
+        print("This typically happens if only one intersection group remains after filtering.")
+        
 # ---- Usage ----
-# Run this right below your table generation
 plot_public_clones_upset(concat_df, subject_col=subject_col, min_shared_patients=2)
 
 ```
 **Figure 8. UpSet plot of public TCR clones**. This plot illustrates the intersection of unique CDR3b sequences shared among multiple individuals. The horizontal bars on the left indicate the total number of unique clones identified in each individual patient. In the central matrix, connected black dots denote the specific combination of patients sharing a subset of clones. The vertical bars at the top represent the intersection size, indicating the exact number of public clones shared exclusively by the patients marked in the corresponding column below.
 
 
-## Similar TCR sequences across all samples  {#sec-GIANA}
-**GIANA** (Geometry Isometry based TCR AligNment Algorithm) is a powerful computational tool designed to rapidly analyze vast amounts of T-cell receptor (TCR) sequencing data. Its core function is to group or **cluster similar TCR sequences, which is essential for identifying T-cells that likely recognize the same antigen.** This allows researchers to **pinpoint key T-cell populations driving an immune response** in cancer, infectious diseases, or autoimmunity.
-
-**<u>How GIANA Works?</u>**  
-GIANA uses a novel geometric approach, instead of relying on traditional sequence alignment methods that tend to be *slower*. It converts the amino acid sequences of the hypervariable CDR3 region into *numerical *vectors. This transforms the complex problem of comparing biological sequences into a much faster mathematical problem of finding the nearest neighbors in a high-dimensional space. By doing this, it can efficiently sift through millions of TCRs to find functionally related groups.
-
-GIANA stands out from other TCR analysis tools for several key reasons:  
-
-- **Exceptional Speed:** GIANA's primary advantage is its remarkable speed. It can cluster tens of millions of TCR sequences in minutes, a task that can take hours or even days with alignment-based tools. This makes it ideal for handling the massive datasets common in modern immunology.
-
-- **High Scalability:** Its efficiency allows it to scale effortlessly from small pilot studies to large-scale clinical cohorts, enabling the analysis of thousands of samples simultaneously.
-
-- **Antigen-Specific Classification:** Because it's so fast, GIANA can be used to compare a patient's TCR repertoire against large, pre-existing databases of TCRs with known antigen specificities. This allows for the rapid identification of T-cell responses to known viruses (like CMV, EBV, or Influenza) or other targets.
-
-```{python}
-#| output: asis
-#| echo: false
-
-import pandas as pd
-import plotly.graph_objects as go
-
-def plot_giana_tables(giana_df, meta_df):
-        
-    # --- 1. Base Merge and Clean ---
-    df = giana_df.merge(meta_df[['sample', subject_col, timepoint_col]], on='sample', how='left')
-    df = df.dropna(subset=[subject_col])
-    df[subject_col] = df[subject_col].fillna('Unknown')
-    df[timepoint_col] = df[timepoint_col].fillna('Unknown')
-
-    # --- 2. Base Aggregation ---
-    cluster_stats = df.groupby('cluster').agg(
-        Total_Counts=('counts', 'sum'),
-        Unique_TCRs=('CDR3b', 'nunique')
-    ).reset_index()
-    
-    cluster_stats.rename(columns={
-        'Total_Counts': 'Total Counts', 
-        'Unique_TCRs': 'Unique TCRs', 
-        'cluster': 'Cluster'
-    }, inplace=True)
-
-    # --- Helper Function to Render Individual Tables ---
-    def _render_table(stats_df, raw_df, min_unique, title):
-        filtered_stats = stats_df[stats_df['Unique TCRs'] > min_unique]
-        
-        if filtered_stats.empty:
-            print(f"*(No clusters found with > {min_unique} unique TCRs)*\n\n")
-            return
-
-        top_10 = filtered_stats.nlargest(10, 'Total Counts')
-        top_cluster_ids = top_10['Cluster'].tolist()
-
-        df_top = raw_df[raw_df['cluster'].isin(top_cluster_ids)].copy()
-        df_top.rename(columns={'cluster': 'Cluster'}, inplace=True)
-        df_top['formatted_tcr'] = df_top[timepoint_col].astype(str) + ':' + df_top['CDR3b'].astype(str)
-
-        seq_df = df_top.groupby(['Cluster', subject_col])['formatted_tcr'].apply(
-            lambda x: '<br>'.join(sorted(set(x)))
-        ).reset_index()
-        pivot_df = seq_df.pivot(index='Cluster', columns=subject_col, values='formatted_tcr').reset_index()
-        pivot_df.fillna('', inplace=True) 
-
-        final_df = pd.merge(top_10, pivot_df, on='Cluster', how='left')
-        final_df.sort_values('Total Counts', ascending=False, inplace=True)
-        
-        # Organize columns: Standard Info first, then Patients alphabetically
-        standard_cols = ['Cluster', 'Total Counts', 'Unique TCRs']
-        patient_cols = sorted([c for c in final_df.columns if c not in standard_cols])
-        display_df = final_df[standard_cols + patient_cols]
-
-        # --- Calculate Dynamic Column Widths ---
-        col_widths = [180, 140, 100] + [180] * len(patient_cols)
-        total_table_width = sum(col_widths)
-
-        # Plotly Figure
-        fig = go.Figure(data=[go.Table(
-            columnwidth=col_widths, 
-            header=dict(
-                values=list(display_df.columns),
-                fill_color='paleturquoise',
-                align='left',
-                font=dict(size=12, color='black', weight='bold'),
-                line_color='darkslategray'
-            ),
-            cells=dict(
-                values=[display_df[col] for col in display_df.columns],
-                fill_color='lavender',
-                align='left',
-                font=dict(size=11, color='black'),
-                line_color='darkslategray'
-            )
-        )])
-
-        # Update Layout
-        fig.update_layout(
-            title_text=title,
-            title_x=0.5,
-            margin=dict(l=10, r=10, t=50, b=10),
-            width=max(total_table_width, 1000) # <--- Fixed base width to 1000, expands if needed for scrolling
-        )
-        
-        fig.show()
-
-    # --- 3. Render the Tables Sequentially ---
-    
-    # Render First Table
-    _render_table(cluster_stats, df, min_unique=0, title="Top 10 GIANA Clusters by Total Abundance")
-    
-    # Render Second Table
-    _render_table(cluster_stats, df, min_unique=1, title="Top 10 GIANA Clusters (>=2 Unique TCRs) by Total Abundance")
-
-
-# Run the function
-plot_giana_tables(giana_df, meta)
-
-# import pandas as pd
-# import plotly.graph_objects as go
-
-# def plot_giana_tabs(giana_df, meta_df):
-        
-#     # --- 1. Base Merge and Clean ---
-#     df = giana_df.merge(meta_df[['sample', subject_col, timepoint_col]], on='sample', how='left')
-#     df = df.dropna(subset=[subject_col])
-#     df[subject_col] = df[subject_col].fillna('Unknown')
-#     df[timepoint_col] = df[timepoint_col].fillna('Unknown')
-
-#     # --- 2. Base Aggregation (Calculated once for all clusters) ---
-#     cluster_stats = df.groupby('cluster').agg(
-#         Total_Counts=('counts', 'sum'),
-#         Unique_TCRs=('CDR3b', 'nunique')
-#     ).reset_index()
-    
-#     cluster_stats.rename(columns={
-#         'Total_Counts': 'Total Counts', 
-#         'Unique_TCRs': 'Unique TCRs', 
-#         'cluster': 'Cluster'
-#     }, inplace=True)
-
-#     # --- Helper Function to Render Individual Tables ---
-#     def _render_table(stats_df, raw_df, min_unique, title):
-#         # Filter stats based on the minimum unique TCRs required
-#         filtered_stats = stats_df[stats_df['Unique TCRs'] > min_unique]
-        
-#         if filtered_stats.empty:
-#             print(f"*(No clusters found with > {min_unique} unique TCRs)*\n\n")
-#             return
-
-#         # Isolate top 10
-#         top_10 = filtered_stats.nlargest(10, 'Total Counts')
-#         top_cluster_ids = top_10['Cluster'].tolist()
-
-#         # Filter raw data
-#         df_top = raw_df[raw_df['cluster'].isin(top_cluster_ids)].copy()
-#         df_top.rename(columns={'cluster': 'Cluster'}, inplace=True)
-#         df_top['formatted_tcr'] = df_top[timepoint_col].astype(str) + ':' + df_top['CDR3b'].astype(str)
-
-#         # Pivot
-#         seq_df = df_top.groupby(['Cluster', subject_col])['formatted_tcr'].apply(
-#             lambda x: '<br>'.join(sorted(set(x)))
-#         ).reset_index()
-#         pivot_df = seq_df.pivot(index='Cluster', columns=subject_col, values='formatted_tcr').reset_index()
-#         pivot_df.fillna('', inplace=True) 
-
-#         # Merge and Format
-#         final_df = pd.merge(top_10, pivot_df, on='Cluster', how='left')
-#         final_df.sort_values('Total Counts', ascending=False, inplace=True)
-#         columns = final_df.columns.tolist()
-
-#         # --- NEW: Calculate Dynamic Column Widths ---
-#         standard_cols = ['Cluster', 'Total Counts', 'Unique TCRs']
-#         col_widths = []
-#         for col in columns:
-#             if col in standard_cols:
-#                 col_widths.append(120) # 120 pixels for standard stats
-#             else:
-#                 col_widths.append(250) # 250 pixels for subject columns (needs more room for sequences)
-        
-#         total_table_width = sum(col_widths)
-
-#         # Plotly Figure
-#         fig = go.Figure(data=[go.Table(
-#             columnwidth=col_widths, # Apply dynamic widths here
-#             header=dict(
-#                 values=[f"<b>{col}</b>" for col in columns],
-#                 fill_color='paleturquoise',
-#                 align='left',
-#                 font=dict(size=14, color='black'),
-#                 line_color='black'
-#             ),
-#             cells=dict(
-#                 values=[final_df[col] for col in columns],
-#                 fill_color='lavender',
-#                 align='left',
-#                 font=dict(size=12, color='black'),
-#                 line_color='black'
-#                 # REMOVED: height=30 (so rows expand vertically for <br> tags)
-#             )
-#         )])
-
-#         fig.update_layout(
-#             title_text=title,
-#             title_x=0.5,
-#             margin=dict(l=20, r=20, t=50, b=20),
-#             # Force figure width to trigger horizontal scroll if wider than 1000px
-#             width=max(total_table_width, 1000)
-#             # REMOVED: height=500 (allow the table to size itself naturally to fit the tall rows)
-#         )
-#         fig.show()
-#         print("\n\n")
-
-#     # --- 3. Generate Quarto Tabs ---
-#     print("::: {.panel-tabset}\n")
-
-#     print("## Top 10 Clusters\n")
-#     _render_table(cluster_stats, df, min_unique=0, title="Top 10 GIANA Clusters by Total Abundance")
-
-#     print("## Top 10 Clusters (>=2 Unique TCRs)\n")
-#     _render_table(cluster_stats, df, min_unique=1, title="Top 10 GIANA Clusters (>=2 Unique TCRs) by Total Abundance")
-
-#     print(":::\n")
-
-# plot_giana_tabs(giana_df, meta)
-
-```
-**Table 2. Top TCR Clusters Identified by GIANA** Summary tables detailing the top 10 most abundant TCR clusters across the cohort, grouped by sequence similarity using GIANA. **Top 10 (All Clusters):** Displays the absolute top 10 clusters by total counts. This view could be dominated by massive, singular clonal expansions. **Top 10 (>2 Unique TCRs)**: Filters the data to strictly show the top 10 most abundant clusters containing at least three unique CDR3β sequences. 
-
-
-If you only analyze exact CDR3 sequence matches, you are actively ignoring a fundamental truth of immunology: different T-cell clones can recognize the exact same antigen if their receptors are structurally similar. To capture the full scope of a targeted response, we have to group these functional "metaclones" together.
-
-{{< include ./template_pheno_bulk.qmd >}} 
-
 {{< include ./template_pheno_sc.qmd >}}
+
+<!-- {{< include ./template_pheno_bulk.qmd >}} -->

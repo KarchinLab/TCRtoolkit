@@ -9,79 +9,80 @@
 project_dir=f"{project_dir}"
 
 sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
-concat_csv = f"{project_dir}/annotate/concatenated_cdr3.tsv"  # f"{project_dir}/compare/concatenated_cdr3.txt" 
-
-cluster_details_csv = f"{project_dir}/gliph2/cluster_member_details.txt"
-clone_network_csv = f"{project_dir}/gliph2/clone_network.txt"
-all_motifs_csv = f"{project_dir}/gliph2/all_motifs.txt"
-cluster_member_details_csv = f"{project_dir}/gliph2/cluster_member_details.txt"
-global_similarities_csv = f"{project_dir}/gliph2/global_similarities.txt"
-local_similarities_csv = f"{project_dir}/gliph2/local_similarities.txt"
-convergence_groups_csv = f"{project_dir}/gliph2/convergence_groups.txt"
+concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv" 
 
 # Define dirs
 tcrpheno_dir = f"{project_dir}/tcrpheno/"
 pseudobulk_dir = f"{project_dir}/pseudobulk/"
+gliph2_dir = f"{project_dir}/gliph2/"
+
 
 ```
 
 ```{python}
 # Load Packages
-from IPython.display import Image
+#| include: false
+# Load Packages
+from IPython.display import Image, HTML, display
 import os
 import datetime
-import sys
 import pandas as pd
-import math
 import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.colors import LinearSegmentedColormap
 import plotly.express as px
 import plotly.graph_objects as go
-import numpy as np
-import matplotlib.ticker as ticker
-from scipy.stats import gaussian_kde
-import h5py
-import glob
-from scipy.sparse import csr_matrix
-import scipy.cluster.hierarchy as sch
-# import networkx as nx
-import itertools
 import igraph as ig
 import logomaker
 import io
 import base64
 import json
-from IPython.display import HTML, display
 import warnings
-import matplotlib.pyplot as plt
-from upsetplot import from_contents, plot as upset_plot
-
-
-# Print pipeline parameters
-
-print('Project Name:          ' + project_name)
-print('Workflow command:      ' + workflow_cmd)
-print('Pipeline Directory:    ' + project_dir)
-print('Date and time:         ' + str(datetime.datetime.now()))
 
 # - Loading data
-
-# Load metadata
-## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
-
-## Reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_csv, sep='\t')
+concat_df = concat_df.merge(meta[['sample', 'origin', timepoint_col, timepoint_order_col, alias_col]], on='sample', how='left')
 
-# Reading compare outputs
-cluster_details = pd.read_csv(cluster_details_csv, sep='\t')
-clone_network = pd.read_csv(clone_network_csv, sep='\t', header=None)
-all_motifs = pd.read_csv(all_motifs_csv, sep='\t')
-cluster_member_details = pd.read_csv(cluster_member_details_csv, sep='\t')
-global_similarities = pd.read_csv(global_similarities_csv, sep='\t')
-local_similarities = pd.read_csv(local_similarities_csv, sep='\t')
-convergence_groups = pd.read_csv(convergence_groups_csv, sep='\t')
+# --- DYNAMICALLY LOAD PER-PATIENT GLIPH DATA ---
+cluster_details_list = []
+clone_network_list = []
+all_motifs_list = []
+global_similarities_list = []
+
+for patient in meta[subject_col].unique():
+    p_dir = f"{gliph2_dir}/{patient}"
+    
+    cd_csv = f"{p_dir}/cluster_member_details.txt"
+    cn_csv = f"{p_dir}/clone_network.txt"
+    am_csv = f"{p_dir}/all_motifs.txt"
+    gs_csv = f"{p_dir}/global_similarities.txt"
+
+    if os.path.exists(cd_csv):
+        df = pd.read_csv(cd_csv, sep='\t')
+        df[subject_col] = patient
+        cluster_details_list.append(df)
+
+    if os.path.exists(cn_csv):
+        # clone_network has no header
+        df = pd.read_csv(cn_csv, sep='\t', header=None) 
+        clone_network_list.append(df)
+
+    if os.path.exists(am_csv):
+        df = pd.read_csv(am_csv, sep='\t')
+        df[subject_col] = patient
+        all_motifs_list.append(df)
+
+    if os.path.exists(gs_csv):
+        df = pd.read_csv(gs_csv, sep='\t')
+        df[subject_col] = patient
+        # CRITICAL: Prefix cluster tags to prevent cross-patient collisions
+        df['cluster_tag'] = str(patient) + "_" + df['cluster_tag'].astype(str)
+        global_similarities_list.append(df)
+
+# Concatenate all patient data into master DataFrames
+cluster_details = pd.concat(cluster_details_list, ignore_index=True) if cluster_details_list else pd.DataFrame()
+clone_network = pd.concat(clone_network_list, ignore_index=True) if clone_network_list else pd.DataFrame()
+all_motifs = pd.concat(all_motifs_list, ignore_index=True) if all_motifs_list else pd.DataFrame()
+global_similarities = pd.concat(global_similarities_list, ignore_index=True) if global_similarities_list else pd.DataFrame()
 
 ```
 
@@ -103,59 +104,48 @@ import pandas as pd
 import igraph as ig
 
 # --- 1. Prepare Data & Hover Info ---
-# Merge metadata
-# Ensure 'cluster_details' has 'CDR3b' column matching 'source'/'target'
-merged_meta = pd.merge(cluster_details, meta[['sample', subject_col, alias_col]], on='sample', how='left').dropna(subset=[subject_col])
+merged_meta = pd.merge(cluster_details, meta[['sample', alias_col]], on='sample', how='left').dropna(subset=[subject_col])
 
 # A. Categorize Nodes (Public vs Private)
-# Count unique subjects per CDR3
 cdr3_subject_counts = merged_meta.groupby('CDR3b')[subject_col].nunique()
 public_cdr3s = set(cdr3_subject_counts[cdr3_subject_counts > 1].index)
 
 # B. Create Detailed Hover Text
-# Group by CDR3b -> Subject -> List of Aliases
 def create_hover_string(group):
     patient_summaries = []
-    # Sort subjects for consistent order
     for subj, subgroup in group.groupby(subject_col):
         aliases = ", ".join(sorted(subgroup[alias_col].unique().astype(str)))
         patient_summaries.append(f"{subj} ({aliases})")
     return "<br>".join(patient_summaries)
 
-# Apply to all CDR3s
 hover_map = merged_meta.groupby('CDR3b').apply(create_hover_string, include_groups=False).to_dict()
 
 # C. Create Category Map
-# Map private clones to their subject_id
 private_df = merged_meta[~merged_meta['CDR3b'].isin(public_cdr3s)]
-# Take the first subject found (since there is only one)
 category_map = dict(zip(private_df['CDR3b'], private_df[subject_col]))
 
 def get_node_category(cdr3):
-    if cdr3 in public_cdr3s:
-        return "Shared"
+    if cdr3 in public_cdr3s: return "Shared"
     return category_map.get(cdr3, "Unknown")
 
 # --- 2. Build Graph ---
+# Isolate just the 4 core GLIPH columns in case extra were appended during concatenation
+clone_network = clone_network.iloc[:, :4]
 clone_network.columns = ["source", "target", "type", "group"]
 clone_network = clone_network[clone_network['type'] != 'singleton']
 
 edges = clone_network[["source", "target"]].values.tolist()
 g = ig.Graph.TupleList(edges, directed=False)
 
-# Assign attributes
 g.vs['category'] = [get_node_category(v['name']) for v in g.vs]
-# Pre-fetch hover text for efficiency
 g.vs['hover_detail'] = [hover_map.get(v['name'], "No Data") for v in g.vs]
 
-# Layout
 layout = g.layout("fr")
 coords = list(map(tuple, layout))
 
 # --- 3. Plotting ---
 fig = go.Figure()
 
-# -- Edge Trace --
 edge_x, edge_y = [], []
 for edge in g.es:
     src, tgt = edge.tuple
@@ -165,20 +155,14 @@ for edge in g.es:
     edge_y.extend([y0, y1, None])
 
 fig.add_trace(go.Scatter(
-    x=edge_x, y=edge_y,
-    line=dict(width=0.5, color='#cccccc'),
-    hoverinfo='none',
-    mode='lines',
-    showlegend=False
+    x=edge_x, y=edge_y, line=dict(width=0.5, color='#cccccc'),
+    hoverinfo='none', mode='lines', showlegend=False
 ))
 
-# -- Node Traces --
 categories = sorted(list(set(g.vs['category'])))
-
-# Define Colors
 base_colors = px.colors.qualitative.Bold
 color_map = {cat: base_colors[i % len(base_colors)] for i, cat in enumerate(categories)}
-color_map["Shared"] = "black" # Shared = Black
+color_map["Shared"] = "black" 
 
 for cat in categories:
     indices = [i for i, v in enumerate(g.vs) if v['category'] == cat]
@@ -186,47 +170,23 @@ for cat in categories:
 
     node_x = [coords[i][0] for i in indices]
     node_y = [coords[i][1] for i in indices]
+    hover_texts = [f"<b>CDR3:</b> {g.vs[i]['name']}<br><b>Found in:</b><br>{g.vs[i]['hover_detail']}" for i in indices]
 
-    # Retrieve hover text
-    hover_texts = [
-        f"<b>CDR3:</b> {g.vs[i]['name']}<br><b>Found in:</b><br>{g.vs[i]['hover_detail']}"
-        for i in indices
-    ]
-
-    # --- SIZE ADJUSTMENT HERE ---
-    # Shared = 18 (Big), Private = 12 (Medium)
     node_size = 18 if cat == "Shared" else 12
-
-    # Add border to shared nodes for clarity
     line_width = 2 if cat == "Shared" else 1
-    line_color = 'white'
 
     fig.add_trace(go.Scatter(
-        x=node_x, y=node_y,
-        mode='markers',
-        name=str(cat),
-        text=hover_texts,
-        hoverinfo='text',
-        marker=dict(
-            color=color_map[cat],
-            size=node_size,
-            line=dict(width=line_width, color=line_color)
-        )
+        x=node_x, y=node_y, mode='markers', name=str(cat), text=hover_texts, hoverinfo='text',
+        marker=dict(color=color_map[cat], size=node_size, line=dict(width=line_width, color='white'))
     ))
 
-# --- 4. Final Layout ---
 fig.update_layout(
-    title='TCRB Network',
-    plot_bgcolor='white',
-    width=1000, height=800, # Increased width slightly
+    title='TCRB Network', plot_bgcolor='white', width=1000, height=800, 
     xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
     yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-    margin=dict(t=40, b=20, l=10, r=10),
-    legend_title_text='Category'
+    margin=dict(t=40, b=20, l=10, r=10), legend_title_text='Category'
 )
-
 fig.show()
-
 
 ```
 
@@ -253,29 +213,52 @@ Nodes specifically designated as "Shared" (colored black) represent exact amino 
 
 
 ```{python}
+#| output: asis
 #| label: fig-gliph-motifs
-#| fig-cap: "**TCRB CDR3 motif lengths.** Histogram showing the distribution of amino acid motif lengths identified by GLIPH2 across all TCRs in the dataset."
+#| fig-cap: "**TCRB CDR3 motif lengths per patient.** Bar charts showing the distribution of amino acid motif lengths identified by GLIPH2 for each individual patient."
 
-# Calculate motif lengths
-all_motifs["motif_length"] = all_motifs["motif"].str.len()
+import matplotlib.pyplot as plt
 
-# Count how many motifs of each length
-length_counts = all_motifs["motif_length"].value_counts().reset_index()
-length_counts.columns = ["motif_length", "count"]
-length_counts = length_counts.sort_values("motif_length")
+def create_patient_histogram_tabs(all_motifs, subject_col):
+    # Calculate motif lengths
+    all_motifs["motif_length"] = all_motifs["motif"].str.len()
+    
+    patients = sorted(all_motifs[subject_col].dropna().unique())
+    
+    # Start Quarto tabset
+    print("::: {.panel-tabset}\n")
+    
+    for patient in patients:
+        print(f"## {patient}\n")
+        
+        patient_df = all_motifs[all_motifs[subject_col] == patient]
+        
+        # Count how many motifs of each length
+        length_counts = patient_df["motif_length"].value_counts().reset_index()
+        length_counts.columns = ["motif_length", "count"]
+        length_counts = length_counts.sort_values("motif_length")
+        
+        # Plot bar chart
+        fig = plt.figure(figsize=(8, 5))
+        plt.bar(length_counts["motif_length"], length_counts["count"],
+                color="darkgreen", edgecolor="black")
+        
+        plt.title(f"Motif Length Distribution - {patient}")
+        plt.xlabel("Motif Length")
+        plt.ylabel("Number of Motifs")
+        plt.xticks(length_counts["motif_length"])
+        plt.grid(axis='y', linestyle='--', alpha=0.5)
+        plt.tight_layout()
+        plt.show()
+        
+        # Close figure to prevent overlapping memory
+        plt.close(fig)
+        print("\n\n")
+        
+    print(":::\n")
 
-# Plot bar chart
-plt.figure(figsize=(8, 5))
-plt.bar(length_counts["motif_length"], length_counts["count"],
-        color="darkgreen", edgecolor="black")
-
-plt.title("Motif Length Distribution")
-plt.xlabel("Motif Length")
-plt.ylabel("Number of Motifs")
-plt.xticks(length_counts["motif_length"])
-plt.grid(axis='y', linestyle='--', alpha=0.5)
-plt.tight_layout()
-plt.show()
+# Run
+create_patient_histogram_tabs(all_motifs, subject_col)
 
 ```
 
@@ -291,71 +274,71 @@ From a biological standpoint, **the interaction between a TCR and its target pep
 ```{python}
 #| output: asis
 #| label: fig-motif-interactive-plotly
-#| fig-cap: "**Top 10 TCR specificity motifs ranked by member count.** Bar chart displaying the most prevalent amino acid motifs identified by the GLIPH2 algorithm, ranked by the number of unique T-cell receptors (TCRs) that share each motif."
+#| fig-cap: "**Top 10 TCR specificity motifs ranked by member count.** Bar chart displaying the most prevalent amino acid motifs identified by the GLIPH2 algorithm, grouped by patient and motif length."
 
 import plotly.graph_objects as go
 
-def create_motif_tabs(all_motifs):
+def create_nested_motif_tabs(all_motifs, subject_col):
     """
-    Creates Quarto tabs containing a Plotly bar plot of top TCR motifs
-    for each motif length.
+    Creates nested Quarto tabs: 
+    Outer tabs = Patients
+    Inner tabs = Motif Lengths
     """
-    # --- 1. Prepare the data ---
+    # --- 1. Prepare Data ---
     all_motifs['motif_length'] = all_motifs['motif'].str.len()
-    all_motifs.dropna(subset=['motif', 'motif_length'], inplace=True)
+    all_motifs.dropna(subset=['motif', 'motif_length', subject_col], inplace=True)
     all_motifs['motif_length'] = all_motifs['motif_length'].astype(int)
 
-    unique_lengths = sorted(all_motifs['motif_length'].unique())
+    patients = sorted(all_motifs[subject_col].unique())
 
-    if not unique_lengths:
-        print("No valid motif lengths found to plot.")
+    if not patients:
+        print("No valid patient data found to plot.")
         return
 
-    # --- 2. Start Quarto Tabset ---
+    # --- 2. Start Main Quarto Tabset (Patients) ---
     print("::: {.panel-tabset}\n")
 
-    # --- 3. Process each motif length and create a separate plot ---
-    for length in unique_lengths:
-        # Print the tab header
-        print(f"## Length {length}\n")
-
-        # Filter data and grab top 10
-        df_by_length = all_motifs[all_motifs['motif_length'] == length]
-        top10 = df_by_length.sort_values("num_in_sample", ascending=False).head(10)
-
-        # Build a standalone figure just for this length
-        fig = go.Figure(
-            data=[
-                go.Bar(
-                    x=top10["motif"],
-                    y=top10["num_in_sample"],
-                    marker_color='tomato',
-                    marker_line_color='black',
-                    marker_line_width=1.5
-                )
-            ]
-        )
-
-        # Keep the layout clean and tight for the tab environment
-        fig.update_layout(
-            title_text=f"Top 10 Motifs of Length {length} by TCR Members",
-            xaxis_title="Motif",
-            yaxis_title="Number of TCRs",
-            font=dict(size=12),
-            plot_bgcolor='white',
-            margin=dict(t=40, b=20, l=10, r=10) 
-        )
-
-        fig.show()
+    for patient in patients:
+        print(f"## {patient}\n")
         
-        # Add necessary spacing so Quarto doesn't blend the HTML and Markdown
-        print("\n\n")
+        patient_df = all_motifs[all_motifs[subject_col] == patient]
+        unique_lengths = sorted(patient_df['motif_length'].unique())
 
-    # --- 4. Close Quarto Tabset ---
+        if not unique_lengths:
+            print(f"*(No valid motif lengths found for {patient})*\n\n")
+            continue
+
+        # --- 3. Start Nested Quarto Tabset (Motif Lengths) ---
+        print("::: {.panel-tabset}\n")
+
+        for length in unique_lengths:
+            print(f"### Length {length}\n")
+
+            df_by_length = patient_df[patient_df['motif_length'] == length]
+            top10 = df_by_length.sort_values("num_in_sample", ascending=False).head(10)
+
+            fig = go.Figure(data=[go.Bar(
+                x=top10["motif"], y=top10["num_in_sample"],
+                marker_color='tomato', marker_line_color='black', marker_line_width=1.5
+            )])
+
+            fig.update_layout(
+                title_text=f"Top 10 Motifs (Length {length}) - {patient}",
+                xaxis_title="Motif", yaxis_title="Number of TCRs",
+                font=dict(size=12), plot_bgcolor='white', margin=dict(t=40, b=20, l=10, r=10) 
+            )
+
+            fig.show()
+            print("\n\n")
+
+        # --- 4. Close Nested Tabset ---
+        print(":::\n\n")
+
+    # --- 5. Close Main Tabset ---
     print(":::\n")
 
-# --- Run ---
-create_motif_tabs(all_motifs)
+# Run
+create_nested_motif_tabs(all_motifs, subject_col)
 
 ```
 
@@ -367,119 +350,129 @@ Identifying the motifs shared by the largest number of unique TCRs helps **pinpo
 GLIPH2 identifies TCRB CDR3 clusters based on either local motifs (short, position-restricted patterns within 3 amino acids) or **global similarity (requiring identical CDR3 length and differences at the same positions).** Visualizing global motifs as sequence logos reveals the conserved amino acid preferences at each position, and can provide insights into the sequence features that potentially drive shared antigen recognition.
 
 ```{python}
+#| output: asis
 #| echo: false
 #| label: fig-motif-logo
-#| fig-cap: "**Logo visualization of the top 10 global motifs based on TCR members.**"
+#| fig-cap: "**Logo visualization of the top 10 global motifs per patient.**"
 
-# 1. Sort and select top 10 motifs
-top10 = global_similarities.sort_values("cluster_size", ascending=False).head(10).copy()
+import io
+import base64
+import json
+import warnings
+import matplotlib.pyplot as plt
+import logomaker
+from IPython.display import display, HTML
 
-# 2. Generate plots and store them as in-memory images
-plot_data = []
+def create_patient_logo_tabs(global_similarities, subject_col):
+    patients = sorted(global_similarities[subject_col].dropna().unique())
+    
+    print("::: {.panel-tabset}\n")
+    
+    for patient in patients:
+        print(f"## {patient}\n")
+        
+        # 1. Filter for the current patient and select top 10 motifs
+        patient_df = global_similarities[global_similarities[subject_col] == patient]
+        top10 = patient_df.sort_values("cluster_size", ascending=False).head(10).copy()
+        
+        plot_data = []
+        
+        # 2. Generate plots and store them as in-memory images
+        # --- WARNING SUPPRESSION START ---
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            for i, row in top10.iterrows():
+                motif_name = f"Motif {row['cluster_tag']} (Size: {row['cluster_size']})"
+                seqs = [s.strip() for s in str(row["CDR3b"]).split(" ") if s.strip()]
 
-# --- WARNING SUPPRESSION START ---
-# We catch warnings here because logomaker uses deprecated pandas setting methods
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", FutureWarning)
+                if len(seqs) >= 2:
+                    try:
+                        counts_mat = logomaker.alignment_to_matrix(seqs, to_type="probability")
+                        fig, ax = plt.subplots(figsize=(10, 3))
+                        logomaker.Logo(counts_mat, ax=ax)
+                        ax.set_title(motif_name)
+                        fig.tight_layout()
 
-    for i, row in top10.iterrows():
-        motif_name = f"Motif {row['cluster_tag']} (Size: {row['cluster_size']})"
-        seqs = [s.strip() for s in str(row["CDR3b"]).split(" ") if s.strip()]
+                        buf = io.BytesIO()
+                        fig.savefig(buf, format='png', bbox_inches='tight')
+                        buf.seek(0)
+                        img_str = base64.b64encode(buf.read()).decode('utf-8')
+                        
+                        plot_data.append({
+                            "title": motif_name,
+                            "image_src": f"data:image/png;base64,{img_str}"
+                        })
+                        plt.close(fig)
+                    except Exception as e:
+                        pass
+        
+        if not plot_data:
+            print(f"*(No valid motifs with 2 or more sequences found for {patient})*\n\n")
+            continue
+            
+        # 3. Create UNIQUE IDs for this patient's HTML elements so JS doesn't overlap
+        safe_id = str(patient).replace(" ", "_").replace(".", "_").replace("-", "_")
+        plots_json = json.dumps(plot_data)
+        
+        # 4. Create the HTML and JavaScript component for the interactive viewer
+        html_template = f"""
+        <div style="border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; margin: auto; text-align: center; font-family: sans-serif;">
+            <h3 id="plot-title-{safe_id}" style="margin-top: 0;"></h3>
+            <img id="plot-image-{safe_id}" src="" style="width: 100%; height: auto; border-radius: 4px;">
+            <div style="margin-top: 16px; display: flex; justify-content: space-between; align-items: center;">
+                <button id="prev-btn-{safe_id}" style="padding: 8px 16px; border-radius: 5px; border: 1px solid #ccc; background-color: #f0f0f0; cursor: pointer;">&larr; Previous</button>
+                <span id="page-counter-{safe_id}"></span>
+                <button id="next-btn-{safe_id}" style="padding: 8px 16px; border-radius: 5px; border: 1px solid #ccc; background-color: #f0f0f0; cursor: pointer;">Next &rarr;</button>
+            </div>
+        </div>
 
-        if len(seqs) >= 2:
-            try:
-                # Create a counts matrix
-                counts_mat = logomaker.alignment_to_matrix(seqs, to_type="probability")
+        <script>
+        (function() {{
+            const plots = {plots_json};
+            let currentIndex = 0;
 
-                # Create plot but don't show it
-                fig, ax = plt.subplots(figsize=(10, 3))
-                logo = logomaker.Logo(counts_mat, ax=ax)
-                ax.set_title(motif_name)
-                fig.tight_layout()
+            const titleElement = document.getElementById('plot-title-{safe_id}');
+            const imageElement = document.getElementById('plot-image-{safe_id}');
+            const prevButton = document.getElementById('prev-btn-{safe_id}');
+            const nextButton = document.getElementById('next-btn-{safe_id}');
+            const pageCounter = document.getElementById('page-counter-{safe_id}');
 
-                # Save plot to an in-memory buffer
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', bbox_inches='tight')
-                buf.seek(0)
+            function showPlot(index) {{
+                if (plots.length === 0) return;
+                const plot = plots[index];
+                titleElement.textContent = plot.title;
+                imageElement.src = plot.image_src;
+                pageCounter.textContent = `Plot ${{index + 1}} of ${{plots.length}}`;
 
-                # Encode image to Base64 and decode to a string
-                img_str = base64.b64encode(buf.read()).decode('utf-8')
+                prevButton.disabled = (index === 0);
+                nextButton.disabled = (index === plots.length - 1);
+            }}
 
-                # Add data to our list
-                plot_data.append({
-                    "title": motif_name,
-                    "image_src": f"data:image/png;base64,{img_str}"
-                })
+            prevButton.addEventListener('click', () => {{
+                if (currentIndex > 0) {{
+                    currentIndex--;
+                    showPlot(currentIndex);
+                }}
+            }});
 
-                # Close the figure to free up memory
-                plt.close(fig)
+            nextButton.addEventListener('click', () => {{
+                if (currentIndex < plots.length - 1) {{
+                    currentIndex++;
+                    showPlot(currentIndex);
+                }}
+            }});
 
-            except Exception as e:
-                print(f"Could not process motif {row['cluster_tag']}: {e}")
-# --- WARNING SUPPRESSION END ---
-
-# 3. Create the HTML and JavaScript component for the interactive viewer
-# Convert the Python list of plot data into a JSON string for JavaScript
-plots_json = json.dumps(plot_data)
-
-html_template = f"""
-<div style="border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; margin: auto; text-align: center; font-family: sans-serif;">
-    <h3 id="plot-title" style="margin-top: 0;"></h3>
-    <img id="plot-image" src="" style="width: 100%; height: auto; border-radius: 4px;">
-    <div style="margin-top: 16px; display: flex; justify-content: space-between; align-items: center;">
-        <button id="prev-btn" style="padding: 8px 16px; border-radius: 5px; border: 1px solid #ccc; background-color: #f0f0f0; cursor: pointer;">&larr; Previous</button>
-        <span id="page-counter"></span>
-        <button id="next-btn" style="padding: 8px 16px; border-radius: 5px; border: 1px solid #ccc; background-color: #f0f0f0; cursor: pointer;">Next &rarr;</button>
-    </div>
-</div>
-
-<script>
-(function() {{
-    const plots = {plots_json};
-    let currentIndex = 0;
-
-    const titleElement = document.getElementById('plot-title');
-    const imageElement = document.getElementById('plot-image');
-    const prevButton = document.getElementById('prev-btn');
-    const nextButton = document.getElementById('next-btn');
-    const pageCounter = document.getElementById('page-counter');
-
-    function showPlot(index) {{
-        if (plots.length === 0) return;
-        const plot = plots[index];
-        titleElement.textContent = plot.title;
-        imageElement.src = plot.image_src;
-        pageCounter.textContent = `Plot ${{index + 1}} of ${{plots.length}}`;
-
-        // Disable/Enable buttons at the start/end
-        prevButton.disabled = (index === 0);
-        nextButton.disabled = (index === plots.length - 1);
-    }}
-
-    prevButton.addEventListener('click', () => {{
-        if (currentIndex > 0) {{
-            currentIndex--;
             showPlot(currentIndex);
-        }}
-    }});
+        }})();
+        </script>
+        """
+        
+        display(HTML(html_template))
+        print("\n\n")
 
-    nextButton.addEventListener('click', () => {{
-        if (currentIndex < plots.length - 1) {{
-            currentIndex++;
-            showPlot(currentIndex);
-        }}
-    }});
+    print(":::\n")
 
-    // Initial load
-    showPlot(currentIndex);
-}})();
-</script>
-"""
-
-# 4. Display the HTML component in the notebook
-if plot_data:
-    display(HTML(html_template))
-else:
-    print("No valid motifs with 2 or more sequences were found to plot.")
+# --- Run ---
+create_patient_logo_tabs(global_similarities, subject_col)
 
 ```

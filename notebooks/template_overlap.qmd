@@ -10,8 +10,7 @@
 project_dir=f"{project_dir}"
 
 sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
-concat_csv = f"{project_dir}/annotate/concatenated_cdr3.tsv"  # f"{project_dir}/compare/concatenated_cdr3.txt" 
-morisita_mat= f"{project_dir}/compare/morisita_mat.csv" 
+concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 
 ```
 
@@ -62,21 +61,6 @@ import upsetplot
 import warnings
 from pathlib import Path
 import re
-
-
-# Print Pipeline Information
-# print('Pipeline information and parameters:' + '\n')
-# print('Project Name:          ' + project_name)
-# print('Workflow command:      ' + workflow_cmd)
-# print('Pipeline Directory:    ' + project_dir)
-# print('Date and time:         ' + str(datetime.datetime.now()))
-
-# morisita similarity data
-morisita_df = pd.read_csv(morisita_mat, sep=',', header=0, index_col=0)
-morisita_df.index = morisita_df.index.str.replace('_airr', '', regex=False) # Eliminate suffic from index
-morisita_df.index = morisita_df.index.str.replace('_pseudobulk', '', regex=False)
-morisita_df.columns = morisita_df.columns.str.replace('_airr', '', regex=False) # Eliminate suffic from colnames
-morisita_df.columns = morisita_df.columns.str.replace('_pseudobulk', '', regex=False)
 
 ## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')

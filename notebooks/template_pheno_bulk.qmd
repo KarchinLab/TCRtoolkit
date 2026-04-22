@@ -10,7 +10,7 @@
 project_dir=f"{project_dir}"
 
 sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
-concat_csv = f"{project_dir}/annotate/concatenated_cdr3.tsv" 
+concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv" 
 
 v_family_csv= project_dir + '/sample/v_family.csv'
 j_family_csv= project_dir + '/sample/j_family.csv'

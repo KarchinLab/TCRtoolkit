@@ -3,31 +3,19 @@
 ```{python}
 #| include: false
 
-# ---------------------------------------------------------
-# DERIVED PATHS 
-# ---------------------------------------------------------
-
-# Define files 
 project_dir=f"{project_dir}"
 
-sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
-concat_csv = f"{project_dir}/annotate/concatenated_cdr3.tsv"
+# Define files 
+concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 
-v_family_csv= f"{project_dir}/sample/v_family.csv"
-j_family_csv= f"{project_dir}/sample/j_family.csv"
-morisita_mat_pheno= f"{project_dir}/compare_phenotype/morisita_mat.csv"
 concat_csv_pheno=f"{project_dir}/compare_phenotype/concatenated_cdr3.tsv"
 sample_table_pheno=f"{project_dir}/pipeline_info/samplesheet_phenotype.csv"
 
 #  Define dirs
-tcrdist_dir = f"{project_dir}/tcrdist3/"
-olga_dir = f"{project_dir}/olga/"
 tcrpheno_dir = f"{project_dir}/tcrpheno/"
 pseudobulk_dir = f"{project_dir}/pseudobulk/"
-VDJdb_dir = f"{project_dir}vdjdb/"
-convergence_dir = f"{project_dir}convergence/"
-```
 
+```
 
 
 ```{python}
@@ -70,34 +58,11 @@ warnings.filterwarnings(
     module="plotly"
 )
 
-# 2. Print pipeline parameters
-
-# print('Project Name:          ' + project_name)
-# print('Workflow command:      ' + workflow_cmd)
-# print('Date and time:         ' + str(datetime.datetime.now()))
-
-# 3. Loading data
+# Loading data
 ## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
 meta.drop(columns=['file'], inplace=True)
 meta_cols = meta.columns.tolist()
-
-## Reading combined repertoire statistics
-df = pd.read_csv(sample_stats_csv, sep=',')
-df = pd.merge(df, meta, on='sample', how='left')
-df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
-
-## Reading V gene family usage
-v_family = pd.read_csv(v_family_csv, sep=',')
-v_family = pd.merge(v_family, meta, on='sample', how='left')
-v_family = v_family[meta_cols + [c for c in v_family.columns if c not in meta_cols]]
-v_family = v_family.sort_values(by=[subject_col])
-
-## Reading J gene family usage
-j_family = pd.read_csv(j_family_csv, sep=',')
-j_family = pd.merge(j_family, meta, on='sample', how='left')
-j_family = j_family[meta_cols + [c for c in j_family.columns if c not in meta_cols]]
-j_family = j_family.sort_values(by=[subject_col])
 
 ## Reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_csv, sep='\t')
@@ -110,12 +75,6 @@ metadata_pheno_df = pd.read_csv(sample_table_pheno, sep=',', header=0, index_col
 metadata_pheno_df.index = metadata_pheno_df.index.map(lambda p: Path(p).name)
 metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_pseudobulk', '', regex=False)
 metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_phenotype.tsv', '', regex=False)
-# Morisita
-morisita_pheno_df = pd.read_csv(morisita_mat_pheno, sep=',', header=0, index_col=0)
-morisita_pheno_df.index = morisita_pheno_df.index.str.replace('_airr', '', regex=False)
-morisita_pheno_df.index = morisita_pheno_df.index.str.replace('_pseudobulk', '', regex=False)
-morisita_pheno_df.columns = morisita_pheno_df.columns.str.replace('_airr', '', regex=False)
-morisita_pheno_df.columns = morisita_pheno_df.columns.str.replace('_pseudobulk', '', regex=False)
 
 # Importing sample metadata (pheno-ps)
 clonotypes_pheno_df = pd.read_csv(concat_csv_pheno, sep='\t', header=0, index_col=0).reset_index()
@@ -304,7 +263,7 @@ import plotly.graph_objects as go
 import os
 import glob
 
-def create_phenotype_stacked_bar(meta_df, count_col='counts'): # <-- Added count_col parameter
+def create_phenotype_stacked_bar(meta_df, count_col='counts'): 
 
     # --- 1. Load Data ---
     file_pattern = os.path.join(pseudobulk_dir, "*_pseudobulk_phenotype.tsv")
@@ -456,121 +415,6 @@ This analysis uses an UpSet plot to visualize the intersection of TCR clones acr
 - **Phenotypic Plasticity (Shared Sets):** Bars corresponding to connected dots (e.g., CD8_cytotoxic -- Memory) represent clones that are present in multiple phenotypic states simultaneously. This implies that the clonal lineage has diversified. These are biologically significant as they may represent clones in transition (e.g., differentiating from effector to memory) or highly adaptable clones responding to the tumor environment.
 
 ```{python}
-#| output: asis
-#| echo: false
-
-import upsetplot
-import io
-import base64
-
-# --- Helper: Convert Matplotlib to Plotly Image ---
-def fig_to_plotly(mpl_fig):
-    """Converts a Matplotlib figure to a Plotly image trace."""
-    buf = io.BytesIO()
-    mpl_fig.savefig(buf, format='png', bbox_inches='tight')
-    plt.close(mpl_fig)
-    buf.seek(0)
-    img_bytes = buf.read()
-    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-    return go.Image(source='data:image/png;base64,' + img_base64)
-
-# --- Core Plotting Function ---
-def create_patient_upset_figure(df, patient_samples, meta_df):
-    """
-    Creates a single Plotly figure containing multiple UpSet plot images (traces).
-    Includes a dropdown menu to toggle between the provided samples.
-    """
-    fig = go.Figure()
-
-    # Map Sample ID -> Alias (or Timepoint)
-    if alias_col in meta_df.columns:
-        alias_map = meta_df.set_index('sample')[alias_col].to_dict()
-    else:
-        alias_map = {s: s for s in patient_samples}
-
-    # Generate a trace for each sample
-    valid_indices = []
-
-    for i, sample in enumerate(patient_samples):
-        # 1. Prepare Data
-        sample_df = df[df['sample'] == sample]
-        phenotypes = sorted(sample_df['phenotype'].unique())
-
-        # Skip if only 1 phenotype (UpSet needs at least 2 to show intersections)
-        if len(phenotypes) < 2:
-            continue
-
-        valid_indices.append(i) # Track which samples actually generated a plot
-
-        clones_by_pheno = {
-            p: set(sample_df[sample_df['phenotype'] == p]['CDR3b'])
-            for p in phenotypes
-        }
-        upset_data = upsetplot.from_contents(clones_by_pheno)
-
-        # 2. Plot with Matplotlib
-        mpl_fig = plt.figure(figsize=(10, 6))
-        upsetplot.plot(
-            upset_data,
-            fig=mpl_fig,
-            sort_by='cardinality',
-            show_counts=True
-        )
-
-        # Title using ALIAS
-        alias = alias_map.get(sample, sample)
-        plt.suptitle(f'Shared Clones: {alias}', fontsize=16)
-
-        # 3. Convert to Plotly Trace
-        plotly_trace = fig_to_plotly(mpl_fig)
-        fig.add_trace(plotly_trace)
-
-        # Set visibility: Only first valid trace is True
-        fig.data[-1].visible = (len(valid_indices) == 1)
-
-    # If no samples had enough phenotypes, return None
-    if not fig.data:
-        return None
-
-    # --- Create Dropdown Buttons ---
-    buttons = []
-    # We iterate through the traces we successfully added
-    for i, trace_idx in enumerate(valid_indices):
-        sample_id = patient_samples[trace_idx]
-        alias = alias_map.get(sample_id, sample_id)
-
-        # Visibility mask
-        visibility = [False] * len(fig.data)
-        visibility[i] = True
-
-        buttons.append(dict(
-            label=alias, # Dropdown shows Alias
-            method="restyle",
-            args=[{"visible": visibility}]
-        ))
-
-    # --- Layout ---
-    fig.update_layout(
-        updatemenus=[dict(
-            active=0,
-            buttons=buttons,
-            direction="down",
-            x=0.0, xanchor="left",
-            y=1.15, yanchor="top",
-            showactive=True
-        )],
-        width=900,
-        height=700,
-        margin=dict(t=80) # Space for dropdown
-    )
-
-    # Hide axes (since we display images)
-    fig.update_xaxes(showticklabels=False, showgrid=False, visible=False)
-    fig.update_yaxes(showticklabels=False, showgrid=False, visible=False)
-
-    return fig
-
-# --- Main Execution ---
 
 # 1. Merge Metadata (if needed) to get Patient IDs
 if subject_col not in clonotypes_pheno_df.columns:
@@ -584,38 +428,181 @@ if subject_col not in clonotypes_pheno_df.columns:
 # 2. Get Patients
 unique_patients = sorted(clonotypes_pheno_df[subject_col].dropna().unique())
 
-# 3. Suppress Warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
+```
 
-# 4. Generate Tabs
-print("::: {.panel-tabset}\n")
+```{python}
+#| echo: false
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from upsetplot import from_contents, UpSet
+import warnings
+
+
+from IPython.display import display, Markdown
+import matplotlib.pyplot as plt
+import sys
+
+warnings.filterwarnings("ignore")
+
+def create_patient_upset_figure(df, patient_id):
+    df_clean = df.dropna(subset=['phenotype', 'CDR3b']).copy()
+    phenotypes = sorted(df_clean['phenotype'].unique())
+    if len(phenotypes) < 2:
+        return None
+
+    clones_by_pheno = {
+        p: list(df_clean[df_clean['phenotype'] == p]['CDR3b'].unique())
+        for p in phenotypes
+    }
+    upset_data = from_contents(clones_by_pheno)
+    if upset_data.empty:
+        return None
+
+    plt.close('all')
+    upset = UpSet(
+        upset_data,
+        subset_size='count',
+        show_counts=False,
+        sort_by='cardinality',
+        facecolor='black'
+    )
+    fig = plt.figure(figsize=(10, 6))
+    axes = upset.plot(fig=fig)
+
+    # 1. Annotate intersection sizes (vertical bars)
+    ax_intersections = axes['intersections']
+    for bar in ax_intersections.patches:
+        h = bar.get_height()
+        if h > 0:
+            ax_intersections.text(bar.get_x() + bar.get_width() / 2, h + 0.1,
+                    str(int(h)), ha='center', va='bottom', fontsize=9)
+
+    # 2. Annotate set sizes (horizontal total bars)
+    ax_totals = axes['totals']
+    
+    # Calculate a dynamic offset (5% of the largest bar) to avoid text touching the bar
+    max_width = max([bar.get_width() for bar in ax_totals.patches], default=1)
+    offset = max_width * 0.05  
+
+    for bar in ax_totals.patches:
+        w = bar.get_width()
+        if w > 0:
+            # Since the totals axis is inverted, adding to 'w' pushes text to the left
+            ax_totals.text(
+                w + offset, 
+                bar.get_y() + bar.get_height() / 2,
+                str(int(w)), 
+                ha='right', va='center', fontsize=9
+            )
+            
+    # Expand the x-axis limits slightly to ensure the new text isn't cut off by the figure edge
+    # Note: current_xlim[0] is the max value because the axis is inverted
+    current_xlim = ax_totals.get_xlim()
+    ax_totals.set_xlim(current_xlim[0] * 1.25, current_xlim[1])
+
+    fig.suptitle(f'Shared Clones by Phenotype: {patient_id}', fontsize=14, y=1.02)
+    return fig
+
+
+
+
+# 3. Generate Tabs
+display(Markdown("::: {.panel-tabset}"))
+
+# --- Main Execution ---
 
 for pat in unique_patients:
-    print(f"## {pat}\n")
+    display(Markdown(f"\n## {pat}\n"))
+    
+    pat_df = clonotypes_pheno_df[clonotypes_pheno_df[subject_col] == pat]
 
-    # Get samples for this patient
-    # Sort them by timepoint_order_col if available in meta
-    pat_samples = meta[meta[subject_col] == pat].sort_values(timepoint_order_col)['sample'].tolist()
-
-    # Filter to samples present in the clonotype data
-    existing_samples = [s for s in pat_samples if s in clonotypes_pheno_df['sample'].unique()]
-
-    if existing_samples:
-        fig = create_patient_upset_figure(clonotypes_pheno_df, existing_samples, meta)
-
+    if not pat_df.empty:
+        fig = create_patient_upset_figure(pat_df, pat)
         if fig:
-            fig.show()
+            # plt.show()
+            display(fig)
+            plt.close(fig)
         else:
-            print(f"No samples for {pat} have >1 phenotype to compare.")
+            display(Markdown(f"*Patient {pat} has fewer than 2 phenotypes — skipped.*\n"))
     else:
-        print(f"No data found for {pat}.")
+        display(Markdown(f"*No data found for {pat}.*\n"))
 
-    print("\n")
-
-print(":::\n")
+display(Markdown("\n:::\n"))
 
 ```
+
 **Figure 11: clonal sharing between phenotypes.** Upset plot showing the number of TCR clones shared between different phenotypic clusters within a single sample.
 
 
+```{python}
+#| output: asis
+#| echo: false
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from upsetplot import from_memberships, plot
+
+def create_phenotype_upset_plots(pheno_df, meta_df):
+    """
+    Creates UpSet plots showing the intersection of phenotypes 
+    for unique TCR clones, tabbed by patient.
+    """
+    # Merge phenotype data with metadata to get the patient (subject_col)
+    cols_to_use = ['sample', subject_col]
+    
+    # Ensure subject_col is in meta
+    if subject_col not in meta_df.columns:
+        print(f"Error: {subject_col} not found in metadata.")
+        return
+
+    plot_df = pheno_df.merge(meta_df[cols_to_use], on='sample', how='inner')
+
+    # Drop any clones without an assigned phenotype
+    plot_df = plot_df.dropna(subset=['phenotype'])
+
+    print("::: {.panel-tabset}\n")
+
+    unique_patients = sorted(plot_df[subject_col].unique())
+
+    for pat in unique_patients:
+        print(f"## {pat}\n")
+
+        # Filter data for the current patient
+        pat_df = plot_df[plot_df[subject_col] == pat]
+
+        # Group by clone (cdr3) and aggregate the unique phenotypes it appears in
+        # Note: adjust 'cdr3' if your sequence column is named differently 
+        # (e.g., 'junction_aa', 'clone_id')
+        if 'cdr3' not in pat_df.columns:
+            print("Error: 'cdr3' column not found in data. Please check your clonotype column name.")
+            continue
+            
+        clone_phenotypes = pat_df.groupby('cdr3')['phenotype'].apply(lambda x: list(set(x)))
+
+        # Convert to UpSet-compatible format
+        upset_data = from_memberships(clone_phenotypes)
+
+        # Create the UpSet plot
+        # We sort by 'degree' to group singletons first, then pairs, etc. 
+        # You can change to sort_by='cardinality' to sort by the size of the intersection.
+        fig = plt.figure(figsize=(10, 6))
+        
+        try:
+            upset = plot(upset_data, fig=fig, sort_by='degree', show_counts=True)
+            plt.suptitle(f"Clonal Phenotype Overlap: {pat}", fontsize=14, y=1.05)
+            plt.show()
+        except ValueError as e:
+            # Handles cases where a patient might only have 1 phenotype total, 
+            # which can cause UpSet plots to throw an error.
+            print(f"Not enough overlapping data to generate an UpSet plot for {pat}.")
+            plt.close(fig)
+
+        print("\n")
+
+    print(":::\n")
+
+# --- Run ---
+create_phenotype_upset_plots(clonotypes_pheno_df, meta)
+```
