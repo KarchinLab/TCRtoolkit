@@ -1,0 +1,106 @@
+---
+title: "Details"
+format:
+  html:
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    code-fold: true
+    embed-resources: false
+    number-sections: true
+    smooth-scroll: true
+    grid:
+      body-width: 1000px
+      margin-width: 300px
+execute:
+  cache: false
+  warnings: false
+jupyter: python3
+---
+
+Thank you for using TCRtoolkit! This report is generated from the data you provided. 
+
+:::{.callout-note collapse="true"}
+## Document Information
+**Current Version:** 1.0-beta   
+**Last Updated:** March 2026  
+**Maintainer:** BTC Data Science Team   
+**Notes:** 
+:::
+
+::: {.callout-note collapse="true"}
+## Notebook Analysis Scope
+This notebook a more detailed analysis of the samples being analyzed.
+:::
+
+```{python}
+#| tags: [parameters]
+#| include: false
+
+# ---------------------------------------------------------
+# BASE PARAMETERS 
+# ---------------------------------------------------------
+workflow_cmd = '<command used to run the pipeline>'
+project_name='<project_name>'
+project_dir='<path/to/project_dir>'
+sample_table='<path/to/sample_table.csv>'
+
+timepoint_col = 'timepoint'
+timepoint_order_col = 'timepoint_order'
+alias_col = 'alias'
+subject_col = 'subject_id'
+
+```
+
+```{python}
+#| include: false
+
+# ---------------------------------------------------------
+# DERIVED PATHS 
+# ---------------------------------------------------------
+
+# Define files 
+project_dir=f"{project_dir}/{project_name}"
+
+```
+
+# Before You Begin
+
+This pipeline can be used to analyze both **single-cell and bulk TCR data**. Please see the note below to understand some of the **implications** depending on the data type you have:
+
+::: {.callout-note title="Single-cell vs Bulk Data analysis" collapse="true"}
+**<u>Definition of “counts”</u>**  
+- **Single-cell**:  
+  `counts` represent the number of distinct cells carrying a specific clonotype. For example, a count of 12 indicates that 12 individual cells were encapsulated and sequenced.  
+- **Bulk**:  
+  `counts` represent the abundance of sequencing reads (or UMIs) supporting a clonotype. The biological interpretation depends heavily on the starting material:
+
+  - **RNA (cDNA):** Counts are a composite metric of Cellular Abundance $\times$ Transcriptional Expression. Since activation status affects TCR mRNA levels, a high count could indicate a large clone or a highly active small clone. Normalization strategies can mitigate, but not eliminate, this expression bias.
+  - **DNA (gDNA):** Counts are a direct proxy for Cell Number (e.g., Adaptive ImmunoSEQ). Because T-cell genomic templates are constant (one productive rearrangement per cell), DNA sequencing avoids expression bias and allows for accurate estimation of clone size.
+
+**<u>TCR chains</u>**  
+- **Single-cell**:  
+  It's common to have paired α/β chains per cell. However we only focus on the Beta chain here.  
+- **Bulk**:  
+  In bulk repertoire sequencing, you usually amplify TCRα and TCRβ chains separately. The resulting data contains lists of α clonotypes and lists of β clonotypes, but no information about which α and β belong to the same T cell. We focus only on the Beta chain.  
+
+**<u>Diversity & clonality metrics</u>**  
+- **Single-cell**:  
+  Sensitive to sampling (10^3 – 10^5 cells typical).
+  Rare clonotypes may be missed, but you can study functional heterogeneity within clones.  
+- **Bulk**:  
+  Captures broad repertoire diversity (10^5 – 10^6 clonotypes).
+  More accurate for richness, evenness, overlap across samples.
+
+**<u>Downstream biological analyses</u>**  
+- **Single-cell**:  
+  It is possile to link TCRs to phenotypic states (exhaustion, activation, tissue localization), which allows the study of clonotype heterogeneity.  
+- **Bulk**:    
+  It focuses on population-level measures  
+:::
+
+{{< include ./template_overlap.qmd >}}
+
+{{< include ./template_sharing.qmd >}}
+
+
