@@ -3,7 +3,7 @@ title: "Discovery Brief"
 format:
   html:
     theme: flatly
-    toc: true
+    toc: false
     toc_depth: 3
     code-fold: true
     embed-resources: true
@@ -87,7 +87,6 @@ pseudobulk_dir = f"{project_dir}/pseudobulk/"
 VDJdb_dir = f"{project_dir}/vdjdb/"
 convergence_dir = f"{project_dir}/convergence/"
 convert_dir = f"{project_dir}/convert/"
-giana_dir = f"{project_dir}/giana/"
 notebook_results_dir = f"{project_dir}/notebook-analysis/"
 
 ```
@@ -96,7 +95,6 @@ notebook_results_dir = f"{project_dir}/notebook-analysis/"
 ```{python}
 #| code-fold: true
 
-# 1. Load Packages
 from IPython.display import Image
 import os
 import datetime
@@ -113,10 +111,8 @@ import itertools
 import h5py
 import igraph as ig
 import matplotlib.ticker as ticker
-import networkx as nx
 import numpy as np
 import scipy.cluster.hierarchy as sch
-import ipywidgets as widgets
 from IPython.display import display, Markdown
 from scipy.sparse import csr_matrix
 from scipy.stats import gaussian_kde
@@ -142,26 +138,19 @@ warnings.filterwarnings(
     module="plotly"
 )
 
-# 2. Print pipeline parameters
-
 print('Project Name:          ' + project_name)
 print('Workflow command:      ' + workflow_cmd)
 print('Date and time:         ' + str(datetime.datetime.now()))
 
-# 3. Loading data
-## reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
 meta_cols = meta.columns.tolist()
 
-## Reading combined repertoire statistics
 df = pd.read_csv(sample_stats_csv, sep=',')
 df = pd.merge(df, meta, on='sample', how='left')
 df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
 
-## reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_file, sep='\t')
 
-# # Read Pgen data
 prob_generation_df = pd.read_csv(pgen_csv, sep='\t')
 
 ```
@@ -448,7 +437,7 @@ If you observe low clonality (< 0.05) in samples expected to be highly reactive 
 
 Once QC is cleared, Shannon clonality quantifies antigen-driven selection.
 
-- **Rising Trend (Response):** A concurrent rise in Shannon clonality indicates robust clonal focusing. The immune system has identified a target and is actively effectively expanding specific clones against it.  
+- **Rising Trend (Response):** A concurrent rise in Shannon clonality indicates robust clonal focusing. The immune system has identified a target and is actively expanding specific clones against it.  
 
 ## TCR Overlap
 
@@ -622,7 +611,7 @@ Use this to track the persistence of the immune response over time within the sa
 
 ## Persistent and Unique Clones between timepoints {#sec-upset}
 
-To understand how the TCR repertoire changes over time, we need to identify which T-cell clones are persistent, which are new, and which have disappeared. Analyzing the TCR overlap for patients with multiple timepoint can be an ideal way of understanding changes in the repertoire over time.
+To understand how the TCR repertoire changes over time, we need to identify which T-cell clones are persistent, which are new, and which have disappeared. Analyzing the TCR overlap for patients with multiple timepoints can be an ideal way of understanding changes in the repertoire over time.
 
 To visualize these complex intersections, we use an **UpSet Plot**. Unlike a traditional Venn diagram, which becomes unreadable with more than three groups, an UpSet plot clearly separates the clones shared between specific combinations of timepoints from those unique to a single sample.
 
@@ -1352,11 +1341,12 @@ print(":::\n")
 ```
 **Figure 4. Longitudinal Clonal Dynamics of the TCR Repertoire.** Stacked bar chart illustrating the relative proportion of unique TCR clonotypes categorized by their longitudinal behavior. At each timepoint, clones are classified relative to their historical presence in the patient. The y-axis represents the percentage of the total unique clones present at that specific timepoint. The absolute number of unique clonotypes analyzed per timepoint is denoted by the 'n=' value above each bar.
 
-To understand how the T-cell repertoire shifts in response to therapy, it is not enough to just look at overall diversity; we must track the specific trajectories of individual clones across multiple timepoints. By comparing the frequency of a clone at a given timepoint against its historical baseline, we can classify its behavior and visualize the macroscopic turnover of the patient's immune system  
+To understand how the T-cell repertoire shifts in response to therapy, it is not enough to just look at overall diversity; we must track the specific trajectories of individual clones across multiple timepoints. By comparing the frequency of a clone at a given timepoint against its historical baseline, we can classify its behavior and visualize the macroscopic turnover of the patient's immune system.
 
-**Defining Clonal Categories**  
+**Defining Clonal Categories**
 In this visualization, the total unique repertoire at each timepoint is broken down into four distinct functional statuses:
-Baseline (Black): The initial pool of clones detected at the very first sampling timepoint ($T_0$). By definition, everything here is the starting point.  
+
+- **Baseline (Black):** The initial pool of clones detected at the very first sampling timepoint ($T_0$).
 
 - **New (Green):** Clones that have emerged for the very first time at the current timepoint. These were completely undetected in any prior samples.
 - **Expanded (Red):** Pre-existing clones (in at least one previous timepoint) that have demonstrated a statistically significant increase in frequency (via Fisher's exact test) compared to previous timepoints. These represent the actively proliferating, potentially treatment-responsive compartment.
@@ -1553,6 +1543,7 @@ These scatter plots map the longitudinal trajectory of individual clones between
 
 import plotly.express as px
 import plotly.graph_objects as go
+import pandas as pd
 import numpy as np
 import itertools
 
@@ -1600,17 +1591,35 @@ for subject, subj_df in clonotypes_df.groupby(subject_col):
             
         # Create all unique combinations of timepoints (chronological based on rank)
         for t1, t2 in itertools.combinations(timepoints, 2):
-            tab_title = f"{t1} vs {t2}" if len(origins) == 1 else f"{origin}: {t1} vs {t2}"
-            print(f"### {tab_title}\n")
             
-            # Pivot data for these two specific timepoints
+            # 1. Pivot data for these two specific timepoints FIRST
             pair_df = orig_df[orig_df[timepoint_col].isin([t1, t2])]
+            
+            # Safety check: if pair_df is completely empty, skip
+            if pair_df.empty:
+                continue
+                
             pivot = pair_df.pivot_table(
                 index=['CDR3b', 'TRBV', 'TRBJ'], 
                 columns=timepoint_col, 
                 values='frequency', 
                 fill_value=0
             ).reset_index()
+            
+            # 2. Safety check: ensure both timepoints actually became columns 
+            # (If a timepoint had 0 clones for this origin, it won't be a column)
+            if t1 not in pivot.columns or t2 not in pivot.columns:
+                continue
+                
+            # 3. Check for shared clones (frequency > 0 in BOTH timepoints)
+            shared_clones_exist = ((pivot[t1] > 0) & (pivot[t2] > 0)).any()
+            
+            if not shared_clones_exist:
+                continue # Skip this comparison entirely; do not create the tab
+                
+            # 4. Now that we know we have valid shared data, print the tab title
+            tab_title = f"{t1} vs {t2}" if len(origins) == 1 else f"{origin}: {t1} vs {t2}"
+            print(f"### {tab_title}\n")
             
             # If a clone only exists in one timepoint, it will be 0 in the other. 
             # Log scale cannot plot 0, so we replace 0 with a very small pseudocount.
@@ -1688,9 +1697,8 @@ for subject, subj_df in clonotypes_df.groupby(subject_col):
 print(":::\n")
 ```
 
-**Figure X: Pairwise longitudinal dynamics of clonal frequencies.**
+**Figure 4b: Pairwise longitudinal dynamics of clonal frequencies.**
 Scatter plots depicting the relative frequency of individual clones between two distinct timepoints for each patient and sample origin.
-
 
 
 ## Similar TCR sequences within samples {#sec-tcrdist}
@@ -1927,7 +1935,7 @@ else:
         print(":::\n")
 
 ```
-**Figure 5. TCRdist Network** Network graphs visualizing sequence similarity between TCR clonotypes based on the TCRdist metric. Nodes represent individual unique clonotypes, with node size proportional to clonal frequency. Node color indicates the sample timepoint where the clone was detected. Edges connect clonotypes with a TCRdist score below a set threshold, forming clusters (metaclones). **(Top)** Full TCR Network: Visualization of all detected metaclones within the patient repertoire. **(Bottom)** Filtered Network (Expanded Metaclones Only):
+**Figure 5. TCRdist Network.** Network graphs visualizing sequence similarity between TCR clonotypes based on the TCRdist metric. Nodes represent individual unique clonotypes, with node size proportional to clonal frequency. Node color indicates the sample timepoint where the clone was detected. Edges connect clonotypes with a TCRdist score below a set threshold, forming clusters (metaclones). **(Top)** Full TCR Network: Visualization of all detected metaclones within the patient repertoire. **(Bottom)** Filtered Network (Expanded Metaclones Only): Displays only metaclones containing at least one significantly expanded clonotype, highlighting the structural neighborhoods of treatment-responsive T-cells.
 
 Up to this point, our analysis has treated every unique CDR3 amino acid sequence as a distinct entity. However, immunology is rarely so black and white. T-cell receptors with highly similar, though not identical, sequences often recognize the same antigenic epitope. By focusing only on exact matches, we risk fragmenting the data and missing the broader, coordinated cellular response to a specific antigen.
 
@@ -1940,7 +1948,7 @@ However, the most biologically relevant insights come from the Filtered Network 
 This filtered view reveals crucial insights:  
 
 - **Responses are polyclonal:** An expanding response is rarely just one single sequence; it is often a "cloud" of related sequences responding together.
-- **Persistence of responders:** If you notice the high proportion of dark grey nodes in the filtered network, this indicates that the antigen-specific metaclones driving the expansion are not transient. They persist within the patient over time, bridging different timepoints.
+- **Persistence of responders:** If you notice the high proportion of black nodes in the filtered network, this indicates that the antigen-specific metaclones driving the expansion are not transient. They persist within the patient over time, bridging different timepoints.
 
 ## Pathogenic/Self-antigen TCR specificity (VDJdb) {#sec-VDJdb}
 
@@ -2161,7 +2169,7 @@ print(":::\n")
 ```
 **Figure 6. Antigen Specificity Mapping against VDJdb** This figure summarizes the predicted antigen specificity of the TCR repertoire over time, based on exact CDR3 sequence matching to the VDJdb database. **(A) Repertoire Composition by Target Species.** A 100% stacked bar chart showing the proportion of clones at each timepoint categorized by the species of the target antigen. **Red (Self-Antigen):** Clones mapped to human peptides, representing potential tumor-reactive populations. **Blue (Foreign Bystander):** Clones mapped to known viral or bacterial antigens (e.g., CMV, EBV, Influenza). **Grey (Unmapped):** Clones with no known match in the current VDJdb database. **(B) Clonal Dominance of Specific Antigen Targets.** A jitter plot visualizing individual clone frequencies (y-axis, log scale) over time. Each dot represents a unique clonotype. Dots are colored according to their VDJdb mapping status (Self-Antigen, Foreign Bystander, or Unmapped), matching the color scheme in Panel A. This visualization highlights whether highly dominant expanding clones are mapped to potential therapeutic targets versus bystander viruses.
 
-Clonal dynamics tells us which clones are active. However, it doesn't tell us what those T-cells are actually recognizing. In the context of cancer immunology, distinguishing between a T-cell attacking a tumor antigen and one reacting to a common background virus (like CMV or EBV) is crucial.  
+Clonal dynamics tell us which clones are active. However, it doesn't tell us what those T-cells are actually recognizing. In the context of cancer immunology, distinguishing between a T-cell attacking a tumor antigen and one reacting to a common background virus (like CMV or EBV) is crucial.  
 To bridge this gap, we utilize public databases of experimentally validated TCR-antigen interactions.  
 
 **Interpreting Specificity Categories**  
@@ -2374,27 +2382,29 @@ def get_public_clones_df(concat_df, pgen_df):
 
 # --- 2. VISUALIZATION (Plotting) ---
 def create_top_shared_clones_table(public_df, n_top_clones=10):
-    """Generates the Plotly table from an already processed DataFrame."""
     display_df = public_df.head(n_top_clones)
     
-    # Updated to match the new column name
     patient_cols = [c for c in display_df.columns if c not in ['CDR3b Sequence', 'No_Shared_Individuals', 'Pgen']]
     
-    # Calculate Dynamic Widths
+    # 1. Create Bold Labels for the Header
+    bold_header_labels = [f"<b>{col}</b>" for col in display_df.columns]
+
     col_widths = [180, 140, 100] + [180] * len(patient_cols)
     total_table_width = sum(col_widths)
 
     fig = go.Figure(data=[go.Table(
         columnwidth=col_widths, 
         header=dict(
-            values=list(display_df.columns),
-            fill_color='paleturquoise', align='left',
-            font=dict(size=12, color='black', weight='bold'),
+            values=bold_header_labels,  # Use the tags here
+            fill_color='paleturquoise', 
+            align='left',
+            font=dict(size=12, color='black'), # Removed weight='bold'
             line_color='darkslategray'
         ),
         cells=dict(
             values=[display_df[col] for col in display_df.columns],
-            fill_color='lavender', align='left',
+            fill_color='lavender', 
+            align='left',
             font=dict(size=11, color='black'),
             line_color='darkslategray'
         )
@@ -2402,7 +2412,8 @@ def create_top_shared_clones_table(public_df, n_top_clones=10):
 
     fig.update_layout(
         title_text=f"Top {n_top_clones} Public Clones",
-        title_x=0.5, margin=dict(l=10, r=10, t=50, b=10),
+        title_x=0.5, 
+        margin=dict(l=10, r=10, t=50, b=10),
         width=max(total_table_width, 800) 
     )
     return fig
@@ -2428,7 +2439,7 @@ public_clones_df.to_csv(out_file, index=False)
 ```
 
 
-The upset Plot below show the number of clones shared between different combinations of patients. 
+The UpSet plot below shows the number of clones shared between different combinations of patients. 
 
 ```{python}
 
@@ -2515,7 +2526,6 @@ plot_public_clones_upset(concat_df, subject_col=subject_col, min_shared_patients
 ```
 **Figure 8. UpSet plot of public TCR clones**. This plot illustrates the intersection of unique CDR3b sequences shared among multiple individuals. The horizontal bars on the left indicate the total number of unique clones identified in each individual patient. In the central matrix, connected black dots denote the specific combination of patients sharing a subset of clones. The vertical bars at the top represent the intersection size, indicating the exact number of public clones shared exclusively by the patients marked in the corresponding column below.
 
-
 {{< include ./template_pheno_sc.qmd >}}
 
-<!-- {{< include ./template_pheno_bulk.qmd >}} -->
+{{< include ./template_pheno_bulk.qmd >}}

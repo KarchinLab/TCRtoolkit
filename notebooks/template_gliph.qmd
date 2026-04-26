@@ -1,3 +1,4 @@
+
 ```{python}
 #| include: false
 
@@ -20,9 +21,7 @@ gliph2_dir = f"{project_dir}/gliph2/"
 ```
 
 ```{python}
-# Load Packages
 #| include: false
-# Load Packages
 from IPython.display import Image, HTML, display
 import os
 import datetime
@@ -92,10 +91,9 @@ global_similarities = pd.concat(global_similarities_list, ignore_index=True) if 
 
 By grouping TCRs with shared sequence motifs, particularly in the CDR3 regions (the main antigen-binding region), GLIPH2 helps infer functional relationships and **predict which TCRs might target the same or related epitopes**.
 
-For the current stage of analysis, we are focusing solely on the **CDR3 region of the TCR beta chain (TCRB)**. a network was created to facilitate result visualization.
+For the current stage of analysis, we are focusing solely on the **CDR3 region of the TCR beta chain (TCRB)**. A network was created to facilitate result visualization.
 
 ```{python}
-#| label: fig-gliph-network
 #| fig-cap: "**Specificity groups across patients** Each circle (node) represents a unique TCR clonotype across all data. Nodes are connected if they share a common sequence motif, placing them into the same specificity group."
 
 import plotly.graph_objects as go
@@ -214,7 +212,6 @@ Nodes specifically designated as "Shared" (colored black) represent exact amino 
 
 ```{python}
 #| output: asis
-#| label: fig-gliph-motifs
 #| fig-cap: "**TCRB CDR3 motif lengths per patient.** Bar charts showing the distribution of amino acid motif lengths identified by GLIPH2 for each individual patient."
 
 import matplotlib.pyplot as plt
@@ -267,13 +264,12 @@ Knowing the length of the amino acid motifs is useful because it provides insigh
 **<u>Reflecting the Biophysics of Binding</u>**  
 From a biological standpoint, **the interaction between a TCR and its target peptide-MHC is often driven by a small number of critical "contact points" or "hotspots" within the CDR3 loop.** These hotspots typically consist of a short stretch of 2-5 amino acids. When GLIPH2 identifies a large number of **motifs with a length of 3 or 4**, it serves as a crucial sanity check. It suggests the algorithm **is not just finding random statistical noise, but is successfully identifying patterns that are biologically plausible** and reflect the known mechanics of T-cell recognition.
 
-**<u>Short Motifs (2-3 amino acids):</u>** These are like a broad. They are **more likely to occur by chance** and may define more "promiscuous" groups of TCRs that share a common structural feature but might still bind to a range of similar peptides.
+**<u>Short Motifs (2-3 amino acids):</u>** These function as broad-specificity identifiers. They are **more likely to occur by chance** and may define more "promiscuous" groups of TCRs that share a common structural feature but might still bind to a range of similar peptides.
 
-**<u>Long Motifs (4-5 amino acids):</u>** These are like a specific. They are statistically much rarer and impose a much stronger constraint on the TCR's structure. Therefore, a group of TCRs defined by a **longer motif is very likely to be highly specific for the exact same antigen.**
+**<u>Long Motifs (4-5 amino acids):</u>** These function as highly specific identifiers. They are statistically much rarer and impose a much stronger constraint on the TCR's structure. Therefore, a group of TCRs defined by a **longer motif is very likely to be highly specific for the exact same antigen.**
 
 ```{python}
 #| output: asis
-#| label: fig-motif-interactive-plotly
 #| fig-cap: "**Top 10 TCR specificity motifs ranked by member count.** Bar chart displaying the most prevalent amino acid motifs identified by the GLIPH2 algorithm, grouped by patient and motif length."
 
 import plotly.graph_objects as go
@@ -345,134 +341,3 @@ create_nested_motif_tabs(all_motifs, subject_col)
 This bar chart ranks the top conserved amino acid motifs found by GLIPH2 based on the number of unique T-cell receptors (TCRs) that belong to each specificity group. Each bar represents a specific motif (e.g., 'GG'), and its height indicates the size of that "TCR neighborhood"—the total number of different TCRs that share this core binding pattern.
 
 Identifying the motifs shared by the largest number of unique TCRs helps **pinpoint the most immunodominant recognition strategies used by the T-cells** in your dataset; you are effectively highlighting the **most common solutions the immune system has evolved to target key antigens**, thus providing a data-driven way to prioritize the most significant TCR communities for further study. However, it is crucial to interpret these findings with care, as **the most frequent motifs are often short and may not always define the most functionally specific T-cell groups compared to smaller groups with longer, more complex motifs.**
-
-## GLIPH2 global Motifs
-GLIPH2 identifies TCRB CDR3 clusters based on either local motifs (short, position-restricted patterns within 3 amino acids) or **global similarity (requiring identical CDR3 length and differences at the same positions).** Visualizing global motifs as sequence logos reveals the conserved amino acid preferences at each position, and can provide insights into the sequence features that potentially drive shared antigen recognition.
-
-```{python}
-#| output: asis
-#| echo: false
-#| label: fig-motif-logo
-#| fig-cap: "**Logo visualization of the top 10 global motifs per patient.**"
-
-import io
-import base64
-import json
-import warnings
-import matplotlib.pyplot as plt
-import logomaker
-from IPython.display import display, HTML
-
-def create_patient_logo_tabs(global_similarities, subject_col):
-    patients = sorted(global_similarities[subject_col].dropna().unique())
-    
-    print("::: {.panel-tabset}\n")
-    
-    for patient in patients:
-        print(f"## {patient}\n")
-        
-        # 1. Filter for the current patient and select top 10 motifs
-        patient_df = global_similarities[global_similarities[subject_col] == patient]
-        top10 = patient_df.sort_values("cluster_size", ascending=False).head(10).copy()
-        
-        plot_data = []
-        
-        # 2. Generate plots and store them as in-memory images
-        # --- WARNING SUPPRESSION START ---
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)
-            for i, row in top10.iterrows():
-                motif_name = f"Motif {row['cluster_tag']} (Size: {row['cluster_size']})"
-                seqs = [s.strip() for s in str(row["CDR3b"]).split(" ") if s.strip()]
-
-                if len(seqs) >= 2:
-                    try:
-                        counts_mat = logomaker.alignment_to_matrix(seqs, to_type="probability")
-                        fig, ax = plt.subplots(figsize=(10, 3))
-                        logomaker.Logo(counts_mat, ax=ax)
-                        ax.set_title(motif_name)
-                        fig.tight_layout()
-
-                        buf = io.BytesIO()
-                        fig.savefig(buf, format='png', bbox_inches='tight')
-                        buf.seek(0)
-                        img_str = base64.b64encode(buf.read()).decode('utf-8')
-                        
-                        plot_data.append({
-                            "title": motif_name,
-                            "image_src": f"data:image/png;base64,{img_str}"
-                        })
-                        plt.close(fig)
-                    except Exception as e:
-                        pass
-        
-        if not plot_data:
-            print(f"*(No valid motifs with 2 or more sequences found for {patient})*\n\n")
-            continue
-            
-        # 3. Create UNIQUE IDs for this patient's HTML elements so JS doesn't overlap
-        safe_id = str(patient).replace(" ", "_").replace(".", "_").replace("-", "_")
-        plots_json = json.dumps(plot_data)
-        
-        # 4. Create the HTML and JavaScript component for the interactive viewer
-        html_template = f"""
-        <div style="border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; margin: auto; text-align: center; font-family: sans-serif;">
-            <h3 id="plot-title-{safe_id}" style="margin-top: 0;"></h3>
-            <img id="plot-image-{safe_id}" src="" style="width: 100%; height: auto; border-radius: 4px;">
-            <div style="margin-top: 16px; display: flex; justify-content: space-between; align-items: center;">
-                <button id="prev-btn-{safe_id}" style="padding: 8px 16px; border-radius: 5px; border: 1px solid #ccc; background-color: #f0f0f0; cursor: pointer;">&larr; Previous</button>
-                <span id="page-counter-{safe_id}"></span>
-                <button id="next-btn-{safe_id}" style="padding: 8px 16px; border-radius: 5px; border: 1px solid #ccc; background-color: #f0f0f0; cursor: pointer;">Next &rarr;</button>
-            </div>
-        </div>
-
-        <script>
-        (function() {{
-            const plots = {plots_json};
-            let currentIndex = 0;
-
-            const titleElement = document.getElementById('plot-title-{safe_id}');
-            const imageElement = document.getElementById('plot-image-{safe_id}');
-            const prevButton = document.getElementById('prev-btn-{safe_id}');
-            const nextButton = document.getElementById('next-btn-{safe_id}');
-            const pageCounter = document.getElementById('page-counter-{safe_id}');
-
-            function showPlot(index) {{
-                if (plots.length === 0) return;
-                const plot = plots[index];
-                titleElement.textContent = plot.title;
-                imageElement.src = plot.image_src;
-                pageCounter.textContent = `Plot ${{index + 1}} of ${{plots.length}}`;
-
-                prevButton.disabled = (index === 0);
-                nextButton.disabled = (index === plots.length - 1);
-            }}
-
-            prevButton.addEventListener('click', () => {{
-                if (currentIndex > 0) {{
-                    currentIndex--;
-                    showPlot(currentIndex);
-                }}
-            }});
-
-            nextButton.addEventListener('click', () => {{
-                if (currentIndex < plots.length - 1) {{
-                    currentIndex++;
-                    showPlot(currentIndex);
-                }}
-            }});
-
-            showPlot(currentIndex);
-        }})();
-        </script>
-        """
-        
-        display(HTML(html_template))
-        print("\n\n")
-
-    print(":::\n")
-
-# --- Run ---
-create_patient_logo_tabs(global_similarities, subject_col)
-
-```

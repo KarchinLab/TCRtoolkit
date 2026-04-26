@@ -21,7 +21,6 @@ pseudobulk_dir = f"{project_dir}/pseudobulk/"
 ```{python}
 #| code-fold: true
 
-# 1. Load Packages
 import datetime
 import glob
 import itertools
@@ -32,7 +31,6 @@ import h5py
 import igraph as ig
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-# import networkx as nx
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -51,20 +49,10 @@ from plotly.subplots import make_subplots
 from pathlib import Path
 import re
 
-import warnings
-warnings.filterwarnings(
-    "ignore",
-    category=FutureWarning,
-    module="plotly"
-)
-
-# Loading data
-## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
 meta.drop(columns=['file'], inplace=True)
 meta_cols = meta.columns.tolist()
 
-## Reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_csv, sep='\t')
 concat_df = concat_df.merge(meta[['sample', subject_col, alias_col, timepoint_col, timepoint_order_col]], on='sample', how='left')
 
@@ -96,7 +84,7 @@ If you are dealing with **bulk TCR data, please skip section**.
 For this section to be rightfully executed, you must have had provided cells and their associated phenotypes.
 :::
 
-Single-cell technologies (e.g. 10X) allow the TCR sequence capture together with the RNA expression caracterization, which allows for cell phenotype assignment.
+Single-cell technologies (e.g. 10X) allow the TCR sequence capture together with the RNA expression characterization, which allows for cell phenotype assignment.
 
 TCRs coming from the same phenotype are pseudobulked and here we analyze them.
 
@@ -404,7 +392,7 @@ create_phenotype_stacked_bar(meta, count_col='cell_count')
 ```
 **Figure 10: Clonally-Weighted TCR Phenotype Composition.** Stacked bar chart showing the proportional abundance of T-cell phenotypes for each sample, weighted by clonal size. The size of each segment is determined by summing the read counts of all TCRs assigned to that functional category, thus directly reflecting clonal expansion.
 
-### Phenotypic plasticity of TCR Clones {#sec-overlap-pheno}
+### Phenotypic plasticity of TCR clones {#sec-overlap-pheno}
 
 Beyond tracking clones over time, it is critical to understand their functional roles and whether those roles change. Phenotypic plasticity refers to the **ability of a single T-cell clonal lineage** (defined by its unique TCR sequence) **to acquire different phenotypes or functional states**. By mapping TCR clones to their phenotypic clusters (e.g., cytotoxic, regulatory, memory), we can identify clones that are "locked" into a single state versus those that span multiple functional identities.
 
@@ -415,6 +403,7 @@ This analysis uses an UpSet plot to visualize the intersection of TCR clones acr
 - **Phenotypic Plasticity (Shared Sets):** Bars corresponding to connected dots (e.g., CD8_cytotoxic -- Memory) represent clones that are present in multiple phenotypic states simultaneously. This implies that the clonal lineage has diversified. These are biologically significant as they may represent clones in transition (e.g., differentiating from effector to memory) or highly adaptable clones responding to the tumor environment.
 
 ```{python}
+#| echo: false
 
 # 1. Merge Metadata (if needed) to get Patient IDs
 if subject_col not in clonotypes_pheno_df.columns:
@@ -430,11 +419,12 @@ unique_patients = sorted(clonotypes_pheno_df[subject_col].dropna().unique())
 
 ```
 
+
 ```{python}
+#| output: asis
 #| echo: false
 
 import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from upsetplot import from_contents, UpSet
 import warnings
@@ -533,76 +523,4 @@ display(Markdown("\n:::\n"))
 
 ```
 
-**Figure 11: clonal sharing between phenotypes.** Upset plot showing the number of TCR clones shared between different phenotypic clusters within a single sample.
-
-
-```{python}
-#| output: asis
-#| echo: false
-
-import pandas as pd
-import matplotlib.pyplot as plt
-from upsetplot import from_memberships, plot
-
-def create_phenotype_upset_plots(pheno_df, meta_df):
-    """
-    Creates UpSet plots showing the intersection of phenotypes 
-    for unique TCR clones, tabbed by patient.
-    """
-    # Merge phenotype data with metadata to get the patient (subject_col)
-    cols_to_use = ['sample', subject_col]
-    
-    # Ensure subject_col is in meta
-    if subject_col not in meta_df.columns:
-        print(f"Error: {subject_col} not found in metadata.")
-        return
-
-    plot_df = pheno_df.merge(meta_df[cols_to_use], on='sample', how='inner')
-
-    # Drop any clones without an assigned phenotype
-    plot_df = plot_df.dropna(subset=['phenotype'])
-
-    print("::: {.panel-tabset}\n")
-
-    unique_patients = sorted(plot_df[subject_col].unique())
-
-    for pat in unique_patients:
-        print(f"## {pat}\n")
-
-        # Filter data for the current patient
-        pat_df = plot_df[plot_df[subject_col] == pat]
-
-        # Group by clone (cdr3) and aggregate the unique phenotypes it appears in
-        # Note: adjust 'cdr3' if your sequence column is named differently 
-        # (e.g., 'junction_aa', 'clone_id')
-        if 'cdr3' not in pat_df.columns:
-            print("Error: 'cdr3' column not found in data. Please check your clonotype column name.")
-            continue
-            
-        clone_phenotypes = pat_df.groupby('cdr3')['phenotype'].apply(lambda x: list(set(x)))
-
-        # Convert to UpSet-compatible format
-        upset_data = from_memberships(clone_phenotypes)
-
-        # Create the UpSet plot
-        # We sort by 'degree' to group singletons first, then pairs, etc. 
-        # You can change to sort_by='cardinality' to sort by the size of the intersection.
-        fig = plt.figure(figsize=(10, 6))
-        
-        try:
-            upset = plot(upset_data, fig=fig, sort_by='degree', show_counts=True)
-            plt.suptitle(f"Clonal Phenotype Overlap: {pat}", fontsize=14, y=1.05)
-            plt.show()
-        except ValueError as e:
-            # Handles cases where a patient might only have 1 phenotype total, 
-            # which can cause UpSet plots to throw an error.
-            print(f"Not enough overlapping data to generate an UpSet plot for {pat}.")
-            plt.close(fig)
-
-        print("\n")
-
-    print(":::\n")
-
-# --- Run ---
-create_phenotype_upset_plots(clonotypes_pheno_df, meta)
-```
+**Figure 11: Clonal sharing between phenotypes.** Upset plot showing the number of TCR clones shared between different phenotypic clusters within a single sample.

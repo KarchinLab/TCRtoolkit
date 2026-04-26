@@ -22,11 +22,6 @@ concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 # Load Packages
 from IPython.display import Image, display, Markdown, HTML
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib_venn import venn2, venn3
-from bokeh.models import HoverTool
-from bokeh.palettes import Viridis256
-from bokeh.transform import linear_cmap
-from holoviews import opts
 from io import StringIO
 from scipy.sparse import csr_matrix
 from scipy.stats import gaussian_kde, fisher_exact
@@ -34,19 +29,19 @@ from statsmodels.stats.multitest import multipletests
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 
+import igraph as ig
+import logomaker
+
 import base64
 import datetime
 import glob
 import h5py
-import holoviews as hv
 import igraph as ig
 import io
 import itertools
-import logomaker
 import math
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import networkx as nx
 import numpy as np
 import os
 import pandas as pd
@@ -650,7 +645,7 @@ The following tables provide the complete history of every TCR clonotype that sh
 
 - **Full Timeline:** This table displays the clone's frequency across all sequenced timepoints.
 - **Interpretation:** This view allows you to categorize the clone's overall behavior. For example, you can distinguish between a sustained expansion (frequency rises and stays high) versus a transient expansion (frequency rises and then drops back to zero).
-    - Note: A frequency of 0.0 usually indicates the clone fell below the limit of detection for that sample, rather than true biological absence.w the limit of detection for that sample, rather than true biological absence.
+    - Note: A frequency of 0.0 usually indicates the clone fell below the limit of detection for that sample, rather than true biological absence.
 
 
 ```{python}
@@ -906,7 +901,6 @@ def generate_plot_quarto_tabs(id_map, title_prefix, line_color):
 ```
 
 ```{python}
-#| label: results
 #| output: asis
 
 generate_plot_quarto_tabs(expanded_map, "Top 15 Upregulated", "firebrick")
@@ -931,12 +925,12 @@ generate_plot_quarto_tabs(contracted_map, "Top 15 Downregulated", "royalblue")
 **Figure 3: Longitudinal tracking of top contracted TCR clonotypes.** The temporal dynamics of the 15 most significantly downregulated clonotypes, ranked by lowest FDR-adjusted p-value ($q$-value). Blue lines trace the $log_{10}$ frequency of individual clones that exhibited significant contraction ($FC < 0.5, q < 0.05$) across the sampled timepoints.
 
 
-### Clonal Expansion/Contraction Paiwise Comparisons    
+### Clonal Expansion/Contraction Pairwise Comparisons    
 
 For each patient, we performed pairwise statistical comparisons between all timepoints for every TCR clonotype detected in at least one timepoint. Based on these tests, we identify expansion and contraction events, between any 2 pairs of timepoints.
 
 
-The following tables provides the complete history of every TCR comparison with an  statistically significant change ($q < 0.05$ and $Fold Change > \text{2.0}$ in at least one pairwise comparison during the patient's timeline.
+The following tables provide the complete history of every TCR comparison with a statistically significant change ($q < 0.05$ and $Fold Change > \text{2.0}$ in at least one pairwise comparison during the patient's timeline.
 
 - Multiple Entries:
     - A single clone may appear in multiple rows if it changed significantly between multiple different timepoints (e.g., expanding from T1 $\to$ T2, but contracting from T2 $\to$ T3).
@@ -950,7 +944,6 @@ The following tables provides the complete history of every TCR comparison with 
 
 
 ```{python}
-#| label: table-expanding
 
 # Expanding
 display(create_styled_table(
@@ -959,7 +952,7 @@ display(create_styled_table(
 
 ```
 
-**Table 3: Top 15 expansion events across timepoints.** Clone comparisons where there was a significant expansion (FC>2 and q-value<0.05). The same clone can be present in multiple rows. Includes
+**Table 3: Top 15 expansion events across timepoints.** Clone comparisons where there was a significant expansion (FC>2 and q-value<0.05). The same clone can be present in multiple rows. Includes statistical metrics ($p$-value, $q$-value, Fold Change) for each comparison event.
 
 ```{python}
 #| output: asis

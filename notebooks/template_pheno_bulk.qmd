@@ -12,9 +12,6 @@ project_dir=f"{project_dir}"
 sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
 concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv" 
 
-v_family_csv= project_dir + '/sample/v_family.csv'
-j_family_csv= project_dir + '/sample/j_family.csv'
-
 # Define dirs
 tcrdist_dir = project_dir + '/tcrdist3/'
 olga_dir = project_dir + '/olga/'
@@ -28,7 +25,6 @@ convergence_dir = project_dir+ '/convergence/'
 ```{python}
 #| code-fold: true
 
-# 1. Load Packages
 import datetime
 import glob
 import itertools
@@ -39,7 +35,6 @@ import h5py
 import igraph as ig
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-# import networkx as nx
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -63,36 +58,14 @@ warnings.filterwarnings(
     module="plotly"
 )
 
-# 2. Print pipeline parameters
-
-# print('Project Name:          ' + project_name)
-# print('Workflow command:      ' + workflow_cmd)
-# print('Date and time:         ' + str(datetime.datetime.now()))
-
-# 3. Loading data
-## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
 meta.drop(columns=['file'], inplace=True)
 meta_cols = meta.columns.tolist()
 
-## Reading combined repertoire statistics
 df = pd.read_csv(sample_stats_csv, sep=',')
 df = pd.merge(df, meta, on='sample', how='left')
 df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
 
-## Reading V gene family usage
-v_family = pd.read_csv(v_family_csv, sep=',')
-v_family = pd.merge(v_family, meta, on='sample', how='left')
-v_family = v_family[meta_cols + [c for c in v_family.columns if c not in meta_cols]]
-v_family = v_family.sort_values(by=[subject_col])
-
-## Reading J gene family usage
-j_family = pd.read_csv(j_family_csv, sep=',')
-j_family = pd.merge(j_family, meta, on='sample', how='left')
-j_family = j_family[meta_cols + [c for c in j_family.columns if c not in meta_cols]]
-j_family = j_family.sort_values(by=[subject_col])
-
-## Reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_csv, sep='\t')
 concat_df = concat_df.merge(meta[['sample', subject_col, 'alias', 'timepoint', 'timepoint_order']], on='sample', how='left')
 
@@ -104,7 +77,7 @@ concat_df = concat_df.merge(meta[['sample', subject_col, 'alias', 'timepoint', '
 ## From TCR sequence to Phenotype: TCRpheno {#sec-TCRPheno unless="show_sc"}
 
 ::: {.callout-warning title="Bulk data ONLY"}
-If you are dealing with **single-cell TCR data, please please disregard section.**
+If you are dealing with **single-cell TCR data, please disregard this section.**
 :::
 
 [TCRpheno](https://www.cell.com/cell-reports/fulltext/S2211-1247(24)01449-9#fig1) is a machine learning model that predicts the likely functional phenotype of a T-cell based solely on its TCR sequence. This is powerful because it allows you to infer the roles of different T-cells (e.g., killer, regulator, memory) from your bulk sequencing data without needing corresponding cell surface marker information.
@@ -116,7 +89,7 @@ If you are dealing with **single-cell TCR data, please please disregard section.
 
 - **TCRbeta.reg:** This score corresponds to regulatory T-cells (Tregs). These are the **"peacekeepers" that suppress other immune cells** to prevent autoimmune reactions and maintain tolerance. A high Treg score for a TCR suggests it plays a role in immune suppression.
 
-- **TCRbeta.mem:** This indicates a likely memory T-cell phenotype. These are the l**ong-lived "veterans" of the immune system that persist after an infection is cleared**, providing rapid protection upon re-exposure to the same pathogen.
+- **TCRbeta.mem:** This indicates a likely memory T-cell phenotype. These are the **long-lived "veterans" of the immune system that persist after an infection is cleared**, providing rapid protection upon re-exposure to the same pathogen.
 
 - **TCRbeta.innate:** A high score in this category suggests the TCR may belong to an innate-like T-cell, such as a MAIT or NKT cell. These cells bridge the gap between the innate and adaptive immune systems, **acting as rapid first responders to certain types of threats.**
 

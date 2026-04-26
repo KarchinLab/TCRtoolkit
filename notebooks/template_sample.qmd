@@ -27,7 +27,6 @@ convergence_dir = f"{project_dir}/convergence/"
 ```{python}
 #| code-fold: true
 
-# 1. Load Packages
 import datetime
 import glob
 import itertools
@@ -38,7 +37,6 @@ import h5py
 import igraph as ig
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-# import networkx as nx
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -62,40 +60,27 @@ warnings.filterwarnings(
     module="plotly"
 )
 
-# 2. Print pipeline parameters
-
-# print('Project Name:          ' + project_name)
-# print('Workflow command:      ' + workflow_cmd)
-# print('Date and time:         ' + str(datetime.datetime.now()))
-
-# 3. Loading data
-## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
 meta.drop(columns=['file'], inplace=True)
 meta_cols = meta.columns.tolist()
 
-## Reading combined repertoire statistics
 df = pd.read_csv(sample_stats_csv, sep=',')
 df = pd.merge(df, meta, on='sample', how='left')
 df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
 
-## Reading V gene family usage
 v_family = pd.read_csv(v_family_csv, sep=',')
 v_family = pd.merge(v_family, meta, on='sample', how='left')
 v_family = v_family[meta_cols + [c for c in v_family.columns if c not in meta_cols]]
 v_family = v_family.sort_values(by=[subject_col])
 
-## Reading J gene family usage
 j_family = pd.read_csv(j_family_csv, sep=',')
 j_family = pd.merge(j_family, meta, on='sample', how='left')
 j_family = j_family[meta_cols + [c for c in j_family.columns if c not in meta_cols]]
 j_family = j_family.sort_values(by=[subject_col])
 
-## Reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_csv, sep='\t')
 concat_df = concat_df.merge(meta[['sample', 'origin', subject_col, alias_col, timepoint_col, timepoint_order_col]], on='sample', how='left')
 
-# 4. Define important variables
 id_vars = [s.strip() for s in x_cols.split(',') if s.strip()]
 
 ```
@@ -111,7 +96,7 @@ Each bar is a complete TCR repertoire from one sample, broken down into three ke
 - **Highly Frequent (or HyperFrequent):** Clones constituting > 1% of the total productive TCR reads.  
 - **Frequent (or Large):** Clones with a frequency between 0.1% and 1%.  
 - **Non-Frequent (or Small/Rare):** Clones with a frequency < 0.1%.  
-Clonal frequency ia calculated as:  
+Clonal frequency is calculated as:  
 $$f_i = \frac{\text{Read count for clone } i}{\text{Total reads for all productive TCR clones}} \times 100\%$$
 
 ```{python}
@@ -167,7 +152,6 @@ def create_expansion_stacked_barplot_per_individual(df, subject_col, origin_col,
                 if total_clones == 0:
                     continue
 
-                # --- NEW: Extract timepoint_order for this sample ---
                 # We assume all rows for a given sample have the same timepoint_order
                 tp_order = sample_df[timepoint_order_col].iloc[0]
 
@@ -183,7 +167,6 @@ def create_expansion_stacked_barplot_per_individual(df, subject_col, origin_col,
             if processed_data:
                 plot_df = pd.DataFrame(processed_data)
                 
-                # --- MODIFIED: Sort by timepoint_order instead of TotalReads ---
                 plot_df = plot_df.sort_values(by='timepoint_order', ascending=True).reset_index(drop=True)
                 processed_origins[origin] = plot_df
 
@@ -235,21 +218,20 @@ def create_expansion_stacked_barplot_per_individual(df, subject_col, origin_col,
                 showlegend=is_first
             ))
 
-            # --- MODIFIED: Horizontal Threshold Line for 3000 counts ---
             shapes = [dict(
                 type="line", xref="paper", x0=0, x1=1,
-                yref="y2", y0=3000, y1=3000, # Anchored to the secondary Y axis (TotalReads)
+                yref="y2", y0=3000, y1=3000,
                 line=dict(color="red", width=2, dash="dot")
             )]
-            
+
             # Place the annotation dynamically based on the length of the x-axis
             annotations = [dict(
-                x=0.5, xref="paper", 
+                x=0.5, xref="paper",
                 y=3000, yref="y2",
-                text="Reliability Threshold (3k counts)",
+                text="<b>Reliability Threshold (3k counts)</b>",
                 showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor="red",
-                ax=0, ay=-30, # Offsets the text slightly above the line
-                font=dict(color="red", size=11, weight="bold")
+                ax=0, ay=-30,
+                font=dict(color="red", size=11)
             )]
 
             # Build Dropdown Button
@@ -329,7 +311,7 @@ create_expansion_stacked_barplot_per_individual(
 
 ```
 
-**Figure 1. Clonal Expansion Categories Relative to Sequencing Depth.** This stacked bar chart illustrates the percentage of clones categorized as non-Frequent, Frequent, or highly Frequent for each sample. The overlaid black dotted line tracks the total sequencing read count on a secondary axis, highlighting the influece of  sampling depth and the detection of Frequent clones. A vertical red threshold line ($>3,000$ counts) demarcates samples with sufficient data for reliable clonality assessment from low-depth libraries where expansion metrics may be unstable.
+**Figure 1. Clonal Expansion Categories Relative to Sequencing Depth.** This stacked bar chart illustrates the percentage of clones categorized as non-Frequent, Frequent, or highly Frequent for each sample. The overlaid black dotted line tracks the total sequencing read count on a secondary axis, highlighting the influence of sampling depth and the detection of Frequent clones. A vertical red threshold line ($>3,000$ counts) demarcates samples with sufficient data for reliable clonality assessment from low-depth libraries where expansion metrics may be unstable.
 
 **<u>Understanding Each Category</u>**
 
@@ -354,7 +336,7 @@ create_expansion_stacked_barplot_per_individual(
 
 - Biological Insight: A large "Non-Frequent" portion indicates a highly diverse, or polyclonal, repertoire. This is the hallmark of a healthy, resting immune system with the potential to respond to a vast array of future threats. It is your immunological "reservoir."
 
-::: {.callout-warning title="Be mindfull about Sequencing Depth"}
+::: {.callout-warning title="Be mindful about Sequencing Depth"}
 The classification of "Non-Frequent" clones (frequency < 0.1%) is mathematically impossible in samples with fewer than 1,000 total counts, as the minimum detectable frequency (a single clone) exceeds the 0.1% threshold (1/900 = 0.11%). Consequently, low-depth samples will artificially appear entirely "Frequent" or "Highly Frequent." For robust interpretation of the "Non-expanded" category, a minimum depth of 3,000 counts is required; any sample below 1,000 counts should be considered technically insufficient for this analysis.
 :::
 
@@ -372,7 +354,7 @@ By analyzing the changing proportions of these categories, you can build a power
 
 ### Clone size Distribution
 
-This table is useful because it reveals the identities of the dominant clones driving the immune response in each sample. By listing the most highly expanded T-cell receptors, **you can pinpoint the specific "effector" cells that have Frequent most, likely in response to a key antigen from a tumor or pathogen.** Having their precise sequences allows you to track these key clones over time, compare them across different patients to find shared public clones, and provides the necessary information for downstream functional studies to determine their antigen specificity.
+This table is useful because it reveals the identities of the dominant clones driving the immune response in each sample. By listing the most highly expanded T-cell receptors, **you can pinpoint the specific "effector" cells that have expanded most, likely in response to a key antigen from a tumor or pathogen.** Having their precise sequences allows you to track these key clones over time, compare them across different patients to find shared public clones, and provides the necessary information for downstream functional studies to determine their antigen specificity.
 
 ```{python}
 #| output: asis
@@ -741,7 +723,7 @@ create_violin_with_heatmap_inset(concat_df, meta, origin_col='origin')
 
 ```
 
-**Figure 2. Clone Density** Violin plots showing the number of sequencing counts (y-axis; log-scale) across all samples (x-axis). A value around 0 in the x-axis, represets clones that are non-expanded.
+**Figure 2. Clone Density** Violin plots showing the number of sequencing counts (y-axis; log-scale) across all samples (x-axis). A value around 0 in the x-axis, represents clones that are non-expanded.
 
 ## Gene Family usage {#sec-gene-family-usage}
 ### V Gene Family usage
@@ -897,7 +879,7 @@ else:
   print("No patients with a single timepoint found.")
 ```
 :::
-**Figure 6. TRBV gene usage** Stacked barplot showing gene proportion (y-axis) at a given sample (x-axis). Samples cointaining multiple timepointes are shown side-by-side to facilitate comparisons.
+**Figure 6. TRBV gene usage** Stacked barplot showing gene proportion (y-axis) at a given sample (x-axis). Samples containing multiple timepoints are shown side-by-side to facilitate comparisons.
 
 
 **Use this visualization to detect biased gene usage, which is a strong indicator of a significant, antigen-driven immune response.**
@@ -944,7 +926,7 @@ else:
   print("No patients with a single timepoint found.")
 ```
 :::
-**Figure 7. TRBV gene usage** Stacked barplot showing gene proportion (y-axis) at a given sample (x-axis). Samples cointaining multiple timepointes are shown side-by-side to facilitate comparisons.
+**Figure 7. TRBV gene usage** Stacked barplot showing gene proportion (y-axis) at a given sample (x-axis). Samples containing multiple timepoints are shown side-by-side to facilitate comparisons.
 
 # TCR Sequence Generation {#sec-cdr3_generation}
 
@@ -1563,7 +1545,7 @@ print(":::\n")
 
 
 **<u>Interpretation</u>**
-The Signal vs. The NoiseThe O/E Ratio ($y$-axis on Plot 2) isolates biological selection pressure from statistical chance.
+The Signal vs. The Noise: The O/E Ratio ($y$-axis on Plot 2) isolates biological selection pressure from statistical chance.
 
 - O/E $\approx$ 1.0 (The "Boring" Zone)
     - **Meaning:** Random Chance. The convergence you see is statistical noise. The repertoire is behaving like a random bucket of sequences.
@@ -2395,7 +2377,7 @@ def plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta_df, subject_col='subject_id'):
             df = df[[c for c in cols_to_keep if c in df.columns]].copy()
             df['sample'] = sample_name
             
-            # THE FIX: Sort by VDJdb score (highest confidence first) and drop cross-assignments.
+            # Sort by VDJdb score (highest confidence first) and drop cross-assignments.
             # This forces each TCR to strictly align with its single best target.
             if 'vdjdb.score' in df.columns:
                 df = df.sort_values('vdjdb.score', ascending=False)
@@ -2536,7 +2518,7 @@ def plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta_df, subject_col='subject_id'):
 plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta)
 
 ```
-**Figure 15: TCR Repertoire Mapping to specif gene epitopes:** Sunburst chart visualizing the relationships between T-cell receptor (TCR) sequences and their known antigen specificities from the VDJdb curated database. The central ring represents the species, branching out to their specific genes, and finally to the individual TCR sequences from your dataset that match those specificities. The size of each segment corresponds to the number of TCRs associated with that particular specificity.
+**Figure 15: TCR Repertoire Mapping to specific gene epitopes:** Sunburst chart visualizing the relationships between T-cell receptor (TCR) sequences and their known antigen specificities from the VDJdb curated database. The central ring represents the species, branching out to their specific genes, and finally to the individual TCR sequences from your dataset that match those specificities. The size of each segment corresponds to the number of TCRs associated with that particular specificity.
 
 ```{python}
 #| output: asis

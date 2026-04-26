@@ -76,7 +76,6 @@ concat_file = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 ```{python}
 #| code-fold: true
 
-# 1. Load Packages
 from IPython.display import Image
 import os
 import datetime
@@ -93,10 +92,8 @@ import itertools
 import h5py
 import igraph as ig
 import matplotlib.ticker as ticker
-import networkx as nx
 import numpy as np
 import scipy.cluster.hierarchy as sch
-import ipywidgets as widgets
 from IPython.display import display, Markdown
 from scipy.sparse import csr_matrix
 from scipy.stats import gaussian_kde
@@ -116,23 +113,13 @@ import plotly.figure_factory as ff
 
 import warnings
 
-# 2. Print pipeline parameters
-
-# print('Project Name:          ' + project_name)
-# print('Workflow command:      ' + workflow_cmd)
-# print('Date and time:         ' + str(datetime.datetime.now()))
-
-# 3. Loading data
-## reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
 meta_cols = meta.columns.tolist()
 
-## Reading combined repertoire statistics
 df = pd.read_csv(sample_stats_csv, sep=',')
 df = pd.merge(df, meta, on='sample', how='left')
 df = df[meta_cols + [c for c in df.columns if c not in meta_cols]]
 
-## reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_file, sep='\t')
 
 ```
@@ -174,7 +161,7 @@ If Richness = 5,000 and Inverse Simpson = 4,500: Your sample behaves as if it ha
 Answers the question: "Has the immune system picked a winner yet?" Measures inequality. Gini is your best metric for detecting Clonal Expansions independent of how many clones you actually sequenced.
     - ***Value close to 0 (Perfect Equality):*** Every clone has the exact same frequency. The immune system is "resting" or "naive." It hasn't been triggered by a specific threat, so no single clone has started to divide rapidly.
     - ***Medium value (0.3 - 0.7):*** Reactive. The immune system is fighting something. A few clones have expanded to fight a virus or tumor, but the background diversity is still there.
-    - ***High value (> 0.8):***  Monoclonal / Oligocloncal. A few clones have taken over completely. If this is a tumor sample, it might indicate a TIL (Tumor Infiltrating Lymphocyte) expansion.
+    - ***High value (> 0.8):***  Monoclonal / Oligoclonal. A few clones have taken over completely. If this is a tumor sample, it might indicate a TIL (Tumor Infiltrating Lymphocyte) expansion.
 It is calculated as:
 $G = \frac{\sum_{i=1}^{R} (2i - R - 1) p_i}{R \sum_{i=1}^{R} p_i}$
 
@@ -192,7 +179,7 @@ Answer the question: "What is the effective number of species in the sample when
     - ***$q=2$ (Inverse Simpson):*** Heavily weighs dominant clones. Represents the number of "very dominant" clones.
 The general formula for Hill numbers of order $q$ is:
 $^qD = \left( \sum_{i=1}^{R} p_i^q \right)^{1/(1-q)}$
-For $q=0$, this simplifies to $R$ (Total unique clonotypes).For $q=1$, the limit is undefined, so we use $\exp(H)$.For $q=2$, this simplifies to $1 / \sum p_i^2$ (Inverse Simpson).
+For $q=0$, this simplifies to $R$ (Total unique clonotypes). For $q=1$, the limit is undefined, so we use $\exp(H)$. For $q=2$, this simplifies to $1 / \sum p_i^2$ (Inverse Simpson).
 
 
 ```{python}
@@ -519,13 +506,13 @@ for metric in metrics_to_plot:
 print("::::::\n")  # Level 1 End
 
 ```
-**Figure 1. Comparative Analysis of TCR Repertoire Diversity Metrics.** Boxplots display the distribution of  metrics across samples. The interactive panel allows toggling between diversity indices and grouping variables. This visualization facilitates the assessment of repertoire diversity and evenness across different experimental conditions and biological replicates.
+**Figure 1. Comparative Analysis of TCR Repertoire Diversity Metrics.** Boxplots display the distribution of metrics across samples. The interactive panel allows toggling between diversity indices and grouping variables. This visualization facilitates the assessment of repertoire diversity and evenness across different experimental conditions and biological replicates.
 
 **Use the tabs to toggle between metadata groupings:**
 
 - The distributions of **Batches** L0, L1, etc., should largely overlap. If L0 is consistently higher than L1 across all sample types, you have a Batch Effect. You cannot compare samples across batches without computational correction (we do not provide such correction).
 
-- If one **patient** (e.g. Patien01) has drastically lower diversity than all others across all timepoints and tissues, it is likely a biological anomaly or a collection issue (degraded sample). Treat this patient as a separate cohort or exclude them.
+- If one **patient** (e.g. Patient01) has drastically lower diversity than all others across all timepoints and tissues, it is likely a biological anomaly or a collection issue (degraded sample). Treat this patient as a separate cohort or exclude them.
 
 - In longitudinal studies, diversity often drops slightly over time due to treatment. Diversity metrics rarely jump from 0.8 to 0.1 (or vice versa) in a short window **between timepoints**. If so, that sample is suspect. There might be some causes that could explain it: 1) Sample swap of sample timepoint labels for that patient. 2) The patient contracted a viral infection at T2, causing a massive expansion of non-tumor clones.
 
@@ -687,7 +674,7 @@ print(":::")
 ```
 **Figure 2. Hill Diversity Profiles of TCR Repertoires.** Diversity profiles display the effective number of clones (log scale) across sensitivity orders $q=0$ (Richness), $q=1$ (Shannon), and $q=2$ (Simpson). The top panel illustrates the mean repertoire structure for each subject with 95% confidence intervals, highlighting differences in evenness and dominance. The bottom panel visualizes individual sample trajectories, revealing heterogeneity and outlier profiles within each cohort.
 
-**<u>Using the above metrics to identify technical Failures 🚩</u>**  
+**<u>Using the above metrics to identify technical failures 🚩</u>**  
 Before attempting biological interpretation, you must validate that your metrics reflect immune biology and not library preparation artifacts. Use these metrics to flag and exclude compromised samples.
 
 **1. Amplification Bias**
@@ -948,7 +935,7 @@ for col in group_opts:
             'gini_coefficient': ':.3f',
             col: True
         },
-        color_continuous_scale='rocket' if plot_df[col].dtype != object else None
+        color_continuous_scale='magma' if plot_df[col].dtype != object else None
     )
 
     # Match marker style from seaborn
@@ -1120,7 +1107,7 @@ print(":::\n")
 Heatmaps display the pairwise similarity between TCR repertoires using the Jaccard (overlap) index. Hierarchical clustering groups samples based on their shared clonal content, facilitating the identification of biological replicates or potential cross-contamination events. The color intensity reflects the degree of similarity, where darker red indicates a higher proportion of shared clonotypes between sample pairs.
 
 ::: {.callout-tip title="Note"}
-When calculating Jaccard for this specific purpose (contamination), we are calculating it on the nucleotide sequence, not the amino acid sequence, **whenever the TCRseq whas done using DNA as input**.  Convergent recombination (different DNA making the same Amino Acid) is common in high-depth samples and will give you a false positive "contamination" signal if you stick to Amino Acids. Contamination should be measured at the physical level (DNA).
+When calculating Jaccard for this specific purpose (contamination), we are calculating it on the nucleotide sequence, not the amino acid sequence, **whenever the TCRseq was done using DNA as input**.  Convergent recombination (different DNA making the same Amino Acid) is common in high-depth samples and will give you a false positive "contamination" signal if you stick to Amino Acids. Contamination should be measured at the physical level (DNA).
 :::
 
 **<u>Technical QC 🚩</u>**  
@@ -1369,7 +1356,6 @@ if len(unique_patients) <= 10:
 
         pat_df = df[df[subject_col] == pat]
 
-        # --- NEW: Origin tab layer ---
         if 'origin' in pat_df.columns and pat_df['origin'].nunique() > 1:
             print(":::: {.panel-tabset}\n")  # Level 4 Start (Origins)
 
@@ -1446,7 +1432,7 @@ where $P$ is the number of productive TCRs and $N$ is the total number of TCRs i
 
 ## Average productive CDR3 Length {#sec-cdr3-len}
 
-The incredible diversity is generated during the development of T-cells through a process of genetic recombination, where different gene segments (V, D, and J) are pieced together. The CDR3 region spans the junction of these segments and includes random nucleotide additions and deletions, creating a unique sequence for almost every T-cell. **The length of this CDR3 region, is a direct consequence of this recombination process.**
+The incredible diversity is generated during the development of T-cells through a process of genetic recombination, where different gene segments (V, D, and J) are pieced together. The CDR3 region spans the junction of these segments and includes random nucleotide additions and deletions, creating a unique sequence for almost every T-cell. **The length of this CDR3 region is a direct consequence of this recombination process.**
 
 The CDR3 length distribution serves as a primary metric for assessing library complexity and detecting technical biases introduced during library preparation or sequencing. While biological clonality impacts this metric, deviations in non-expanded samples often signal workflow failures rather than biological reality.
 
@@ -1843,7 +1829,7 @@ print(":::\n\n")
 
 ## Sequencing Depth vs Richness {#sec-depth-richness}
 
-**<u>Does a sample appears "diverse" because it is biologically complex, or simply because it was sequenced more deeply than others?</u>**  
+**<u>Does a sample appear "diverse" because it is biologically complex, or simply because it was sequenced more deeply than others?</u>**  
 In an ideal experiment, **we would sequence until we reach saturation** (the point where sequencing more reads no longer reveals new clonotypes). On this plot (log-log scale), a saturated cohort appears as a horizontal plateau: increasing Total Counts (x-axis) does not significantly increase Richness (y-axis). This indicates that the library has captured the true biological ceiling of the sample, allowing for valid comparisons between patients.
 
 ```{python}
@@ -2055,22 +2041,50 @@ df_rarefaction = pd.concat(rarefaction_data)
 # Merge metadata into rarefaction data using the safe source
 df_rarefaction = df_rarefaction.merge(meta_safe, on='sample', how='left')
 
-# Rarefaction Curves
-min_depth = qc_stats['sequencing_depth'].min()
+# ----- Rarefaction Curves
 
-# 2. Plot with Log X-Axis
-fig_rare = px.line(df_rarefaction, x='depth', y='richness', color='alias',
+# ---------------------------------------------------------
+# Dynamic Plotting with Adaptive Axes
+# ---------------------------------------------------------
+
+# 1. Calculate dynamic limits based on the actual data distribution
+# Instead of a hard 90th percentile, we can use the max depth plus a small buffer
+absolute_max_depth = df_rarefaction['depth'].max()
+absolute_max_richness = df_rarefaction['richness'].max()
+
+# 2. Define the plot
+fig_rare = px.line(df_rarefaction, 
+                   x='depth', 
+                   y='richness', 
+                   color='alias',
                    title='Rarefaction Curves (Diversity vs Depth)',
                    labels={'depth': 'Sequencing Depth (Total Counts)', 'richness': 'Identified Clonotypes'},
-                   hover_data=['origin'])
+                   hover_data=['origin'],
+                   template='plotly_white')
 
-# 3. Add Vertical Line with Numerical Label
+# 3. Add Vertical Line for the "Saturation Point" (Minimum Sample Depth)
 min_depth = qc_stats['sequencing_depth'].min()
 fig_rare.add_vline(x=min_depth, line_dash="dash", line_color="gray",
-                   annotation_text=f"Lowest Depth: {min_depth}")
+                   annotation_text=f"Min Depth: {min_depth}",
+                   annotation_position="top left")
 
-max_limit = qc_stats['sequencing_depth'].quantile(0.90)
-fig_rare.update_xaxes(range=[0, max_limit])
+# 4. Update Axes Dynamically
+# Setting range to None (default) allows Plotly to auto-scale, 
+# but if you want to cap it to the 95th percentile to avoid outliers stretching the plot:
+suggested_max_x = qc_stats['sequencing_depth'].quantile(0.95)
+
+fig_rare.update_layout(
+    xaxis=dict(
+        # Use 'range' if you want a specific cutoff, otherwise omit for auto-scaling
+        range=[0, suggested_max_x * 1.05], # 5% buffer
+        autorange=False, 
+        rangemode="tozero"
+    ),
+    yaxis=dict(
+        autorange=True, # Automatically adjust Y based on the visible X range
+        rangemode="tozero"
+    )
+)
 
 fig_rare.show()
 
@@ -2095,7 +2109,7 @@ Always verify the magnitude of your Y-axis ("Identified Clonotypes"). For a typi
 
 
 ::: {.callout-caution title="Warning"}
-Not all diversity metrics are equally sensible to library size:
+Not all diversity metrics are equally sensitive to library size:
 
 **High Sensitivity (Depth Matters!) $\rightarrow$ Use Rarefied Data**
 Metrics that rely on counting the **number of unique clones** are heavily biased by sequencing depth.

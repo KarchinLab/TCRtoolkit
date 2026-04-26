@@ -30,7 +30,7 @@ Thank you for using TCRtoolkit! This report is generated from the data you provi
 
 ::: {.callout-note collapse="true"}
 ## Notebook Analysis Scope
-This notebook a more detailed analysis of the samples being analyzed.
+This notebook provides a more detailed analysis of the samples being analyzed.
 :::
 
 ```{python}
@@ -80,7 +80,7 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 
 **<u>TCR chains</u>**  
 - **Single-cell**:  
-  It's common to have paired α/β chains per cell. However we only focus on the Beta chain here.  
+  It's common to have paired α/β chains per cell. However, we only focus on the Beta chain here.  
 - **Bulk**:  
   In bulk repertoire sequencing, you usually amplify TCRα and TCRβ chains separately. The resulting data contains lists of α clonotypes and lists of β clonotypes, but no information about which α and β belong to the same T cell. We focus only on the Beta chain.  
 
@@ -94,7 +94,7 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 
 **<u>Downstream biological analyses</u>**  
 - **Single-cell**:  
-  It is possile to link TCRs to phenotypic states (exhaustion, activation, tissue localization), which allows the study of clonotype heterogeneity.  
+  It is possible to link TCRs to phenotypic states (exhaustion, activation, tissue localization), which allows the study of clonotype heterogeneity.  
 - **Bulk**:    
   It focuses on population-level measures  
 :::
