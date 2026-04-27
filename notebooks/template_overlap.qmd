@@ -36,7 +36,6 @@ import base64
 import datetime
 import glob
 import h5py
-import igraph as ig
 import io
 import itertools
 import math
