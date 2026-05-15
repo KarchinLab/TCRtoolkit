@@ -14,12 +14,7 @@ process ANNOTATE_PROCESS {
     python - <<EOF
 import pandas as pd
 
-USECOLS = [
-    "junction_aa",
-    "v_call",
-    "j_call",
-    "duplicate_count"
-]
+WANTED_COLS = ["junction_aa", "v_call", "j_call", "duplicate_count", "productive"]
 
 COLMAP = {
     "junction_aa": "CDR3b",
@@ -28,10 +23,14 @@ COLMAP = {
     "duplicate_count": "counts"
 }
 
+# Only read columns that are actually present in the file
+available = pd.read_csv("${count_table}", sep='\t', nrows=0).columns.tolist()
+usecols = [c for c in WANTED_COLS if c in available]
+
 df = pd.read_csv(
     "${count_table}",
     sep='\t',
-    usecols=USECOLS,
+    usecols=usecols,
     dtype={
         "junction_aa": "string",
         "v_call": "string",
@@ -39,8 +38,13 @@ df = pd.read_csv(
         "duplicate_count": "int"
     })
 
+df = df[df.junction_aa.notna()]
+
+if "productive" in df.columns:
+    df = df[df["productive"].astype(str).str.lower().isin(["t", "true", "1", "yes"])]
+
 df = (
-    df[df.junction_aa.notna()]
+    df
     .rename(columns=COLMAP)
     [["CDR3b", "TRBV", "TRBJ", "counts"]]
 )
