@@ -7,10 +7,6 @@
 
 include { SAMPLE_CALC } from '../../modules/local/sample/sample_calc'
 include { SAMPLE_PLOT } from '../../modules/local/sample/sample_plot'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_STAT } from '../../modules/local/sample/sample_aggregate' 
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_V } from '../../modules/local/sample/sample_aggregate'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_D } from '../../modules/local/sample/sample_aggregate'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_J } from '../../modules/local/sample/sample_aggregate'
 include { TCRDIST3_MATRIX; TCRDIST3_HISTOGRAM_CALC; TCRDIST3_HISTOGRAM_PLOT} from '../../modules/local/sample/tcrdist3'
 include { OLGA_SAMPLE_MERGE; OLGA_HISTOGRAM_CALC; OLGA_HISTOGRAM_PLOT } from '../../modules/local/olga'
 include { CONVERGENCE } from '../../modules/local/sample/convergence'
@@ -36,23 +32,27 @@ workflow SAMPLE {
 
     SAMPLE_CALC( sample_map )
 
-    SAMPLE_CALC.out.sample_csv.collect().set { sample_csv_files }
-    SAMPLE_CALC.out.v_family_csv.collect().set { v_family_csv_files }
-    SAMPLE_CALC.out.d_family_csv.collect().set { d_family_csv_files }
-    SAMPLE_CALC.out.j_family_csv.collect().set { j_family_csv_files }
+    SAMPLE_CALC.out.sample_csv
+        .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
+        .set { sample_stats_agg }
 
-    SAMPLE_AGG_STAT(sample_csv_files, "sample_stats.csv")
-    SAMPLE_AGG_V(v_family_csv_files, "v_family.csv")
-    SAMPLE_AGG_D(d_family_csv_files, "d_family.csv")
-    SAMPLE_AGG_J(j_family_csv_files, "j_family.csv")
+    SAMPLE_CALC.out.v_family_csv
+        .collectFile(name: "v_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
+        .set { v_family_agg }
+
+    SAMPLE_CALC.out.d_family_csv
+        .collectFile(name: "d_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
+
+    SAMPLE_CALC.out.j_family_csv
+        .collectFile(name: "j_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
 
     /////// =================== PLOT SAMPLE ===================  ///////
 
     SAMPLE_PLOT (
         file(params.samplesheet),
         file(params.sample_stats_template),
-        SAMPLE_AGG_STAT.out.aggregated_csv,
-        SAMPLE_AGG_V.out.aggregated_csv
+        sample_stats_agg,
+        v_family_agg
         )
 
     TCRDIST3_MATRIX(

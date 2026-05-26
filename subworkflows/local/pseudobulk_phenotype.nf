@@ -5,10 +5,6 @@
 include { SAMPLESHEET_PHENO } from '../../modules/local/samplesheet/samplesheet_pheno'
 
 include { SAMPLE_CALC as SAMPLE_CALC_PHENO } from '../../modules/local/sample/sample_calc'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_STAT_PHENO } from '../../modules/local/sample/sample_aggregate' 
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_V_PHENO } from '../../modules/local/sample/sample_aggregate'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_D_PHENO } from '../../modules/local/sample/sample_aggregate'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_J_PHENO } from '../../modules/local/sample/sample_aggregate'
 include { SAMPLE_PLOT as SAMPLE_PLOT_PHENO } from '../../modules/local/sample/sample_plot'
 
 include { COMPARE_CALC as COMPARE_CALC_PHENO } from '../../modules/local/compare/compare_calc'
@@ -56,21 +52,26 @@ workflow PSEUDOBULK_PHENOTYPE {
     samplesheet_pheno = SAMPLESHEET_PHENO.out.samplesheet
     if (levels.contains('sample')) {
         SAMPLE_CALC_PHENO( ch_phenotype_files_transformed )
-        SAMPLE_CALC_PHENO.out.sample_csv.collect().set { sample_csv_files }
-        SAMPLE_CALC_PHENO.out.v_family_csv.collect().set { v_family_csv_files }
-        SAMPLE_CALC_PHENO.out.d_family_csv.collect().set { d_family_csv_files }
-        SAMPLE_CALC_PHENO.out.j_family_csv.collect().set { j_family_csv_files }
 
-        SAMPLE_AGG_STAT_PHENO(sample_csv_files, "sample_stats.csv")
-        SAMPLE_AGG_V_PHENO(v_family_csv_files, "v_family.csv")
-        SAMPLE_AGG_D_PHENO(d_family_csv_files, "d_family.csv")
-        SAMPLE_AGG_J_PHENO(j_family_csv_files, "j_family.csv")
+        SAMPLE_CALC_PHENO.out.sample_csv
+            .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample_pheno")
+            .set { sample_stats_agg }
+
+        SAMPLE_CALC_PHENO.out.v_family_csv
+            .collectFile(name: "v_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample_pheno")
+            .set { v_family_agg }
+
+        SAMPLE_CALC_PHENO.out.d_family_csv
+            .collectFile(name: "d_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample_pheno")
+
+        SAMPLE_CALC_PHENO.out.j_family_csv
+            .collectFile(name: "j_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample_pheno")
 
         SAMPLE_PLOT_PHENO(
             samplesheet_pheno,
             file(params.sample_stats_template),
-            SAMPLE_AGG_STAT_PHENO.out.aggregated_csv,
-            SAMPLE_AGG_V_PHENO.out.aggregated_csv
+            sample_stats_agg,
+            v_family_agg
             )
     }
 
