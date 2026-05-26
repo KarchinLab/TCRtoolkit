@@ -67,7 +67,7 @@ process OLGA_CONCATENATE {
         }
     ' ${pgen_chunks}
 
-    printf "CDR3b\tpgen\tlog10_pgen\n" > olga_pgen.tsv
+    printf "junction_aa\tpgen\tlog10_pgen\n" > olga_pgen.tsv
     cat ${pgen_chunks} >> olga_pgen.tsv
     """
 }
@@ -132,8 +132,8 @@ def load_index():
     df = pd.read_csv(
         INDEX_FILE,
         sep="\t",
-        usecols=["CDR3b", "pgen", "log10_pgen"],
-        dtype={"CDR3b": "object"},
+        usecols=["junction_aa", "pgen", "log10_pgen"],
+        dtype={"junction_aa": "object"},
     )
 
     max_len = "${olga_stats.max_cdr3_length}"
@@ -141,7 +141,7 @@ def load_index():
 
     print(f"Max CDR3 length: {max_len}")
 
-    cdr3_index = df["CDR3b"].values.astype(cdr3_dtype)
+    cdr3_index = df["junction_aa"].values.astype(cdr3_dtype)
 
     pgen_index = pd.to_numeric(
         df["pgen"], errors="coerce"

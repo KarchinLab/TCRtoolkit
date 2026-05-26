@@ -34,7 +34,7 @@ process TCRSHARING_CALC {
 
     # Get unique sample_ids per CDR3b — vectorized
     grouped = (
-        df.groupby('CDR3b')
+        df.groupby('junction_aa')
         .agg(
             sample_id=('sample_id', 'unique'),
             pgen=('pgen', 'first'),
@@ -50,7 +50,7 @@ process TCRSHARING_CALC {
     )
 
     # Drop raw list
-    final_df = grouped[['CDR3b', 'pgen', 'log10_pgen', 'total_samples', 'samples_present']]
+    final_df = grouped[['junction_aa', 'pgen', 'log10_pgen', 'total_samples', 'samples_present']]
     final_df = final_df.sort_values(by="total_samples", ascending=False)
 
     # Export final list

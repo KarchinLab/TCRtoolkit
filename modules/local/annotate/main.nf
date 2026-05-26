@@ -14,19 +14,7 @@ process ANNOTATE_PROCESS {
     python - <<EOF
 import pandas as pd
 
-USECOLS = [
-    "junction_aa",
-    "v_call",
-    "j_call",
-    "duplicate_count"
-]
-
-COLMAP = {
-    "junction_aa": "CDR3b",
-    "v_call": "TRBV",
-    "j_call": "TRBJ",
-    "duplicate_count": "counts"
-}
+USECOLS = ["junction_aa", "v_call", "j_call", "duplicate_count"]
 
 df = pd.read_csv(
     "${count_table}",
@@ -39,11 +27,8 @@ df = pd.read_csv(
         "duplicate_count": "int"
     })
 
-df = (
-    df[df.junction_aa.notna()]
-    .rename(columns=COLMAP)
-    [["CDR3b", "TRBV", "TRBJ", "counts"]]
-)
+df = df[df.junction_aa.notna()][["junction_aa", "v_call", "j_call", "duplicate_count"]]
+
 df["sample"] = "${sample_meta.sample}"
 
 df.to_csv("${sample_meta.sample}_cdr3.tsv", sep="\t", index=False)
