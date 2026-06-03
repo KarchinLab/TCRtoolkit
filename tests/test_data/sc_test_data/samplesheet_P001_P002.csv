@@ -1,0 +1,12 @@
+sample,patient,subject_id,BTC_patientID,timepoint,protocol_day,timepoint_order,alias,origin,sex,location,file
+GBM1-DFCI1-S1-TCR-LIB,P001,P001,DFCI1,d0_L1,0,1,P001_d0_L1,tumor,M,L1,../../../tests/test_data/sc_test_data/airr/GBM_P001_S1_airr_rearrangement.tsv
+GBM1-DFCI1-S2-TCR-LIB,P001,P001,DFCI1,d17_L1D,15,2,P001_d17_L1D,tumor,M,L1D,../../../tests/test_data/sc_test_data/airr/GBM_P001_S2_airr_rearrangement.tsv
+GBM1-DFCI1-S3-TCR-LIB,P001,P001,DFCI1,d28_L1,30,3,P001_d28_L1,tumor,M,L1,../../../tests/test_data/sc_test_data/airr/GBM_P001_S3_airr_rearrangement.tsv
+GBM1-DFCI1-S4-TCR-LIB,P001,P001,DFCI1,d63_L1,60,4,P001_d63_L1,tumor,M,L1,../../../tests/test_data/sc_test_data/airr/GBM_P001_S4_airr_rearrangement.tsv
+GBM1-DFCI1-S5-L3-TCR-LIB,P001,P001,DFCI1,d106_L3,90,5,P001_d106_L3,tumor,M,L3,../../../tests/test_data/sc_test_data/airr/GBM_P001_S5_L3_airr_rearrangement.tsv
+GBM1-DFCI2-S1-TCR-LIB,P002,P002,DFCI2,d0_L1,0,1,P002_d0_L1,tumor,F,L1,../../../tests/test_data/sc_test_data/airr/GBM_P002_S1_airr_rearrangement.tsv
+GBM1-DFCI2-S2-TCR-LIB,P002,P002,DFCI2,d16_L1,15,2,P002_d16_L1,tumor,F,L1,../../../tests/test_data/sc_test_data/airr/GBM_P002_S2_airr_rearrangement.tsv
+GBM1-DFCI2-S3-TCR-LIB,P002,P002,DFCI2,d30_L1,30,3,P002_d30_L1,tumor,F,L1,../../../tests/test_data/sc_test_data/airr/GBM_P002_S3_airr_rearrangement.tsv
+GBM1-DFCI2-S4-TCR-LIB,P002,P002,DFCI2,d63_L1,60,4,P002_d63_L1,tumor,F,L1,../../../tests/test_data/sc_test_data/airr/GBM_P002_S4_L1D_airr_rearrangement.tsv
+GBM1-DFCI2-S5-L2-TCR-LIB,P002,P002,DFCI2,d91_L2,90,5,P002_d91_L2,tumor,F,L2,../../../tests/test_data/sc_test_data/airr/GBM_P002_S5_L2_airr_rearrangement.tsv
+GBM1-DFCI2-S6-L2-TCR-LIB,P002,P002,DFCI2,d119_L2,120,6,P002_d119_L2,tumor,F,L2,../../../tests/test_data/sc_test_data/airr/GBM_P002_S6_L2_airr_rearrangement.tsv

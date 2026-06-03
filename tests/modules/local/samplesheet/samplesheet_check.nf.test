@@ -140,4 +140,26 @@ nextflow_process {
             }
         }
     }
+
+        test("Should process pseudobulk samplesheet") {
+
+        tag "basic-pseudobulk"
+
+        when {
+            process {
+                """
+                input[0] = file("${projectDir}/tests/test_data/sc_test_data/samplesheets/samplesheet_P001_P002.csv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            // If it succeeds, the output should still be created
+            if (process.success) {
+                assert process.out.samplesheet_utf8
+            }
+        }
+    }
 }

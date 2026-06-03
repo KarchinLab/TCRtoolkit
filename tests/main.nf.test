@@ -22,4 +22,23 @@ nextflow_pipeline {
         }
 
     }
+
+        test("Sc pseudobulk dataset") {
+
+        tag "pseudobulk"
+
+        when {
+            params {
+                samplesheet = "../../../tests/test_data/sc_test_data/samplesheet_P001_P002.csv"
+                outdir = "out-sc-pseudobulk"
+                max_memory = "8.GB" 
+                max_cpus = 4
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
 }
