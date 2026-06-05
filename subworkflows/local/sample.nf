@@ -22,7 +22,8 @@ include { VDJDB_GET; VDJDB_VDJMATCH } from '../../modules/local/sample/tcrspecif
 workflow SAMPLE {
 
     take:
-    sample_map
+    processed_samples
+    per_sample_stats
     cdr3_pgen
     olga_stats
 
@@ -30,7 +31,10 @@ workflow SAMPLE {
 
     /////// =================== CALC SAMPLE ===================  ///////
 
-    SAMPLE_CALC( sample_map )
+    processed_samples
+        .join(per_sample_stats)
+        .set { sample_calc_input }
+    SAMPLE_CALC( sample_calc_input )
 
     SAMPLE_CALC.out.sample_csv
         .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
@@ -56,7 +60,7 @@ workflow SAMPLE {
         )
 
     TCRDIST3_MATRIX(
-        sample_map,
+        processed_samples,
         params.matrix_sparsity,
         params.distance_metric,
         file(params.db_path)
@@ -88,7 +92,7 @@ workflow SAMPLE {
         global_y_max_value
     )
 
-    OLGA_SAMPLE_MERGE ( sample_map,
+    OLGA_SAMPLE_MERGE ( processed_samples,
         cdr3_pgen.first(),
         olga_stats )
 
@@ -103,12 +107,12 @@ workflow SAMPLE {
 
     OLGA_HISTOGRAM_PLOT( OLGA_HISTOGRAM_CALC.out.olga_histogram, olga_y_max_value )
 
-    CONVERGENCE ( sample_map )
+    CONVERGENCE ( processed_samples )
 
-    TCRPHENO ( sample_map )
+    TCRPHENO ( processed_samples )
 
     VDJDB_GET ()
 
-    VDJDB_VDJMATCH (sample_map, VDJDB_GET.out.ref_db)
+    VDJDB_VDJMATCH (processed_samples, VDJDB_GET.out.ref_db)
 
 }

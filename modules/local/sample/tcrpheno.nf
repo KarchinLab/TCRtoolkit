@@ -11,31 +11,32 @@ process TCRPHENO {
     script:
     """
     Rscript - <<EOF
-    #!/usr/bin/env Rscript
+#!/usr/bin/env Rscript
 
-    library(dplyr)
-    library(tcrpheno)
+library(dplyr)
+library(tcrpheno)
 
-    df <- utils::read.csv("$count_table", sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
-    df <- df %>%
-        dplyr::filter(productive == 'true') %>% 
-        dplyr::select(sequence_id, junction, junction_aa, v_call, j_call)
+df <- utils::read.csv("${count_table}", sep = "\t", stringsAsFactors = FALSE, check.names = FALSE) %>%
+    dplyr::select(sequence_id, junction, junction_aa, v_call, j_call)
 
-    df2 <- df %>%
-        dplyr::rename(
-            cell = sequence_id,
-            TCRB_cdr3nt = junction,
-            TCRB_cdr3aa = junction_aa,
-            TCRB_vgene = v_call,
-            TCRB_jgene = j_call
-        )
+df2 <- df %>%
+    dplyr::rename(
+        cell = sequence_id,
+        TCRB_cdr3nt = junction,
+        TCRB_cdr3aa = junction_aa,
+        TCRB_vgene = v_call,
+        TCRB_jgene = j_call
+    ) %>%
+    tcrpheno::score_tcrs(chain = "b")
+df2["sequence_index"] <- base::as.integer(base::rownames(df2))
 
-    result <- tcrpheno::score_tcrs(df2,chain="b")
-    result["sequence_id"] <- base::rownames(result)
-    df3 <- dplyr::left_join(df, result, by = 'sequence_id')
+df3 <- df %>%
+    dplyr::select(sequence_id) %>%
+    dplyr::mutate(sequence_index = dplyr::row_number()) %>%
+    dplyr::left_join(df2, by = 'sequence_index') %>%
+    dplyr::select(!sequence_index)
 
-    write.table(df3, "${sample_meta.sample}_tcrpheno.tsv", sep = "\t", row.names = FALSE, quote = FALSE, na = "")
-
-    EOF
+write.table(df3, "${sample_meta.sample}_tcrpheno.tsv", sep = "\t", row.names = FALSE, quote = FALSE, na = "")
+EOF
     """
 }

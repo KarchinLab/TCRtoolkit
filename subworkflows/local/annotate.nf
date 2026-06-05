@@ -22,6 +22,17 @@ workflow ANNOTATE {
     ANNOTATE_PROCESS( sample_map )
     
     processed_samples = ANNOTATE_PROCESS.out.process
+    per_sample_stats = ANNOTATE_PROCESS.out.pre_filter_stats
+
+    per_sample_stats
+        .map { _meta, stats_file -> stats_file }
+        .collectFile(
+            name: "pre_filter_stats.csv",
+            keepHeader: true,
+            skip: 1,
+            sort: true,
+            storeDir: "${params.outdir}/sample"
+        )
     
     processed_samples
         .map { _meta, file -> file }
@@ -63,6 +74,7 @@ workflow ANNOTATE {
 
     emit:
     processed_samples
+    per_sample_stats
     concat_cdr3_sorted
     cdr3_pgen
     olga_stats

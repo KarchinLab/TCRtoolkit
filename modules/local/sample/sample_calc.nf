@@ -4,7 +4,7 @@ process SAMPLE_CALC {
     publishDir enabled: false
 
     input:
-    tuple val(sample_meta), path(count_table)
+    tuple val(sample_meta), path(count_table), path(pre_filter_stats)
 
     output:
     path "sample_stats_${sample_meta.sample}.csv"  , emit: sample_csv
@@ -15,6 +15,6 @@ process SAMPLE_CALC {
 
     script:
     """
-    sample_calc.py -s '${sample_meta.sample}' -c ${count_table}
+    sample_calc.py -s '${sample_meta.sample}' -c ${count_table} -p ${pre_filter_stats}
     """
 }

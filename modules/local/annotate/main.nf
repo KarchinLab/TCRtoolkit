@@ -8,13 +8,18 @@ process ANNOTATE_PROCESS {
 
     output:
     tuple val(sample_meta), path("${sample_meta.sample}_cdr3.tsv"), emit: "process"
+    tuple val(sample_meta), path("${sample_meta.sample}_pre_filter_stats.csv"), emit: "pre_filter_stats"
 
     script:
     """
     python - <<EOF
 import pandas as pd
 
-USECOLS = ["junction_aa", "v_call", "j_call", "duplicate_count"]
+USECOLS = [
+    "junction_aa", "v_call", "d_call", "j_call",
+    "duplicate_count", "junction_aa_length", "duplicate_frequency_percent",
+    "productive", "sequence", "sequence_id", "junction",
+]
 
 df = pd.read_csv(
     "${count_table}",
@@ -23,15 +28,36 @@ df = pd.read_csv(
     dtype={
         "junction_aa": "string",
         "v_call": "string",
+        "d_call": "string",
         "j_call": "string",
-        "duplicate_count": "int"
+        "sequence": "string",
+        "sequence_id": "string",
+        "junction": "string",
+        "duplicate_count": "int",
+        "productive": "boolean"
     })
 
-df = df[df.junction_aa.notna()][["junction_aa", "v_call", "j_call", "duplicate_count"]]
+total_clones = len(df)
+num_prod = int(df['productive'].sum())
+num_nonprod = total_clones - num_prod
 
+pd.DataFrame({
+    "sample": ["${sample_meta.sample}"],
+    "total_clones": [total_clones],
+    "productive_clones": [num_prod],
+    "nonproductive_clones": [num_nonprod],
+}).to_csv("${sample_meta.sample}_pre_filter_stats.csv", index=False)
+
+df = df[df.junction_aa.notna()]
+df = df[df['productive']==True]
+
+OUTPUT_COLS = [
+    "junction_aa", "v_call", "d_call", "j_call",
+    "duplicate_count", "junction_aa_length", "duplicate_frequency_percent",
+    "sequence", "sequence_id", "junction",
+]
 df["sample"] = "${sample_meta.sample}"
-
-df.to_csv("${sample_meta.sample}_cdr3.tsv", sep="\t", index=False)
+df[OUTPUT_COLS + ["sample"]].to_csv("${sample_meta.sample}_cdr3.tsv", sep="\t", index=False)
 
 EOF
     """

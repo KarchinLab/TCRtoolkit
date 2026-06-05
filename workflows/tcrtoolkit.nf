@@ -101,7 +101,8 @@ workflow TCRTOOLKIT {
     // Running sample level analysis
     if (levels.contains('sample')) {
         SAMPLE(
-            sample_map_final,
+            ANNOTATE.out.processed_samples,
+            ANNOTATE.out.per_sample_stats,
             ANNOTATE.out.cdr3_pgen,
             ANNOTATE.out.olga_stats
         )
