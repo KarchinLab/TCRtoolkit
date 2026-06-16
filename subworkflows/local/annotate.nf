@@ -34,10 +34,9 @@ workflow ANNOTATE {
             storeDir: "${params.outdir}/sample"
         )
     
-    processed_samples
+    def concat_cdr3 = processed_samples
         .map { _meta, file -> file }
         .collectFile(name: 'concat_cdr3.tsv', keepHeader: true, skip: 1)
-        .set { concat_cdr3 }
 
     ANNOTATE_SORT_CDR3( concat_cdr3 )
     concat_cdr3_sorted = ANNOTATE_SORT_CDR3.out.concat_cdr3_sorted

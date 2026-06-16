@@ -20,10 +20,9 @@ workflow PATIENT {
     processed_samples
 
     main:
-    processed_samples
+    def patient_groups = processed_samples
         .map { meta, file -> [ meta.patient, file ] }
         .groupTuple()
-        .set { patient_groups }
 
     PATIENT_CONCATENATE ( patient_groups )
 

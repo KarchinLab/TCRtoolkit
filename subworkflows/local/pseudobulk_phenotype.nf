@@ -53,13 +53,11 @@ workflow PSEUDOBULK_PHENOTYPE {
     if (levels.contains('sample')) {
         SAMPLE_CALC_PHENO( ch_phenotype_files_transformed )
 
-        SAMPLE_CALC_PHENO.out.sample_csv
+        def sample_stats_agg = SAMPLE_CALC_PHENO.out.sample_csv
             .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample_pheno")
-            .set { sample_stats_agg }
 
-        SAMPLE_CALC_PHENO.out.v_family_csv
+        def v_family_agg = SAMPLE_CALC_PHENO.out.v_family_csv
             .collectFile(name: "v_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample_pheno")
-            .set { v_family_agg }
 
         SAMPLE_CALC_PHENO.out.d_family_csv
             .collectFile(name: "d_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample_pheno")
@@ -75,10 +73,9 @@ workflow PSEUDOBULK_PHENOTYPE {
             )
     }
 
-    ch_phenotype_files_transformed
+    def all_sample_files = ch_phenotype_files_transformed
         .map { _meta, f -> f }
         .collect()
-        .set { all_sample_files }
     if (levels.contains('compare')) {
         COMPARE_CALC_PHENO( samplesheet_pheno,
             all_sample_files )

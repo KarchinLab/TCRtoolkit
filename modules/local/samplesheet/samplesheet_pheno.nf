@@ -10,9 +10,10 @@ process SAMPLESHEET_PHENO {
     path "samplesheet_phenotype.csv", emit: samplesheet
 
     script:
-    """ 
+    def json_meta = groovy.json.JsonOutput.toJson(meta_list)
+    """
     cat << 'EOF' > phenotype_meta.json
-    ${groovy.json.JsonOutput.toJson(meta_list)}
+    ${json_meta}
     EOF
     create_pheno_samplesheet.py phenotype_meta.json samplesheet_phenotype.csv
     """

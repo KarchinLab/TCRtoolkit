@@ -31,26 +31,20 @@ workflow SAMPLE {
 
     /////// =================== CALC SAMPLE ===================  ///////
 
-    processed_samples
-        .join(per_sample_stats)
-        .set { sample_calc_input }
+    def sample_calc_input = processed_samples.join(per_sample_stats)
     SAMPLE_CALC( sample_calc_input )
 
-    SAMPLE_CALC.out.sample_csv
+    def sample_stats_agg = SAMPLE_CALC.out.sample_csv
         .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
-        .set { sample_stats_agg }
 
-    SAMPLE_CALC.out.v_family_csv
+    def v_family_agg = SAMPLE_CALC.out.v_family_csv
         .collectFile(name: "v_family_long.csv", keepHeader: true, skip: 1, sort: true)
-        .set { v_family_agg }
 
-    SAMPLE_CALC.out.d_family_csv
+    def d_family_agg = SAMPLE_CALC.out.d_family_csv
         .collectFile(name: "d_family_long.csv", keepHeader: true, skip: 1, sort: true)
-        .set { d_family_agg }
 
-    SAMPLE_CALC.out.j_family_csv
+    def j_family_agg = SAMPLE_CALC.out.j_family_csv
         .collectFile(name: "j_family_long.csv", keepHeader: true, skip: 1, sort: true)
-        .set { j_family_agg }
 
     SAMPLE_CALC_PIVOT( v_family_agg, d_family_agg, j_family_agg )
 
@@ -70,11 +64,10 @@ workflow SAMPLE {
         file(params.db_path)
     )
 
-    TCRDIST3_MATRIX.out.max_matrix_value
+    def global_x_max_value = TCRDIST3_MATRIX.out.max_matrix_value
         .map { tcrdist_xmax -> tcrdist_xmax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
-        .set { global_x_max_value }
     global_x_max_value.view { global_xmax -> "Global x max matrix value: $global_xmax" }
 
     TCRDIST3_HISTOGRAM_CALC( 
@@ -84,11 +77,10 @@ workflow SAMPLE {
         global_x_max_value
     )
 
-    TCRDIST3_HISTOGRAM_CALC.out.max_histogram_count
+    def global_y_max_value = TCRDIST3_HISTOGRAM_CALC.out.max_histogram_count
         .map { tcrdist_ymax -> tcrdist_ymax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
-        .set { global_y_max_value }
     global_y_max_value.view { global_ymax -> "Global y max matrix value: $global_ymax" }
 
     TCRDIST3_HISTOGRAM_PLOT( 
@@ -102,11 +94,10 @@ workflow SAMPLE {
 
     OLGA_HISTOGRAM_CALC ( OLGA_SAMPLE_MERGE.out.olga_pgen, olga_stats )
 
-    OLGA_HISTOGRAM_CALC.out.olga_ymax
+    def olga_y_max_value = OLGA_HISTOGRAM_CALC.out.olga_ymax
         .map { ymax -> ymax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
-        .set { olga_y_max_value }
     olga_y_max_value.view { olga_ymax -> "Olga y max matrix value: $olga_ymax" }
 
     OLGA_HISTOGRAM_PLOT( OLGA_HISTOGRAM_CALC.out.olga_histogram, olga_y_max_value )
