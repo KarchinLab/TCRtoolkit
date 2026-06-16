@@ -69,8 +69,14 @@ def normalize_bool(val):
     return pd.NA 
 
 def pseudobulk(input_df, basename, airr_schema):
-    # Load data, filter out TRA calls
     df = input_df
+
+    # Standard Cell Ranger quality filters (applied only when columns are present)
+    for col in ["is_cell", "high_confidence", "productive"]:
+        if col in df.columns:
+            df = df[df[col].apply(normalize_bool) == "true"]
+
+    # Load data, filter out TRA calls
     df_trb = df[df["v_call"].str.startswith("TRB") & df["j_call"].str.startswith("TRB")]
 
     # Define required aggregations
@@ -173,8 +179,14 @@ def add_phenotype_info(input_df, basename, sobject_gex):
     return merged_df
 
 def pseudobulk_phenotype(input_df, basename, airr_schema):
-    # Load data, filter out TRA calls
     df = input_df
+
+    # Standard Cell Ranger quality filters (applied only when columns are present)
+    for col in ["is_cell", "high_confidence", "productive"]:
+        if col in df.columns:
+            df = df[df[col].apply(normalize_bool) == "true"]
+
+    # Load data, filter out TRA calls
     df_trb = df[df["v_call"].str.startswith("TRB") & df["j_call"].str.startswith("TRB")]
 
     # Define required aggregations

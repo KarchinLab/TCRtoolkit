@@ -12,9 +12,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import entropy
 import numpy as np
-import csv
 import re
-import json
 
 def extract_trb_family(allele):
     if pd.isna(allele):
@@ -22,20 +20,17 @@ def extract_trb_family(allele):
     match = re.match(r'(TRB[V|D|J])(\d+)', allele)
     return f"{match.group(1)}{match.group(2)}" if match else None
 
-def calc_gene_family(sample_name, counts, gene_column, family_prefix, max_index, output_file):
-    # Build list of all possible family names
-    all_fams = [f'{family_prefix}{i}' for i in range(1, max_index + 1)]
-
-    # Count usage
-    fam_df = counts[gene_column].apply(extract_trb_family).value_counts(dropna=False).to_frame().T
-
-    # Reindex to include all families
-    fam_df = pd.DataFrame([fam_df.reindex(columns=all_fams, fill_value=0).iloc[0]]).reset_index(drop=True)
-
-    # Add sample column
-    fam_df.insert(0, 'sample', sample_name)
-
-    fam_df.to_csv(output_file, header=True, index=False)
+def calc_gene_family(sample_name, counts, gene_column, output_file):
+    (
+        counts[gene_column]
+        .apply(extract_trb_family)
+        .dropna()
+        .value_counts()
+        .rename_axis('gene')
+        .reset_index(name='count')
+        .assign(sample=sample_name)[['sample', 'gene', 'count']]
+        .to_csv(output_file, index=False)
+    )
 
 def calc_sample_stats(sample_name, counts, pre_stats, output_file):
     """Calculate sample level statistics of TCR repertoire."""
@@ -126,9 +121,9 @@ def main():
     counts = pd.read_csv(args.count_table, sep='\t')
     pre_filter_stats = pd.read_csv(args.pre_filter_stats).iloc[0]
 
-    calc_gene_family(sample, counts, 'v_call', 'TRBV', 30, f'v_family_{sample}.csv')
-    calc_gene_family(sample, counts, 'd_call', 'TRBD', 2, f'd_family_{sample}.csv')
-    calc_gene_family(sample, counts, 'j_call', 'TRBJ', 2, f'j_family_{sample}.csv')
+    calc_gene_family(sample, counts, 'v_call', f'v_family_{sample}.csv')
+    calc_gene_family(sample, counts, 'd_call', f'd_family_{sample}.csv')
+    calc_gene_family(sample, counts, 'j_call', f'j_family_{sample}.csv')
 
     calc_sample_stats(sample, counts, pre_filter_stats, f'sample_stats_{sample}.csv')
 

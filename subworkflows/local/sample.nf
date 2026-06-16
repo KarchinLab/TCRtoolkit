@@ -5,7 +5,7 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { SAMPLE_CALC } from '../../modules/local/sample/sample_calc'
+include { SAMPLE_CALC; SAMPLE_CALC_PIVOT } from '../../modules/local/sample/sample_calc'
 include { SAMPLE_PLOT } from '../../modules/local/sample/sample_plot'
 include { TCRDIST3_MATRIX; TCRDIST3_HISTOGRAM_CALC; TCRDIST3_HISTOGRAM_PLOT} from '../../modules/local/sample/tcrdist3'
 include { OLGA_SAMPLE_MERGE; OLGA_HISTOGRAM_CALC; OLGA_HISTOGRAM_PLOT } from '../../modules/local/olga'
@@ -41,14 +41,18 @@ workflow SAMPLE {
         .set { sample_stats_agg }
 
     SAMPLE_CALC.out.v_family_csv
-        .collectFile(name: "v_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
+        .collectFile(name: "v_family_long.csv", keepHeader: true, skip: 1, sort: true)
         .set { v_family_agg }
 
     SAMPLE_CALC.out.d_family_csv
-        .collectFile(name: "d_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
+        .collectFile(name: "d_family_long.csv", keepHeader: true, skip: 1, sort: true)
+        .set { d_family_agg }
 
     SAMPLE_CALC.out.j_family_csv
-        .collectFile(name: "j_family.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
+        .collectFile(name: "j_family_long.csv", keepHeader: true, skip: 1, sort: true)
+        .set { j_family_agg }
+
+    SAMPLE_CALC_PIVOT( v_family_agg, d_family_agg, j_family_agg )
 
     /////// =================== PLOT SAMPLE ===================  ///////
 
@@ -56,7 +60,7 @@ workflow SAMPLE {
         file(params.samplesheet),
         file(params.sample_stats_template),
         sample_stats_agg,
-        v_family_agg
+        SAMPLE_CALC_PIVOT.out.v_family_wide
         )
 
     TCRDIST3_MATRIX(
