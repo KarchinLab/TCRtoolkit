@@ -63,6 +63,11 @@ workflow ANNOTATE {
                 }
             )
     )
+
+    emit:
+    processed_samples
+    per_sample_stats
+    concat_cdr3_sorted
     cdr3_pgen = ANNOTATE_OLGA_CONCATENATE.out.cdr3_pgen
     olga_stats = ANNOTATE_OLGA_CONCATENATE.out.cdr3_pgen_stats
         .map { f ->
@@ -71,11 +76,4 @@ workflow ANNOTATE {
                 .collectEntries{ stats -> [(stats[0]): stats[1]] }
         }
         .first()
-
-    emit:
-    processed_samples
-    per_sample_stats
-    concat_cdr3_sorted
-    cdr3_pgen
-    olga_stats
 }
