@@ -11,7 +11,6 @@
 
 include { INPUT_CHECK }         from '../subworkflows/local/input_check'
 include { CONVERT }             from '../subworkflows/local/convert'
-include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
 include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
@@ -56,7 +55,6 @@ workflow TCRTOOLKIT {
 
     // Checking input tables
     INPUT_CHECK( file(params.samplesheet) )
-    ch_samplesheet_utf8 = INPUT_CHECK.out.samplesheet_utf8
 
     if (input_format == 'adaptive') {
         CONVERT(
@@ -90,10 +88,6 @@ workflow TCRTOOLKIT {
     }
 
     // --- Main Analysis ---
-
-    // RESOLVE_SAMPLESHEET( ch_samplesheet_utf8,
-    //     sample_map_final )
-
     if (levels.intersect(['sample','patient','compare'])) {
         ANNOTATE( sample_map_final )
     }
