@@ -51,10 +51,9 @@
           "fa_icon": "fas fa-memory"
         },
         "max_time": {
-          "type": "string",
-          "default": "48.h",
-          "pattern": "^\\d+(?:\\.\\d+|\\.)?\\s*(s|m|h|d)$",
-          "description": "Maximum walltime for any job.",
+          "type": "integer",
+          "default": 172800000,
+          "description": "Maximum walltime for any job, converted from Nextflow Duration object.",
           "fa_icon": "far fa-clock"
         }
       }
@@ -129,6 +128,20 @@
       }
     },
 
+    "olga_options": {
+      "title": "OLGA options",
+      "type": "object",
+      "fa_icon": "fas fa-layer-group",
+      "properties": {
+        "olga_chunk_length": {
+          "type": "integer",
+          "default": 100000,
+          "minimum": 1000,
+          "description": "Number of sequences processed per OLGA chunk. Larger values reduce parallelization and increase memory usage."
+        }
+      }
+    },
+
     "giana_options": {
       "title": "GIANA clustering options",
       "type": "object",
@@ -145,6 +158,7 @@
       "type": "object",
       "fa_icon": "fas fa-code-branch",
       "properties": {
+        "use_gliph2": {"type": "boolean", "default": false},
         "gliph2_report_template": { "type": "string" },
         "ref_files": { "type": "string" },
         "local_min_pvalue": { "type": "string", "default": "0.001" },
@@ -180,6 +194,7 @@
     { "$ref": "#/$defs/workflow_options" },
     { "$ref": "#/$defs/airr_options" },
     { "$ref": "#/$defs/plotting_options" },
+    { "$ref": "#/$defs/olga_options" },
     { "$ref": "#/$defs/giana_options" },
     { "$ref": "#/$defs/gliph2_options" },
     { "$ref": "#/$defs/tcrdist3_options" }
