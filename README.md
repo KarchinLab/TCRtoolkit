@@ -31,10 +31,9 @@ The nextflow executable is now available to run on the command line. The executa
 
 Below is a minimal example of how to run the pipeline. The `minimal-example` dataset provided is a small subset of the dataset from this manuscript by [Tumeh and Ribas et al. (2014)](https://www.nature.com/articles/nature13954). Note that the results are simply for demonstration purposes and are not intended for biological interpretation.
 
+With the update to [Nextflow strict syntax](https://docs.seqera.io/nextflow/strict-syntax#using-legacy-parameter-declarations), non-default parameters should be supplied in `params.yml` rather than the command line, to ensure that number- and boolean-type parameters do not get cast as strings.
+
 ```bash
 nextflow run KarchinLab/TCRtoolkit \
-    --samplesheet https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/samplesheet.csv \
-    --outdir out-minimal-dev \
-    --input_format adaptive \
-    --max_memory 10GB --max_cpus 4
+    -params-file params.yml
 ```
