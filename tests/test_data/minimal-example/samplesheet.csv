@@ -1,4 +1,4 @@
-sample,subject_id,timepoint,origin,file
+sample,patient,timepoint,origin,file
 Patient01_Base,Patient01,Base,tumor,https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/PD1_Patient01_Base.tsv
 Patient02_Base,Patient02,Base,tumor,https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/PD1_Patient02_Base.tsv
 Patient03_Base,Patient03,Base,tumor,https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/PD1_Patient03_Base.tsv
