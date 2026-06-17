@@ -10,8 +10,7 @@ workflow ADAPTIVE {
         params.airr_schema,
         params.imgt_lookup
     )
-    sample_map_converted = CONVERT_ADAPTIVE.out.adaptive_convert
 
     emit:
-    sample_map_converted
+    CONVERT_ADAPTIVE.out.adaptive_convert
 }

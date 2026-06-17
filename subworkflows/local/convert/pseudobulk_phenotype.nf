@@ -11,8 +11,7 @@ workflow PSEUDOBULK_PHENOTYPE {
         params.airr_schema,
         sobject_gex
     )
-    ch_pseudobulk_phenotype = PSEUDOBULK_PHENOTYPE_CELLRANGER.out.cellranger_pseudobulk_phenotype
 
     emit:
-    ch_pseudobulk_phenotype
+    PSEUDOBULK_PHENOTYPE_CELLRANGER.out.cellranger_pseudobulk_phenotype
 }

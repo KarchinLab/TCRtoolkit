@@ -9,8 +9,7 @@ workflow PSEUDOBULK {
         sample_map,
         params.airr_schema,
     )
-    sample_map_converted = PSEUDOBULK_CELLRANGER.out.cellranger_pseudobulk
 
     emit:
-    sample_map_converted
+    PSEUDOBULK_CELLRANGER.out.cellranger_pseudobulk
 }

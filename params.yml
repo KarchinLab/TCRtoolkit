@@ -1,0 +1,6 @@
+samplesheet: "https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/samplesheet.csv"
+outdir: "out-minimal-dev"
+workflow_level: "sample,patient,compare"
+input_format: "adaptive"
+max_memory: 10.GB
+max_cpus: 4

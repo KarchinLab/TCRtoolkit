@@ -1,7 +1,6 @@
 process PSEUDOBULK_PHENOTYPE_CELLRANGER {
     tag "${sample_meta.sample}"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
 
     input:
     tuple val(sample_meta), path(count_table)

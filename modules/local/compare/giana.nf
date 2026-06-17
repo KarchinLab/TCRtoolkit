@@ -15,7 +15,14 @@ process GIANA_CALC {
 
     script:   
     """
-    GIANA --file "${concat_cdr3}" \
+    python3 - <<EOF
+    import pandas as pd
+    df = pd.read_csv("${concat_cdr3}", sep="\t")
+    df = df.rename(columns={"junction_aa": "CDR3b", "v_call": "TRBV"})
+    df.to_csv("concat_cdr3_renamed.tsv", sep="\t", index=False)
+    EOF
+    
+    GIANA --file "concat_cdr3_renamed.tsv" \
         --output . \
         --outfile giana_RotationEncodingBL62.txt \
         --EncodingMatrix true \
@@ -26,7 +33,7 @@ process GIANA_CALC {
         --Verbose
 
     # Insert header after GIANA comments
-    insert=\$(head -n 1 "${concat_cdr3}")
+    insert=\$(head -n 1 "concat_cdr3_renamed.tsv")
     insert=\$(echo "\$insert" | awk -F'\t' 'BEGIN{OFS="\t"} {
         out = \$1 OFS "cluster"
         for (i=2; i<=NF; i++) {

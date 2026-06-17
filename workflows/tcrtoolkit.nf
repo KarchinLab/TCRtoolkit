@@ -11,7 +11,6 @@
 
 include { INPUT_CHECK }         from '../subworkflows/local/input_check'
 include { CONVERT }             from '../subworkflows/local/convert'
-include { RESOLVE_SAMPLESHEET } from '../subworkflows/local/resolve_samplesheet'
 include { SAMPLE }              from '../subworkflows/local/sample'
 include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
@@ -56,23 +55,14 @@ workflow TCRTOOLKIT {
 
     // Checking input tables
     INPUT_CHECK( file(params.samplesheet) )
-    ch_samplesheet_utf8 = INPUT_CHECK.out.samplesheet_utf8
 
     if (input_format == 'adaptive') {
-        CONVERT(
-            INPUT_CHECK.out.sample_map,
-            input_format
-        )
-        .sample_map_converted
-        .set { sample_map_final }
+        CONVERT(INPUT_CHECK.out.sample_map, input_format)
+        sample_map_final = CONVERT.out.sample_map_converted
 
     } else if (input_format == 'cellranger') {
-        CONVERT(
-            INPUT_CHECK.out.sample_map,
-            input_format
-        )
-        .sample_map_converted
-        .set { sample_map_final }
+        CONVERT(INPUT_CHECK.out.sample_map, input_format)
+        sample_map_final = CONVERT.out.sample_map_converted
 
         if (params.sobject_gex) {
             // Current SCRATCH-annotate gex input:
@@ -85,15 +75,10 @@ workflow TCRTOOLKIT {
         }
 
     } else {
-        INPUT_CHECK.out.sample_map
-            .set { sample_map_final }
+        sample_map_final = INPUT_CHECK.out.sample_map
     }
 
     // --- Main Analysis ---
-
-    // RESOLVE_SAMPLESHEET( ch_samplesheet_utf8,
-    //     sample_map_final )
-
     if (levels.intersect(['sample','patient','compare'])) {
         ANNOTATE( sample_map_final )
     }
@@ -101,7 +86,8 @@ workflow TCRTOOLKIT {
     // Running sample level analysis
     if (levels.contains('sample')) {
         SAMPLE(
-            sample_map_final,
+            ANNOTATE.out.processed_samples,
+            ANNOTATE.out.per_sample_stats,
             ANNOTATE.out.cdr3_pgen,
             ANNOTATE.out.olga_stats
         )

@@ -5,12 +5,8 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { SAMPLE_CALC } from '../../modules/local/sample/sample_calc'
+include { SAMPLE_CALC; SAMPLE_CALC_PIVOT } from '../../modules/local/sample/sample_calc'
 include { SAMPLE_PLOT } from '../../modules/local/sample/sample_plot'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_STAT } from '../../modules/local/sample/sample_aggregate' 
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_V } from '../../modules/local/sample/sample_aggregate'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_D } from '../../modules/local/sample/sample_aggregate'
-include { SAMPLE_AGGREGATE as SAMPLE_AGG_J } from '../../modules/local/sample/sample_aggregate'
 include { TCRDIST3_MATRIX; TCRDIST3_HISTOGRAM_CALC; TCRDIST3_HISTOGRAM_PLOT} from '../../modules/local/sample/tcrdist3'
 include { OLGA_SAMPLE_MERGE; OLGA_HISTOGRAM_CALC; OLGA_HISTOGRAM_PLOT } from '../../modules/local/olga'
 include { CONVERGENCE } from '../../modules/local/sample/convergence'
@@ -26,7 +22,8 @@ include { VDJDB_GET; VDJDB_VDJMATCH } from '../../modules/local/sample/tcrspecif
 workflow SAMPLE {
 
     take:
-    sample_map
+    processed_samples
+    per_sample_stats
     cdr3_pgen
     olga_stats
 
@@ -34,39 +31,43 @@ workflow SAMPLE {
 
     /////// =================== CALC SAMPLE ===================  ///////
 
-    SAMPLE_CALC( sample_map )
+    def sample_calc_input = processed_samples.join(per_sample_stats)
+    SAMPLE_CALC( sample_calc_input )
 
-    SAMPLE_CALC.out.sample_csv.collect().set { sample_csv_files }
-    SAMPLE_CALC.out.v_family_csv.collect().set { v_family_csv_files }
-    SAMPLE_CALC.out.d_family_csv.collect().set { d_family_csv_files }
-    SAMPLE_CALC.out.j_family_csv.collect().set { j_family_csv_files }
+    def sample_stats_agg = SAMPLE_CALC.out.sample_csv
+        .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
 
-    SAMPLE_AGG_STAT(sample_csv_files, "sample_stats.csv")
-    SAMPLE_AGG_V(v_family_csv_files, "v_family.csv")
-    SAMPLE_AGG_D(d_family_csv_files, "d_family.csv")
-    SAMPLE_AGG_J(j_family_csv_files, "j_family.csv")
+    def v_family_agg = SAMPLE_CALC.out.v_family_csv
+        .collectFile(name: "v_family_long.csv", keepHeader: true, skip: 1, sort: true)
+
+    def d_family_agg = SAMPLE_CALC.out.d_family_csv
+        .collectFile(name: "d_family_long.csv", keepHeader: true, skip: 1, sort: true)
+
+    def j_family_agg = SAMPLE_CALC.out.j_family_csv
+        .collectFile(name: "j_family_long.csv", keepHeader: true, skip: 1, sort: true)
+
+    SAMPLE_CALC_PIVOT( v_family_agg, d_family_agg, j_family_agg )
 
     /////// =================== PLOT SAMPLE ===================  ///////
 
     SAMPLE_PLOT (
         file(params.samplesheet),
         file(params.sample_stats_template),
-        SAMPLE_AGG_STAT.out.aggregated_csv,
-        SAMPLE_AGG_V.out.aggregated_csv
+        sample_stats_agg,
+        SAMPLE_CALC_PIVOT.out.v_family_wide
         )
 
     TCRDIST3_MATRIX(
-        sample_map,
+        processed_samples,
         params.matrix_sparsity,
         params.distance_metric,
         file(params.db_path)
     )
 
-    TCRDIST3_MATRIX.out.max_matrix_value
+    def global_x_max_value = TCRDIST3_MATRIX.out.max_matrix_value
         .map { tcrdist_xmax -> tcrdist_xmax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
-        .set { global_x_max_value }
     global_x_max_value.view { global_xmax -> "Global x max matrix value: $global_xmax" }
 
     TCRDIST3_HISTOGRAM_CALC( 
@@ -76,11 +77,10 @@ workflow SAMPLE {
         global_x_max_value
     )
 
-    TCRDIST3_HISTOGRAM_CALC.out.max_histogram_count
+    def global_y_max_value = TCRDIST3_HISTOGRAM_CALC.out.max_histogram_count
         .map { tcrdist_ymax -> tcrdist_ymax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
-        .set { global_y_max_value }
     global_y_max_value.view { global_ymax -> "Global y max matrix value: $global_ymax" }
 
     TCRDIST3_HISTOGRAM_PLOT( 
@@ -88,27 +88,26 @@ workflow SAMPLE {
         global_y_max_value
     )
 
-    OLGA_SAMPLE_MERGE ( sample_map,
+    OLGA_SAMPLE_MERGE ( processed_samples,
         cdr3_pgen.first(),
         olga_stats )
 
     OLGA_HISTOGRAM_CALC ( OLGA_SAMPLE_MERGE.out.olga_pgen, olga_stats )
 
-    OLGA_HISTOGRAM_CALC.out.olga_ymax
+    def olga_y_max_value = OLGA_HISTOGRAM_CALC.out.olga_ymax
         .map { ymax -> ymax.text.trim().toDouble() }
         .collect()
         .map { values -> values.max() }
-        .set { olga_y_max_value }
     olga_y_max_value.view { olga_ymax -> "Olga y max matrix value: $olga_ymax" }
 
     OLGA_HISTOGRAM_PLOT( OLGA_HISTOGRAM_CALC.out.olga_histogram, olga_y_max_value )
 
-    CONVERGENCE ( sample_map )
+    CONVERGENCE ( processed_samples )
 
-    TCRPHENO ( sample_map )
+    TCRPHENO ( processed_samples )
 
     VDJDB_GET ()
 
-    VDJDB_VDJMATCH (sample_map, VDJDB_GET.out.ref_db)
+    VDJDB_VDJMATCH (processed_samples, VDJDB_GET.out.ref_db)
 
 }

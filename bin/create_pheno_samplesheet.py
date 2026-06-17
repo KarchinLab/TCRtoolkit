@@ -20,7 +20,7 @@ with open(meta_json_file, 'r') as f_in:
 with open(output_csv, 'w') as f_out:
     
     # Write the new header
-    f_out.write('sample,subject_id,timepoint,origin,phenotype,file\n')
+    f_out.write('sample,patient,timepoint,origin,phenotype,file\n')
 
     # Iterate over each item in the list
     for item in all_new_meta:
@@ -29,7 +29,7 @@ with open(output_csv, 'w') as f_out:
 
         f_out.write(
             f"{meta['sample']},"
-            f"{meta['subject_id']},"
+            f"{meta['patient']},"
             f"{meta['timepoint']},"
             f"{meta['origin']},"
             f"{meta['phenotype']},"
