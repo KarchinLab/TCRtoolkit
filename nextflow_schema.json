@@ -158,7 +158,7 @@
       "type": "object",
       "fa_icon": "fas fa-code-branch",
       "properties": {
-        "use_gliph2": {"type": "boolean", "default": false},
+        "use_gliph2": {"type": "boolean", "default": true},
         "gliph2_report_template": { "type": "string" },
         "ref_files": { "type": "string" },
         "local_min_pvalue": { "type": "string", "default": "0.001" },
