@@ -1,0 +1,38 @@
+nextflow_process {
+
+    name "Test RENDER_NOTEBOOK"
+    script "modules/local/report/render_notebook.nf"
+    process "RENDER_NOTEBOOK"
+
+    test("Should render basic notebook") {
+        // note that on Mac M series, jupyter may fail in container
+        // so the test notebook uses knitr engine instead
+
+        tag "basic"
+        tag "notebook"
+
+        when {
+            params {
+                samplesheet = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+            }
+
+            process {
+                """
+                input[0] = [
+                    "test_notebook",
+                    file("${projectDir}/tests/fixtures/test.qmd"),
+                    "${projectDir}/tests/fixtures"
+                ]
+                input[1] = "TCRtoolkit"
+                input[2] = "nextflow run main.nf"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.size() == 1
+        }
+    }
+
+}
