@@ -77,7 +77,7 @@
                 "type": "string"
             },
             "vgene_subject_col": {
-                "default": "subject_id",
+                "default": "patient",
                 "description": "Metadata column for grouping of samples for V gene plots for Sample workflow notebook",
                 "title": "V gene plot subject column",
                 "type": "string"

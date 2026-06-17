@@ -123,7 +123,7 @@
       "properties": {
         "samplechart_x_col": { "type": "string", "default": "timepoint" },
         "samplechart_color_col": { "type": "string", "default": "origin" },
-        "vgene_subject_col": { "type": "string", "default": "subject_id" },
+        "vgene_subject_col": { "type": "string", "default": "patient" },
         "vgene_x_cols": { "type": "string", "default": "origin,timepoint" }
       }
     },
