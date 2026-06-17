@@ -44,7 +44,7 @@ workflow TCRTOOLKIT {
     }
 
     if (levels.contains('patient')) {
-        def samplesheet_header = new File(params.samplesheet as String).readLines().first().split(',')
+        def samplesheet_header = file(params.samplesheet).readLines().first().split(',')
         def has_patient = samplesheet_header.contains('patient')
         
         if (!has_patient) {
