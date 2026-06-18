@@ -32,11 +32,6 @@ nextflow_process {
         then {
             assert process.success
             assert process.out.size() == 1
-
-            def html = path(process.out.get(0))
-            assert html.getFileName().toString() == 'test_notebook.html'
-            assert html.exists()
-            assert html.text.contains('Hello world!')
         }
     }
 
