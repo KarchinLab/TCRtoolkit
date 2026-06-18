@@ -1,0 +1,676 @@
+```{python}
+#| include: false
+
+# timepoint_col='timepoint'
+# subject_col='subject_id'
+
+# Define files 
+project_dir=f"{project_dir}"
+
+# Define dirs
+giana_dir = f"{project_dir}/giana/"
+notebook_results_dir = f"{project_dir}/notebook-analysis/"
+
+```
+
+
+```{python}
+#| code-fold: true
+
+# 1. Load Packages
+from IPython.display import Image
+import os
+import datetime
+import sys
+import pandas as pd
+import math
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+import plotly.express as px
+import plotly.graph_objects as go
+import glob
+import itertools
+import h5py
+import igraph as ig
+import matplotlib.ticker as ticker
+import numpy as np
+import scipy.cluster.hierarchy as sch
+from IPython.display import display, Markdown
+from scipy.sparse import csr_matrix
+from scipy.stats import gaussian_kde
+from scipy.stats import entropy
+from scipy.stats import skew, wasserstein_distance
+from scipy.stats import pearsonr
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from scipy import sparse
+from sklearn.preprocessing import normalize
+from scipy.stats import wilcoxon
+from scipy.stats import mannwhitneyu
+from itertools import combinations
+from scipy.spatial.distance import pdist
+from scipy.cluster.hierarchy import linkage, leaves_list
+import plotly.figure_factory as ff
+import re
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="plotly"
+)
+
+# Loading data
+## reading sample metadata
+meta = pd.read_csv(sample_table, sep=',')
+meta_cols = meta.columns.tolist()
+
+```
+
+
+## Similar TCR sequences within each individual {#sec-GIANA}
+**GIANA** (Geometry Isometry based TCR AligNment Algorithm) is a powerful computational tool designed to rapidly analyze vast amounts of T-cell receptor (TCR) sequencing data. Its core function is to group or **cluster similar TCR sequences, which is essential for identifying T-cells that likely recognize the same antigen.** This allows researchers to **pinpoint key T-cell populations driving an immune response** in cancer, infectious diseases, or autoimmunity.
+
+**<u>How GIANA Works?</u>**  
+GIANA uses a novel geometric approach, instead of relying on traditional sequence alignment methods that tend to be *slower*. It converts the amino acid sequences of the hypervariable CDR3 region into *numerical *vectors. This transforms the complex problem of comparing biological sequences into a much faster mathematical problem of finding the nearest neighbors in a high-dimensional space. By doing this, it can efficiently sift through millions of TCRs to find functionally related groups.
+
+GIANA stands out from other TCR analysis tools for several key reasons:  
+
+- **Exceptional Speed:** GIANA's primary advantage is its remarkable speed. It can cluster tens of millions of TCR sequences in minutes, a task that can take hours or even days with alignment-based tools. This makes it ideal for handling the massive datasets common in modern immunology.
+
+- **High Scalability:** Its efficiency allows it to scale effortlessly from small pilot studies to large-scale clinical cohorts, enabling the analysis of thousands of samples simultaneously.
+
+- **Antigen-Specific Classification:** Because it's so fast, GIANA can be used to compare a patient's TCR repertoire against large, pre-existing databases of TCRs with known antigen specificities. This allows for the rapid identification of T-cell responses to known viruses (like CMV, EBV, or Influenza) or other targets.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import pandas as pd
+import plotly.graph_objects as go
+import os
+from IPython.display import display, Markdown 
+
+def plot_giana_tables_per_patient(meta_df, giana_dir, subject_col, timepoint_col, min_unique_thresholds=[0, 1]):
+    """
+    Loads per-patient GIANA output files (e.g. P16_giana.txt) and plots cluster 
+    tables for each patient, using all their samples combined.
+    """
+
+    def _render_table(stats_df, raw_df, min_unique, title, subject_col, timepoint_col):
+        filtered_stats = stats_df[stats_df['Unique TCRs'] > min_unique]
+        
+        if filtered_stats.empty:
+            # Replaced print() with display(Markdown()) to keep order sync with Plotly
+            display(Markdown(f"*(No clusters found with > {min_unique} unique TCRs for: {title})*\n\n"))
+            return
+
+        top_10 = filtered_stats.nlargest(10, 'Total Counts')
+        top_cluster_ids = top_10['Cluster'].tolist()
+
+        df_top = raw_df[raw_df['cluster'].isin(top_cluster_ids)].copy()
+        df_top.rename(columns={'cluster': 'Cluster'}, inplace=True)
+        df_top['formatted_tcr'] = df_top[timepoint_col].astype(str) + ':' + df_top['CDR3b'].astype(str)
+
+        seq_df = df_top.groupby(['Cluster', subject_col])['formatted_tcr'].apply(
+            lambda x: '<br>'.join(sorted(set(x)))
+        ).reset_index()
+        pivot_df = seq_df.pivot(index='Cluster', columns=subject_col, values='formatted_tcr').reset_index()
+        pivot_df.fillna('', inplace=True)
+
+        final_df = pd.merge(top_10, pivot_df, on='Cluster', how='left')
+        final_df.sort_values('Total Counts', ascending=False, inplace=True)
+
+        standard_cols = ['Cluster', 'Total Counts', 'Unique TCRs']
+        patient_cols = sorted([c for c in final_df.columns if c not in standard_cols])
+        display_df = final_df[standard_cols + patient_cols]
+
+        col_widths = [180, 140, 100] + [180] * len(patient_cols)
+        total_table_width = sum(col_widths)
+
+        fig = go.Figure(data=[go.Table(
+            columnwidth=col_widths,
+            header=dict(
+                # Wrap the column names in <b> tags for bolding
+                values=[f"<b>{col}</b>" for col in display_df.columns],
+                fill_color='paleturquoise',
+                align='left',
+                font=dict(size=12, color='black'), # 'weight' removed here
+                line_color='darkslategray'
+            ),
+            cells=dict(
+                values=[display_df[col] for col in display_df.columns],
+                fill_color='lavender',
+                align='left',
+                font=dict(size=11, color='black'),
+                line_color='darkslategray'
+            )
+        )])
+
+        fig.update_layout(
+            title_text=title,
+            title_x=0.5,
+            margin=dict(l=10, r=10, t=50, b=10),
+            width=max(total_table_width, 1000)
+        )
+        fig.show()
+
+    # --- Start the Quarto Tabset ---
+    display(Markdown("::: {.panel-tabset}\n"))
+
+    # --- Loop over each unique patient ---
+    for patient in meta_df[subject_col].unique():
+
+        # Create a new tab header for the patient
+        display(Markdown(f"## {patient}\n"))
+
+        # Build expected filename: e.g. P16_giana.txt
+        giana_file = os.path.join(giana_dir, f"{patient}_giana.txt")
+
+        if not os.path.exists(giana_file):
+            display(Markdown(f"*[WARNING] No GIANA file found for patient '{patient}' (expected: {giana_file}). Skipping.*\n\n"))
+            continue
+
+        # Load this patient's GIANA output
+        giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+
+        # Merge with all samples belonging to this patient
+        patient_meta = meta_df[meta_df[subject_col] == patient][['sample', subject_col, timepoint_col]]
+        
+        # giana_df rows must have a 'sample' column to merge on
+        df = giana_df.merge(patient_meta, on='sample', how='left')
+        df = df.dropna(subset=[subject_col])
+        df[subject_col] = df[subject_col].fillna('Unknown')
+        df[timepoint_col] = df[timepoint_col].fillna('Unknown')
+
+        if df.empty:
+            display(Markdown(f"*[INFO] No data after merge for patient '{patient}'. Skipping.*\n\n"))
+            continue
+
+        # Aggregate cluster stats across all samples for this patient
+        cluster_stats = df.groupby('cluster').agg(
+            Total_Counts=('counts', 'sum'),
+            Unique_TCRs=('CDR3b', 'nunique')
+        ).reset_index()
+
+        cluster_stats.rename(columns={
+            'Total_Counts': 'Total Counts',
+            'Unique_TCRs': 'Unique TCRs',
+            'cluster': 'Cluster'
+        }, inplace=True)
+
+        # Render a table for each threshold
+        threshold_labels = {
+            0: f"Top 10 GIANA Clusters — {patient} (All Clusters)",
+            1: f"Top 10 GIANA Clusters — {patient} (≥2 Unique TCRs)"
+        }
+
+        for min_unique in min_unique_thresholds:
+            label = threshold_labels.get(
+                min_unique,
+                f"Top 10 GIANA Clusters — {patient} (>{min_unique} Unique TCRs)"
+            )
+            _render_table(cluster_stats, df, min_unique, label, subject_col, timepoint_col)
+
+    # --- Close the Quarto Tabset ---
+    display(Markdown(":::\n"))
+
+# --- Run ---
+plot_giana_tables_per_patient(
+    meta_df=meta,
+    giana_dir=giana_dir,   
+    subject_col=subject_col,
+    timepoint_col=timepoint_col
+)
+
+```
+**Table. Top TCR Clusters Identified by GIANA** Summary tables detailing the top 10 most abundant TCR clusters across the cohort, grouped by sequence similarity using GIANA. **Top 10 (All Clusters):** Displays the absolute top 10 clusters by total counts. This view could be dominated by massive, singular clonal expansions. **Top 10 (>2 Unique TCRs)**: Filters the data to strictly show the top 10 most abundant clusters containing at least three unique CDR3β sequences. 
+
+
+If you only analyze exact CDR3 sequence matches, you are actively ignoring a fundamental truth of immunology: different T-cell clones can recognize the exact same antigen if their receptors are structurally similar. To capture the full scope of a targeted response, we have to group these functional "metaclones" together.
+
+```{python}
+
+import os
+import pandas as pd
+
+# Define and create the output directory
+output_dir = f"{notebook_results_dir}/giana_patient_clusters"
+os.makedirs(output_dir, exist_ok=True)
+
+saved_files = 0
+
+for patient in meta[subject_col].unique():
+    # Build expected filename
+    giana_file = os.path.join(giana_dir, f"{patient}_giana.txt")
+
+    if not os.path.exists(giana_file):
+        continue
+
+    # Load this patient's GIANA output
+    giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+
+    # Merge with all samples belonging to this patient
+    patient_meta = meta[meta[subject_col] == patient][['sample', subject_col, timepoint_col]]
+    df = giana_df.merge(patient_meta, on='sample', how='left')
+    df = df.dropna(subset=[subject_col])
+
+    if df.empty:
+        continue
+
+    # 1. Aggregate cluster stats (All clusters, no min_unique threshold)
+    cluster_stats = df.groupby('cluster').agg(
+        Total_Counts=('counts', 'sum'),
+        Unique_TCRs=('CDR3b', 'nunique')
+    ).reset_index()
+
+    cluster_stats.rename(columns={
+        'Total_Counts': 'Total Counts',
+        'Unique_TCRs': 'Unique TCRs',
+        'cluster': 'Cluster'
+    }, inplace=True)
+
+    # 2. Format the sequences (Timepoint:CDR3b)
+    df['formatted_tcr'] = df[timepoint_col].astype(str) + ':' + df['CDR3b'].astype(str)
+
+    # 3. Aggregate the formatted sequences per cluster
+    # Using ", " instead of "<br>" so it formats cleanly inside a CSV cell
+    seq_df = df.groupby('cluster')['formatted_tcr'].apply(
+        lambda x: ', '.join(sorted(set(x)))
+    ).reset_index()
+    
+    # Rename the columns to match your table layout
+    seq_df.rename(columns={'cluster': 'Cluster', 'formatted_tcr': patient}, inplace=True)
+
+    # 4. Merge stats and sequences
+    final_df = pd.merge(cluster_stats, seq_df, on='Cluster', how='left')
+    
+    # Sort by total counts descending, without capping at top 10
+    final_df.sort_values('Total Counts', ascending=False, inplace=True)
+
+    # 5. Save to CSV
+    out_file = os.path.join(output_dir, f"{patient}_all_giana_clusters.csv")
+    final_df.to_csv(out_file, index=False)
+    saved_files += 1
+
+# print(f"Successfully saved {saved_files} comprehensive GIANA cluster files to:\n{output_dir}") 
+
+```
+
+
+### GIANA TCR clusters composition
+
+We introduced the highest-abundance GIANA clusters, providing a top-level summary table that detailed the specific individuals, timepoints, and constituent TCR sequences for the most dominant metaclones.
+
+However, simply identifying the existence of these top clusters is only the first step. To fully understand the architecture of the convergent immune response, we must look beyond the top hits and examine the internal composition of the entire clustered network.
+
+```{python}
+
+import os
+import pandas as pd
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+from upsetplot import from_contents, plot as upset_plot
+import warnings
+import itertools
+
+# --- 1. Load and Concatenate Per-Patient GIANA Output ---
+all_giana_data = []
+
+# Iterate through all unique patients in the metadata
+for patient in meta[subject_col].unique():
+    # Construct the file path matching your working code's logic
+    giana_file = os.path.join(giana_dir, f"{patient}_giana.txt")
+    
+    if os.path.exists(giana_file):
+        patient_df = pd.read_csv(giana_file, comment='#', sep='\t')
+        
+        # CRITICAL FIX: Make cluster IDs unique to the patient 
+        # to prevent false merging across different GIANA runs
+        patient_df['cluster'] = str(patient) + "_c" + patient_df['cluster'].astype(str)
+        
+        all_giana_data.append(patient_df)
+    else:
+        print(f"*(No GIANA file found for: {giana_file})*")
+
+# Combine into a single master dataframe
+giana_df = pd.concat(all_giana_data, ignore_index=True)
+
+# Merge metadata
+giana_df = giana_df.merge(meta[['sample', subject_col, timepoint_col, alias_col]], on='sample', how='left')
+giana_df = giana_df.dropna(subset=[subject_col])
+
+```
+
+```{python}
+#| fig-cap: "**GIANA clusters found in each sample/timepoint.** Sunburst chart displays the hierarchical contribution of T-cell receptor (TCR) clusters across all samples. The central circle represents the entire dataset, the middle ring breaks down the data by individual sample, and the outer ring shows the specific clusters within each sample."
+
+# --- 1. Manually Prepare Data for Each Hierarchy Level ---
+
+# Level 2: Cluster Level (Innermost Ring)
+df_cluster = giana_df.groupby([alias_col, 'cluster']).agg(
+    total_counts=('counts', 'sum'),
+    n_unique_tcrs=('CDR3b', 'nunique')
+).reset_index()
+
+df_cluster['id'] = df_cluster[alias_col] + '_' + df_cluster['cluster'].astype(str)
+df_cluster['parent'] = df_cluster[alias_col]
+df_cluster['label'] = df_cluster['cluster'].astype(str)
+
+# Level 1: Alias Level (Middle Ring)
+df_sample = giana_df.groupby(alias_col).agg(
+    total_counts=('counts', 'sum'),
+    n_unique_tcrs=('CDR3b', 'nunique')
+).reset_index()
+
+df_sample['id'] = df_sample[alias_col]
+df_sample['parent'] = 'All Samples' 
+df_sample['label'] = df_sample[alias_col]
+
+# Level 0: Root Level (Center)
+total_counts_root = giana_df['counts'].sum()
+unique_tcrs_root = giana_df['CDR3b'].nunique()
+
+df_root = pd.DataFrame({
+    'id': ['All Samples'],
+    'parent': [''], 
+    'label': ['All Samples'],
+    'total_counts': [total_counts_root],
+    'n_unique_tcrs': [unique_tcrs_root]
+})
+
+# --- 2. Combine all levels into a single DataFrame for Plotly ---
+sunburst_df = pd.concat([df_root, df_sample, df_cluster])
+
+# --- 3. Create the Sunburst Chart ---
+fig = go.Figure(go.Sunburst(
+    ids=sunburst_df['id'],
+    labels=sunburst_df['label'],
+    parents=sunburst_df['parent'],
+    values=sunburst_df['total_counts'],
+    branchvalues='total', 
+    customdata=sunburst_df[['n_unique_tcrs']], 
+    hovertemplate="<b>%{label}</b><br>Total TCRs: %{value}<br>Unique TCRs: %{customdata[0]}<extra></extra>",
+    marker=dict(
+        colors=sunburst_df['total_counts'],
+        colorscale='Bluyl',
+        colorbar=dict(
+            title="Total TCR Counts",
+            lenmode="fraction", len=0.75, thickness=20, x=0.95, y=0.5, title_side="right"
+        )
+    )
+))
+
+fig.update_layout(
+    title_text="TCR Cluster Contribution by Sample",
+    font_size=16, title_font_size=24, title_x=0.5, 
+    margin=dict(t=50, l=0, r=0, b=0) 
+)
+fig.show()
+
+```
+
+```{python}
+#| fig-cap: "**Samples/timepoints found in each GIANA cluster.** Sunburst chart providing a 'cluster-centric' view of the TCR repertoire, designed to show how individual samples contribute to each shared immune response."
+
+# --- 1. Prepare Data for the Hierarchy ---
+
+# Level 2: Alias Level (Outer Ring)
+df_alias_level = (giana_df.groupby(['cluster', alias_col])
+                   .agg(total_counts=('counts', 'sum'), n_unique_tcrs=('CDR3b', 'nunique'))
+                   .reset_index()
+                   .assign(id=lambda x: x['cluster'].astype(str) + '_' + x[alias_col],
+                           parent=lambda x: x['cluster'].astype(str),
+                           label=lambda x: x[alias_col]))
+
+# Level 1: Cluster Level (Middle Ring)
+df_cluster_level = (giana_df.groupby('cluster')
+                    .agg(total_counts=('counts', 'sum'), n_unique_tcrs=('CDR3b', 'nunique'))
+                    .reset_index()
+                    .assign(id=lambda x: x['cluster'].astype(str),
+                            parent='All Clusters',
+                            label=lambda x: x['cluster'].astype(str)))
+
+# Level 0: Root Level (Center)
+df_root = pd.DataFrame([{
+    'id': 'All Clusters',
+    'parent': '',
+    'label': 'All Clusters',
+    'total_counts': giana_df['counts'].sum(),
+    'n_unique_tcrs': giana_df['CDR3b'].nunique()
+}])
+
+# --- 2. Combine all levels ---
+sunburst_df = pd.concat([df_root, df_cluster_level, df_alias_level])
+
+# --- 3. Create the Sunburst Chart ---
+fig = go.Figure(go.Sunburst(
+    ids=sunburst_df['id'],
+    labels=sunburst_df['label'],
+    parents=sunburst_df['parent'],
+    values=sunburst_df['total_counts'],
+    branchvalues='total',
+    customdata=sunburst_df[['n_unique_tcrs']],
+    hovertemplate="<b>%{label}</b><br>Total TCRs: %{value}<br>Unique TCRs: %{customdata[0]}<extra></extra>",
+    marker=dict(
+        colors=sunburst_df['total_counts'],
+        colorscale='Bluyl',
+        colorbar=dict(
+            title="Total TCR Counts",
+            lenmode="fraction", len=0.75, thickness=20, x=0.95, y=0.5, title_side="right"
+        )
+    )
+))
+
+fig.update_layout(
+    title_text="Sample Contribution by TCR Cluster",
+    font_size=16, title_font_size=24, title_x=0.5,
+    margin=dict(t=50, l=0, r=0, b=0)
+)
+fig.show()
+
+```
+
+
+**<u>Biological Insight</u>**  
+The previous visualizations offer two complementary perspectives on the TCR data. **The first plot highlights individual samples**, showing all the TCR clusters they contain. This allows you to appreciate the total number of TCRs per cluster and the sum of clone sizes. **The second visualization**, the sunburst chart,** emphasizes the clusters themselves**, revealing which samples contribute to each one. This is crucial for identifying clusters of TCRs with similar sequences that are shared between patients.
+
+The clone size shown in both visualizations is a key piece of information. **Since clonal expansion is associated with antigen recognition, a larger clone size suggests a more significant immune response.** This insight helps you better interpret the biological relevance of each cluster.
+
+To get the most out of this plot, it is recommend to compare samples across different conditions, such as "pre-" and "post-treatment." This way, you can directly visualize how a therapy impacts the immune response. Look for new or expanding clusters in your post-treatment samples, as this provides strong evidence of treatment-induced immune activation and helps you pinpoint the exact TCRs driving the therapeutic effect.
+
+### GIANA clusters over time  
+
+Now, we shift our focus to the intra-patient dynamics to understand how the TCR repertoire evolves over time within a single individual.
+
+The UpSet plot below visualizes the intersection of GIANA clusters across multiple timepoints.
+
+```{python}
+#| output: asis
+#| echo: false
+#| warning: false
+
+import matplotlib.pyplot as plt
+from upsetplot import from_contents, plot as upset_plot
+import warnings
+
+# 1. Pre-filter for patients that actually have multiple timepoints
+valid_patients = []
+for patient in giana_df[subject_col].unique():
+    pat_df = giana_df[giana_df[subject_col] == patient]
+    clusters_by_timepoint = pat_df.groupby(timepoint_col)['cluster'].apply(set)
+    if len(clusters_by_timepoint) >= 2:
+        valid_patients.append((patient, clusters_by_timepoint))
+
+# 2. Conditionally generate the tabset
+if valid_patients:
+    print("::: {.panel-tabset}\n")
+    
+    for patient, clusters_by_timepoint in valid_patients:
+        print(f"## {patient}\n")
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            fig = plt.figure(figsize=(10, 5))
+            
+            try:
+                upset_data = from_contents(clusters_by_timepoint)
+                
+                # We keep show_counts=False to bypass the NumPy 2.0 crash, 
+                # but we save the returned dictionary of axes to a variable.
+                axes = upset_plot(upset_data, show_counts=False, sort_by='cardinality', fig=fig)
+                
+                # --- NEW WORKAROUND: MANUALLY ADD INTERSECTION SIZES ---
+                # Grab the specific sub-plot that holds the vertical bars
+                ax_intersections = axes['intersections']
+                
+                # Loop through the rendered bars and add a Matplotlib text label to the top of each
+                for container in ax_intersections.containers:
+                    ax_intersections.bar_label(container, padding=2, fontsize=9, color='black')
+                # -------------------------------------------------------
+                
+                plt.suptitle(f"Cluster Sharing over Time: {patient}", fontsize=14)
+                plt.show()
+            except Exception as e:
+                print(f"\n*Could not generate plot for {patient}: {e}*\n")
+                
+            plt.close(fig)
+            print("\n")
+            
+    print(":::\n")
+
+```
+**Longitudinal tracking of shared TCR clusters in patients.** This UpSet plot visualizes the intersection of GIANA clusters across distinct timepoints. The horizontal bar chart (bottom left) displays the total number of unique clusters identified at each timepoint. The vertical bar chart (top) represents the size of each intersection. The connectivity matrix (bottom dots) indicates which timepoints are included in each intersection.
+
+### Metaclonotype enrichment between timepoints (e.g. pre- and post-treatment)
+
+Visualizing the enrichment of metaclonotypes post-treatment is crucial because it provides direct evidence that a therapy is successfully activating the immune system against a disease like cancer.
+
+These expanding clusters represent the specific T-cell "armies" that have been mobilized and are proliferating to attack their target. Identifying these enriched metaclonotypes is the most direct way to discover the exact, functionally relevant T-cells that are driving a patient's response. This knowledge is vital for developing biomarkers to predict treatment success and for isolating potent TCR sequences to create next-generation personalized immunotherapies.
+
+```{python}
+#| output: asis
+#| echo: false
+#| fig-cap: "**GIANA cluster enrichment** Scatter plot comparing the abundance of each T-cell receptor (TCR) metaclonotype between timepoints for an individual patient."
+
+def create_patient_tabs_abundance_scatter(df):
+    df = df.copy()
+    df[timepoint_col] = df[timepoint_col].astype(str)
+    
+    print("::: {.panel-tabset}\n")
+    all_patients = sorted(df[subject_col].dropna().unique())
+
+    for patient_id in all_patients:
+        print(f"## {patient_id}\n")
+        patient_df = df[df[subject_col] == patient_id]
+
+        sample_depths = patient_df.groupby(timepoint_col)['counts'].sum()
+        patient_pivot = patient_df.pivot_table(
+            index='cluster', columns=timepoint_col, values='counts', aggfunc='sum'
+        ).fillna(0)
+
+        patient_cpm = patient_pivot.div(sample_depths, axis=1) * 1e6
+        patient_cpm = patient_cpm.fillna(0)
+        timepoints = patient_cpm.columns.tolist()
+        
+        if len(timepoints) < 2:
+            print(f"*(Not enough timepoints to generate dynamics plot for {patient_id})*\n\n")
+            continue
+
+        fig = go.Figure()
+        plot_metadata = []
+        timepoint_pairs = list(itertools.combinations(timepoints, 2))
+
+        for tp1, tp2 in timepoint_pairs:
+            relevant_clusters_df = patient_cpm[(patient_cpm[tp1] > 0) | (patient_cpm[tp2] > 0)]
+            if relevant_clusters_df.empty: continue
+
+            x_data = relevant_clusters_df[tp1] + 1
+            y_data = relevant_clusters_df[tp2] + 1
+            trace_name = f"{tp1} vs {tp2}"
+
+            fig.add_trace(go.Scatter(
+                x=x_data, y=y_data, mode='markers', name=trace_name,
+                text=relevant_clusters_df.index,
+                hovertemplate=(f'<b>Cluster: %{{text}}</b><br>{tp1}: %{{x:.2f}} CPM (adj)<br>{tp2}: %{{y:.2f}} CPM (adj)<extra></extra>'),
+                visible=False, marker=dict(opacity=0.6, size=8, color='#1f77b4')
+            ))
+
+            plot_metadata.append({
+                'tp1': tp1, 'tp2': tp2, 'trace_index': len(fig.data) - 1,
+                'max_val': max(x_data.max(), y_data.max()), 'label': trace_name
+            })
+
+        if not fig.data:
+            print(f"*(No overlapping cluster data found for {patient_id})*\n\n")
+            continue
+
+        steps = []
+        for meta in plot_metadata:
+            visible_array = [False] * len(fig.data)
+            visible_array[meta['trace_index']] = True
+            shape = dict(type='line', x0=1, y0=1, x1=meta['max_val'], y1=meta['max_val'], line=dict(color='grey', dash='dash', width=1))
+            
+            steps.append(dict(
+                method="update",
+                args=[
+                    {"visible": visible_array},
+                    {"title.text": f"Cluster Dynamics - {patient_id}: {meta['tp1']} vs {meta['tp2']}",
+                     "xaxis.title": f"{meta['tp1']} [Log(CPM+1)]", "yaxis.title": f"{meta['tp2']} [Log(CPM+1)]",
+                     "shapes": [shape]}
+                ],
+                label=meta['label']
+            ))
+
+        first_meta = plot_metadata[0]
+        fig.data[first_meta['trace_index']].visible = True
+        initial_shape = dict(type='line', x0=1, y0=1, x1=first_meta['max_val'], y1=first_meta['max_val'], line=dict(color='grey', dash='dash', width=1))
+
+        fig.update_layout(
+            sliders=[dict(active=0, currentvalue={"prefix": "Comparison: "}, pad={"t": 50}, steps=steps)],
+            title_text=f"Cluster Dynamics - {patient_id}: {first_meta['tp1']} vs {first_meta['tp2']}",
+            xaxis_title=f"{first_meta['tp1']} [Log(CPM+1)]", yaxis_title=f"{first_meta['tp2']} [Log(CPM+1)]",
+            xaxis_type="log", yaxis_type="log", showlegend=False, shapes=[initial_shape],
+            margin=dict(b=100, t=100, l=50, r=50), height=600, plot_bgcolor='white'
+        )
+        
+        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True, gridcolor='lightgrey')
+        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True, gridcolor='lightgrey')
+        fig.show()
+        print("\n\n")
+
+    print(":::\n")
+
+create_patient_tabs_abundance_scatter(giana_df)
+
+```
+
+**<u>Understand the plot</u>**   
+The plot shows the abundance of metaclones at two given timepoints.  
+
+**Abundance** is calculated as Log(CPM + 1).   
+**Counts Per Million (CPM):** The counts for all TCRs within a specific cluster are summed, divided by the total counts in that sample.timepoint, and multiplied by 1,000,000. This normalizes the data, allowing for fair comparisons across samples with different sequencing depths.  
+
+**The Pseudo-count (+1):** A pseudo-count of 1 is added to every CPM value before plotting on a logarithmic scale. This is a mathematical necessity to handle clusters that have zero counts at a given timepoint (since the log of 0 is undefined).
+
+**<u>How to Interpret the Plot</u>**  
+Each point on the plot represents a single metaclonotype. **The diagonal line (y=x) is the baseline; any cluster falling on this line maintained a stable relative abundance between the two timepoints.**
+
+- **Above the Diagonal:** Clusters that expanded (increased in relative abundance) by the second timepoint.   
+- **Below the Diagonal:** Clusters that contracted (decreased in relative abundance) by the second timepoint.   
+- **The Far-Left Boundary ($X = 1$):** Clusters that were completely absent at the first timepoint but emerged by the second timepoint.   
+- **The Bottom Boundary ($Y = 1$):** Clusters that were present at the first timepoint but completely vanished (zero counts) by the second timepoint.  
+
+**<u>What This Represents in a Cancer Context</u>**  
+In the context of cancer immunotherapy (like checkpoint inhibitors or cancer vaccines), the enrichment of specific metaclonotypes post-treatment is a critical finding. **It provides strong evidence that the therapy was successful in stimulating an anti-tumor immune response.**
+
+These expanding clusters represent the T-cell "armies" that have been activated and are proliferating to recognize and attack cancer cells. Identifying these treatment-responsive metaclonotypes is of immense importance because:
+
+- They are likely tumor-reactive: These are the T-cells that are doing the work of fighting the cancer.
+
+- They are potential biomarkers: The magnitude of this expansion could correlate with a patient's clinical outcome, serving as a biomarker to predict who will respond to therapy.
+
+- They are candidates for next-generation therapies: The TCR sequences within these expanding clusters can be isolated and used to develop highly targeted and personalized TCR-T cell therapies. 🔬
+
+**Visualizing this enrichment is not just a quality check; it is a discovery tool. It allows you to directly identify the most biologically active and therapeutically relevant T-cells that are driving a patient's response to cancer treatment.**
