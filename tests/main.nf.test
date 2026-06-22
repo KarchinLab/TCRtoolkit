@@ -5,7 +5,7 @@ nextflow_pipeline {
 
     test("Minimal example dataset") {
 
-        tag "basic-sd"
+        tag "minimal-example"
 
         when {
             params {
@@ -14,6 +14,7 @@ nextflow_pipeline {
                 input_format = "adaptive" 
                 max_memory = "8.GB" 
                 max_cpus = 4
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
             }
         }
 

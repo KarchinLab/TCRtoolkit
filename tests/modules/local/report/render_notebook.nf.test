@@ -14,6 +14,7 @@ nextflow_process {
         when {
             params {
                 samplesheet = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
             }
 
             process {
