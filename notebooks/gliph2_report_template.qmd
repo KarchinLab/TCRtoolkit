@@ -1,0 +1,56 @@
+---
+title: "Comparative T Cell Repertoire statistics"
+format:
+  html: 
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    code-fold: show
+    embed-resources: true
+    number-sections: true
+    smooth-scroll: true
+    grid:
+      body-width: 1000px
+      margin-width: 300px
+
+jupyter: python3
+---
+
+Thank you for using TCRtoolkit! This report is generated from sample data and metadata you provided. The report is divided into two sections: 
+
+@sec-heatmap : Heatmap of sample to sample repertoire similarity using Jaccard, Sorensen, and Morisita indices (v1.0)
+
+# Report Setup
+
+```{python, echo=false}
+#| tags: [parameters]
+#| echo: false
+
+## 2. Pipeline Parameters
+#Default inputs are overwritten at the command line in `modules/local/plot_gliph2.nf`
+workflow_cmd='<command used to run the pipeline>'
+project_name='path/to/project_name'
+clusters='path/to/{project_name}_cluster.csv'
+cluster_stats='path/to/{project_name}_cluster.txt'
+```
+
+```{python}
+#| tags: [setup]
+#| warning: false
+
+# 1. Load Packages
+import os
+import shutil
+import datetime
+import sys
+import numpy as np
+import pandas as pd
+import seaborn as sns
+# from matplotlib.colors import LinearSegmentedColormap
+# import scipy.cluster.hierarchy as sch
+
+# 2. Print Pipeline Information
+print('Pipeline information and parameters:' + '\n')
+print('Project Name:          ' + project_name)
+print('Workflow command:      ' + workflow_cmd)
+print('Date and time:         ' + str(datetime.datetime.now()))

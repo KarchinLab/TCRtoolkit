@@ -1,0 +1,190 @@
+---
+title: "Comparative T Cell Repertoire statistics"
+format:
+  html: 
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    code-fold: show
+    embed-resources: true
+    number-sections: true
+    smooth-scroll: true
+    grid:
+      body-width: 1000px
+      margin-width: 300px
+
+jupyter: python3
+---
+
+Thank you for using TCRtoolkit! This report is generated from sample data and metadata you provided. The report is divided into two sections: 
+
+@sec-heatmap : Heatmap of sample to sample repertoire similarity using Jaccard, Sorensen, and Morisita indices (v1.0)
+
+# Report Setup
+
+```{python, echo=false}
+#| tags: [parameters]
+#| echo: false
+
+## 2. Pipeline Parameters
+#Default inputs are overwritten at the command line in `modules/local/plot_sample.nf`
+workflow_cmd='<command used to run the pipeline>'
+project_name='path/to/project_name'
+jaccard_mat='path/to/jaccard_mat.csv'
+sorensen_mat='path/to/sorensen_mat.csv'
+morisita_mat='path/to/morisita_mat.csv'
+# jsd_mat='path/to/jsd_mat.csv'
+sample_utf8='path/to/sample_utf8.csv'
+```
+
+```{python}
+#| tags: [setup]
+#| warning: false
+
+# 1. Load Packages
+import os
+import shutil
+import datetime
+import sys
+import numpy as np
+import pandas as pd
+import seaborn as sns
+# from matplotlib.colors import LinearSegmentedColormap
+# import scipy.cluster.hierarchy as sch
+
+# 2. Print Pipeline Information
+print('Pipeline information and parameters:' + '\n')
+print('Project Name:          ' + project_name)
+print('Workflow command:      ' + workflow_cmd)
+print('Date and time:         ' + str(datetime.datetime.now()))
+
+# 3. Importing similarity data
+## 3a. jaccard similarity matrix
+jaccard_df = pd.read_csv(jaccard_mat, sep=',', header=0, index_col=0)
+
+## 3b. sorensen similarity matrix
+sorensen_df = pd.read_csv(sorensen_mat, sep=',', header=0, index_col=0)
+
+## 3c. morisita similarity matrix
+morisita_df = pd.read_csv(morisita_mat, sep=',', header=0, index_col=0)
+
+```
+
+# Analysis
+
+## Overall Repertoire Similarity {#sec-heatmap}
+
+Similarity metrics such as Jaccard, Sorensen, and Morisita are often used to compare the similarity between two samples. Here, we compare the similarity of TCR repertoires between samples using these three metrics. Details on how each metric is calculated can be found below the figure.
+
+```{python}
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.figure_factory import create_dendrogram
+from plotly.subplots import make_subplots
+import scipy.spatial.distance as ssd
+import matplotlib.pyplot as plt
+
+# preprocess the data prior to clustering
+jaccard_numeric = jaccard_df.apply(pd.to_numeric, errors='coerce')
+sorensen_numeric = sorensen_df.apply(pd.to_numeric, errors='coerce')
+morisita_numeric = morisita_df.apply(pd.to_numeric, errors='coerce')
+
+# Assuming jaccard_numeric, sorensen_numeric, and morisita_numeric are your DataFrames
+# and sns_cluster_jaccard, sns_cluster_sorensen, and sns_cluster_morisita are the corresponding clustermaps
+sns_cluster_jaccard = sns.clustermap(jaccard_numeric)
+plt.close()
+sns_cluster_sorensen = sns.clustermap(sorensen_numeric)
+plt.close()
+sns_cluster_morisita = sns.clustermap(morisita_numeric)
+plt.close()
+# sns_cluster_jsd = sns.clustermap(jsd_numeric)
+# plt.close()
+
+# Create a subplot with 3 rows
+fig = make_subplots(rows=3, cols=1)
+
+# Reindex the dataframes to match the clustering
+jaccard_clustered = jaccard_numeric.iloc[sns_cluster_jaccard.dendrogram_row.reordered_ind, sns_cluster_jaccard.dendrogram_col.reordered_ind]
+sorensen_clustered = sorensen_numeric.iloc[sns_cluster_sorensen.dendrogram_row.reordered_ind, sns_cluster_sorensen.dendrogram_col.reordered_ind]
+morisita_clustered = morisita_numeric.iloc[sns_cluster_morisita.dendrogram_row.reordered_ind, sns_cluster_morisita.dendrogram_col.reordered_ind]
+# jsd_clustered = jsd_numeric.iloc[sns_cluster_jsd.dendrogram_row.reordered_ind, sns_cluster_jsd.dendrogram_col.reordered_ind]
+
+# Create individual heatmaps
+heatmap_jaccard = go.Heatmap(
+    z=jaccard_clustered, 
+    x=jaccard_clustered.columns, 
+    y=jaccard_clustered.index, 
+    coloraxis="coloraxis", 
+    visible=False)
+heatmap_sorensen = go.Heatmap(
+    z=sorensen_clustered, 
+    x=sorensen_clustered.columns, 
+    y=sorensen_clustered.index, 
+    coloraxis="coloraxis", 
+    visible=False)
+heatmap_morisita = go.Heatmap(
+    z=morisita_clustered, 
+    x=morisita_clustered.columns, 
+    y=morisita_clustered.index, 
+    coloraxis="coloraxis", 
+    visible=True)
+    
+# Add the heatmaps to the figure
+fig = go.Figure(data=[heatmap_jaccard, heatmap_sorensen, heatmap_morisita])
+
+# Create buttons to switch between the heatmaps
+buttons = [
+    dict(label="Jaccard", method="update", 
+         args=[{"visible": [True, False, False]}, {"title": "Jaccard"}]),
+    dict(label="Sorensen", method="update", 
+         args=[{"visible": [False, True, False]}, {"title": "Sorensen"}]),
+    dict(label="Morisita", method="update", 
+         args=[{"visible": [False, False, True]}, {"title": "Morisita"}])
+]
+
+# Update the layout of the figure
+fig.update_layout(
+    updatemenus=[dict(type="buttons", showactive=True, buttons=buttons)],
+    title='Similarity Matrices',
+    xaxis_title='Sample ID',
+    yaxis_title='Sample ID',
+    autosize=False,
+    width=950,
+    height=950,
+    coloraxis=dict(colorscale='Viridis', colorbar=dict(title="Log Scale"))
+)
+
+fig.show()
+```
+
+**Jaccard Index**:
+
+$$
+J(A,B) = \frac{|A \cap B|}{|A \cup B|}
+$$
+
+Where $A$ and $B$ are the sets of unique CDR3 amino acid sequences (TCRs) in samples A and B, respectively. The Jaccard Index is defined as the ratio of the number of common elements between two sets to the total number of distinct elements in the two sets.
+
+**Sorensen Index**:
+
+$$
+S(A,B) = \frac{2|A \cap B|}{|A| + |B|}
+$$
+
+Where $A$ and $B$ are the sets of unique CDR3 amino acid sequences (TCRs) in samples A and B, respectively. The difference between the sorensen index and the jaccard index is that the sorensen index takes into account the size of the two sets being compared, while the jaccard index only considers the number of common elements between the two sets.
+
+**Morisita-Horn Index:**
+
+$$
+M(A,B)=\frac{2\sum_{i=1}^{S}a_{i}b_{i}}{(D_{a}+D_{b})AB} ; D_{a}=\frac{\sum_{i=1}^{S}a_{i}^{2}}{A^2}, D_{b}=\frac{\sum_{i=1}^{S}b_{i}^{2}}{B^2}
+$$
+
+Where:
+
+- $A$ and $B$ are the sets of unique CDR3 amino acid sequences (TCRs) in samples A and B, 
+
+- $a_{i}$ ($b_{i}$) is the number of times TCR $i$ is represented in the total $A$ ($B$) from one sample.
+
+- $S$ is the total number of unique TCRs in the two samples.
+
+- $D_{a}$ and $D_{b}$ are the Simpson Index values for samples A and B, respectively.
