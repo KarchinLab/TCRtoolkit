@@ -1,0 +1,1739 @@
+---
+title: "SCRATCH-TCR: CoNGA Report"
+author: "Syed Shujaat Ali Zaidi"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+    df-print: paged
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  
+  # ======================================================
+  # 1. Inputs & Software Paths
+  # ======================================================
+  seurat_rds: "seurat_tcells_with_TCR.rds"
+  tcr_export_cells_file: "tcr_export_cells_with_embedding.tsv"
+  filtered_contig_annotations_csvfile: "tcr_export_cells_with_embedding.tsv"
+  conga_repo_dir: "/opt/tools/conga"
+  conga_python_bin: "/opt/conda/envs/tcrenv/bin/python"
+  outdir: "CoNGA_Report"
+  data_dir: "data"
+  tables_dir: "tables"
+  figures_dir: "figures"
+  conga_results_file: ""
+  conga_edges_file: ""
+  conga_cluster_summary_file: ""
+
+  # ======================================================
+  # 2. Thresholds & Analysis Logic
+  # ======================================================
+  conga_high_cutoff: 0.8
+  conga_mid_cutoff: 0.5
+  use_quantile_cutoffs_if_score_not_bounded: true
+  high_quantile: 0.9
+  mid_quantile: 0.5
+  min_cells_per_group: 10
+  max_edges_to_plot: 5000
+  min_cluster_size_plot: 5
+  top_n_clusters: 20
+  organism: "human"
+  outfile_prefix: "conga_out"
+  run_all: true
+  gex_data_type: "10x_mtx"
+
+  # ======================================================
+  # 3. Metadata Mapping (Crucial Fixes Below)
+  # ======================================================
+  label_col: "predicted_labels"
+  sample_col: "orig.ident"
+  patient_col: "patient_id"
+  condition_col: "condition"
+  timepoint_col: "timepoint"
+  batch_col: "batch"
+  
+  # NEW: Clonotype column mapping
+  clone_id_col: "clone_id"
+  clone_id_candidates: ["clone_id", "CTaa", "clonotype", "strict"]
+  clone_size_col: "clone_size"
+  clone_size_candidates: ["clone_size", "Frequency", "cloneSize"]
+  has_tcr_col: "has_tcr"
+  has_tcr_candidates: ["has_tcr", "TCR_status"]
+  paired_tcr_col: "paired_tcr"
+  paired_tcr_candidates: ["paired_tcr", "is_paired"]
+
+  # NEW: TCRi score mapping for correlation plots
+  tcri_score_col: "tcri_score"
+  tcri_score_candidates: ["tcri_score", "TCRi"]
+  tcri_group_col: "tcri_group"
+  tcri_group_candidates: ["tcri_group", "TCRi_group"]
+
+  # Standardized candidate lists for samples/labels
+  sample_candidates: ["META_SAMPLE", "orig.ident", "sample"]
+  patient_candidates: ["META_PATIENT", "patient_id"]
+  condition_candidates: ["META_TIMECOND", "condition"]
+  timepoint_candidates: ["META_TIMECOND", "timepoint"]
+  batch_candidates: ["META_BATCH", "batch"]
+  label_candidates: ["predicted_labels", "celltype", "Annotation"]
+
+  # ======================================================
+  # 4. Global Analysis & Plotting
+  # ======================================================
+  reduction_use: "umap"
+  make_umap_if_missing: true
+  umap_dims_max: 30
+  umap_nfeatures: 3000
+  raster_large_umap: true
+  base_size: 12
+  figure_format: "png"
+  report_label: "CoNGA Analysis"
+  
+  # Visualization Toggles
+  show_density_plot: true
+  show_feature_plot: true
+  show_cluster_umap: true
+  show_violin_by_annotation: true
+  show_boxplots_by_sample: true
+  show_cluster_composition: true
+  show_cluster_annotation_heatmap: true
+  show_cluster_sample_heatmap: true
+  show_tcri_vs_conga: true
+  show_summary_tables: true
+  top_n_states_heatmap: 15
+  save_figures: true
+  save_tables: true
+  save_updated_seurat: true
+  figure_width: 10
+  figure_height: 7
+  figure_dpi: 300
+  
+---
+
+
+# ===================================================================
+# 1. exports Seurat GEX in a CoNGA-readable format
+# 2. runs `setup_10x_for_conga.py`
+# 3. runs `run_conga.py`
+# 4. reads the real `*_final.h5ad`
+# 5. extracts actual CoNGA outputs
+# 6. merges them back into Seurat
+# ===================================================================
+
+
+# setup
+```{r}
+#| label: setup
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
+  library(Matrix)
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(forcats)
+  library(scales)
+  library(glue)
+  library(knitr)
+  library(kableExtra)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(patchwork)
+  library(reticulate)
+  # library(DropletUtils)
+})
+options(stringsAsFactors = FALSE)
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$data_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$tables_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$figures_dir), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
+
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+      plot.subtitle = element_text(size = base_size, hjust = 0),
+      axis.title = element_text(face = "bold"),
+      axis.text = element_text(color = "black"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+      strip.background = element_rect(fill = "grey95", color = "grey80"),
+      strip.text = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.key = element_blank(),
+      plot.caption = element_text(size = base_size - 2, color = "grey40")
+    )
+}
+
+save_plot_safe <- function(plot_obj, filename,
+                           width = params$figure_width,
+                           height = params$figure_height,
+                           dpi = params$figure_dpi) {
+  if (!isTRUE(params$save_figures)) return(invisible(NULL))
+  ggsave(
+    filename = file.path(params$outdir, params$figures_dir, filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+save_table_safe <- function(df, filename) {
+  if (!isTRUE(params$save_tables)) return(invisible(NULL))
+  fwrite(df, file.path(params$outdir, params$tables_dir, filename), sep = "\t")
+}
+
+save_rds_safe <- function(obj, filename) {
+  if (!isTRUE(params$save_updated_seurat)) return(invisible(NULL))
+  saveRDS(obj, file.path(params$outdir, params$data_dir, filename))
+}
+# 
+# first_existing_col <- function(df, preferred, candidates = character()) {
+#   if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+#   hits <- intersect(candidates, colnames(df))
+#   if (length(hits) > 0) return(hits[[1]])
+#   NULL
+# }
+
+safe_percent <- function(x, denom) ifelse(denom > 0, x / denom, NA_real_)
+
+safe_make_umap <- function(seu, reduction_name = "umap", dims = 1:30, nfeatures = 3000) {
+  if ("RNA" %in% names(seu@assays)) DefaultAssay(seu) <- "RNA"
+  npcs <- min(max(dims), max(2, ncol(seu) - 1), 50)
+  nf <- min(nfeatures, nrow(seu))
+
+  if (!"pca" %in% Reductions(seu)) {
+    seu <- FindVariableFeatures(seu, nfeatures = nf, verbose = FALSE)
+    seu <- ScaleData(seu, verbose = FALSE)
+    seu <- RunPCA(seu, npcs = npcs, verbose = FALSE)
+  }
+
+  use_dims <- dims[dims <= npcs]
+  if (length(use_dims) < 2) use_dims <- 1:min(10, npcs)
+
+  seu <- FindNeighbors(seu, dims = use_dims, verbose = FALSE)
+  seu <- RunUMAP(seu, dims = use_dims, reduction.name = reduction_name, verbose = FALSE)
+  seu
+}
+
+plot_box_by_group <- function(df, group_col, value_col, title_txt, filename) {
+  tmp <- df %>%
+    filter(!is.na(.data[[value_col]]), !is.na(.data[[group_col]])) %>%
+    group_by(.data[[group_col]]) %>%
+    mutate(group_n = n()) %>%
+    ungroup() %>%
+    filter(group_n >= params$min_cells_per_group)
+
+  if (nrow(tmp) == 0) return(NULL)
+
+  group_summary <- tmp %>%
+    group_by(.data[[group_col]]) %>%
+    summarise(mean_val = mean(.data[[value_col]], na.rm = TRUE), .groups = "drop")
+
+  group_levels <- group_summary %>%
+    arrange(desc(mean_val)) %>%
+    pull(.data[[group_col]])
+
+  p <- tmp %>%
+    mutate(.group = factor(.data[[group_col]], levels = group_levels)) %>%
+    ggplot(aes(x = .group, y = .data[[value_col]], fill = .group)) +
+    geom_boxplot(outlier.size = 0.3, alpha = 0.85) +
+    coord_flip() +
+    guides(fill = "none") +
+    labs(title = title_txt, x = NULL, y = value_col) +
+    theme_scratch_pub(params$base_size)
+
+  print(p)
+  save_plot_safe(p, filename)
+  invisible(p)
+}
+
+sanitize_param_string <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NULL)
+  trimws(gsub("\\u00A0", " ", as.character(x)))
+}
+
+normalize_colnames <- function(df) {
+  colnames(df) <- trimws(gsub("\\u00A0", " ", colnames(df)))
+  df
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  df <- normalize_colnames(df)
+  preferred <- sanitize_param_string(preferred)
+  candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
+
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+  NULL
+}
+
+choose_col <- function(df, primary = NULL, fallback = NULL) {
+  nm <- colnames(df)
+  if (!is.null(primary) && primary != "" && primary %in% nm) return(primary)
+  if (!is.null(fallback) && fallback != "" && fallback %in% nm) return(fallback)
+  NULL
+}
+
+```
+
+# load-and-resolve
+```{r}
+#| label: load-and-resolve
+
+# load-and-resolve
+seu <- readRDS(params$seurat_rds)
+md <- normalize_colnames(seu@meta.data)
+seu@meta.data <- md
+
+label_col <- first_existing_col(md, params$label_col, params$label_candidates)
+sample_col <- first_existing_col(md, params$sample_col, params$sample_candidates)
+patient_col <- first_existing_col(md, params$patient_col, params$patient_candidates)
+condition_col <- first_existing_col(md, params$condition_col, params$condition_candidates)
+timepoint_col <- first_existing_col(md, params$timepoint_col, params$timepoint_candidates)
+batch_col <- first_existing_col(md, params$batch_col, params$batch_candidates)
+clone_id_col <- first_existing_col(md, params$clone_id_col, params$clone_id_candidates)
+clone_size_col <- first_existing_col(md, params$clone_size_col, params$clone_size_candidates)
+paired_tcr_col <- first_existing_col(md, params$paired_tcr_col, params$paired_tcr_candidates)
+has_tcr_col <- first_existing_col(md, params$has_tcr_col, params$has_tcr_candidates)
+tcri_score_col_md <- first_existing_col(md, params$tcri_score_col, params$tcri_score_candidates)
+tcri_group_col_md <- first_existing_col(md, params$tcri_group_col, params$tcri_group_candidates)
+
+if (is.null(label_col)) stop("Could not resolve annotation label column.")
+if (is.null(sample_col)) stop("Could not resolve sample column.")
+if (is.null(patient_col)) stop("Could not resolve patient column.")
+if (is.null(condition_col)) stop("Could not resolve condition column.")
+if (is.null(timepoint_col)) stop("Could not resolve timepoint column.")
+if (is.null(clone_id_col)) stop("Could not resolve clone_id column.")
+if (is.null(clone_size_col)) stop("Could not resolve clone_size column.")
+if (is.null(has_tcr_col)) stop("Could not resolve has_tcr column.")
+if (is.null(paired_tcr_col)) stop("Could not resolve paired_tcr column.")
+
+if (!"META_SAMPLE" %in% colnames(seu@meta.data) && !is.null(sample_col)) {
+  seu$META_SAMPLE <- as.character(seu@meta.data[[sample_col]])
+}
+if (!"META_PATIENT" %in% colnames(seu@meta.data) && !is.null(patient_col)) {
+  seu$META_PATIENT <- as.character(seu@meta.data[[patient_col]])
+}
+if (!"META_TIMECOND" %in% colnames(seu@meta.data) && !is.null(condition_col)) {
+  seu$META_TIMECOND <- as.character(seu@meta.data[[condition_col]])
+}
+if (!"META_TIMEPOINT" %in% colnames(seu@meta.data) && !is.null(timepoint_col)) {
+  seu$META_TIMEPOINT <- as.character(seu@meta.data[[timepoint_col]])
+}
+if (!"META_BATCH" %in% colnames(seu@meta.data) && !is.null(batch_col)) {
+  seu$META_BATCH <- as.character(seu@meta.data[[batch_col]])
+}
+
+print(list(
+  resolved_label_col = label_col,
+  resolved_sample_col = sample_col,
+  resolved_patient_col = patient_col,
+  resolved_condition_col = condition_col,
+  resolved_timepoint_col = timepoint_col,
+  resolved_batch_col = batch_col,
+  resolved_tcri_score_col = tcri_score_col_md,
+  resolved_tcri_group_col = tcri_group_col_md
+))
+
+# stopifnot(file.exists(params$seurat_rds))
+# stopifnot(file.exists(params$filtered_contig_annotations_csvfile))
+# if (params$conga_repo_dir == "") stop("Please provide params$conga_repo_dir.")
+# if (params$conga_python_bin == "") stop("Please provide params$conga_python_bin.")
+# 
+# seu <- readRDS(params$seurat_rds)
+# md <- seu@meta.data
+# 
+# label_col <- first_existing_col(md, params$label_col, params$label_candidates)
+# sample_col <- first_existing_col(md, params$sample_col, params$sample_candidates)
+# patient_col <- first_existing_col(md, params$patient_col, params$patient_candidates)
+# condition_col <- first_existing_col(md, params$condition_col, params$condition_candidates)
+# timepoint_col <- first_existing_col(md, params$timepoint_col, params$timepoint_candidates)
+# batch_col <- first_existing_col(md, params$batch_col, params$batch_candidates)
+# clone_id_col <- first_existing_col(md, params$clone_id_col, params$clone_id_candidates)
+# clone_size_col <- first_existing_col(md, params$clone_size_col, params$clone_size_candidates)
+# paired_tcr_col <- first_existing_col(md, params$paired_tcr_col, params$paired_tcr_candidates)
+# has_tcr_col <- first_existing_col(md, params$has_tcr_col, params$has_tcr_candidates)
+# tcri_score_col_md <- first_existing_col(md, params$tcri_score_col, params$tcri_score_candidates)
+# tcri_group_col_md <- first_existing_col(md, params$tcri_group_col, params$tcri_group_candidates)
+# 
+# if (is.null(label_col)) stop("Could not resolve annotation label column.")
+# if (is.null(clone_id_col)) stop("Could not resolve clone_id column.")
+# if (is.null(clone_size_col)) stop("Could not resolve clone_size column.")
+# if (is.null(has_tcr_col)) stop("Could not resolve has_tcr column.")
+# if (is.null(paired_tcr_col)) stop("Could not resolve paired_tcr column.")
+```
+
+# export-gex-for-conga
+```{r}
+#| label: export-gex-for-conga
+message("Exporting GEX matrix in 10X format (Manual Method)...")
+
+DefaultAssay(seu) <- "RNA"
+
+# 1. Extract Counts
+counts <- tryCatch(
+  SeuratObject::LayerData(seu, assay = "RNA", layer = "counts"),
+  error = function(e) NULL
+)
+if (is.null(counts)) {
+  counts <- tryCatch(
+    GetAssayData(seu, assay = "RNA", slot = "counts"),
+    error = function(e) NULL
+  )
+}
+if (is.null(counts)) stop("Could not retrieve RNA counts matrix.")
+
+# 2. Create Directory
+gex_dir <- file.path(params$outdir, params$data_dir, "gex_10x_mtx")
+dir.create(gex_dir, recursive = TRUE, showWarnings = FALSE)
+
+# 3. Write Matrix (mtx)
+# CoNGA expects 'matrix.mtx'
+Matrix::writeMM(counts, file = file.path(gex_dir, "matrix.mtx"))
+
+# 4. Write Barcodes
+# CoNGA expects a single column of barcodes
+write.table(
+  data.frame(colnames(counts)), 
+  file = file.path(gex_dir, "barcodes.tsv"),
+  sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE
+)
+
+# 5. Write Genes/Features
+# CoNGA expects two columns: GeneID and GeneSymbol
+# We will use the rownames for both to ensure compatibility
+genes_df <- data.frame(ID = rownames(counts), Symbol = rownames(counts))
+write.table(
+  genes_df, 
+  file = file.path(gex_dir, "genes.tsv"),
+  sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE
+)
+
+# Optional: Gzip them if your version of CoNGA is strictly looking for .gz files
+# system(paste("gzip -f", file.path(gex_dir, "*.tsv")))
+# system(paste("gzip -f", file.path(gex_dir, "*.mtx")))
+
+message(glue("GEX successfully exported to: {gex_dir}"))
+
+```
+
+# prepare-conga-input
+```{r}
+#| label: prepare-conga-input
+
+message("Formatting TCR contigs with required raw_clonotype_id for CoNGA...")
+
+md_tmp <- seu@meta.data %>%
+  tibble::rownames_to_column("barcode_id")
+
+required_meta_cols <- c(has_tcr_col, clone_id_col, "cdr3a", "cdr3b", "trav", "traj", "trbv", "trbj")
+missing_meta_cols <- required_meta_cols[!required_meta_cols %in% colnames(md_tmp)]
+if (length(missing_meta_cols) > 0) {
+  stop("Missing required metadata columns for CoNGA input: ", paste(missing_meta_cols, collapse = ", "))
+}
+
+clean_conga_genes <- function(x) {
+  x <- as.character(x)
+  x <- toupper(x)
+  x <- sub("\\*.*$", "", x)
+  x <- gsub("/.*", "", x)
+  x <- gsub("\\s+", "", x)
+
+  x <- dplyr::case_when(
+    x %in% c("TRAV36") ~ "TRAV36DV7",
+    x %in% c("TRAV38-2") ~ "TRAV38-2DV8",
+    TRUE ~ x
+  )
+
+  x[is.na(x) | x == "NONE" | x == "" | x == "NA" | x == "<NA>"] <- "None"
+  x
+}
+
+clean_clone_id <- function(x) {
+  x <- as.character(x)
+  x[is.na(x) | x == "" | x == "NA" | x == "<NA>" | x == "None"] <- NA_character_
+  x
+}
+
+dummy_cdr3_nt <- function(cdr3_aa) {
+  cdr3_aa <- as.character(cdr3_aa)
+  cdr3_aa[is.na(cdr3_aa)] <- ""
+  vapply(
+    nchar(cdr3_aa),
+    function(n) paste(rep("N", 3 * n), collapse = ""),
+    character(1)
+  )
+}
+
+md_tmp <- md_tmp %>%
+  mutate(
+    barcode_id = as.character(barcode_id),
+    clone_id_clean = clean_clone_id(.data[[clone_id_col]])
+  )
+
+df_alpha <- md_tmp %>%
+  filter(!is.na(.data[[has_tcr_col]]), .data[[has_tcr_col]] == TRUE) %>%
+  filter(!is.na(clone_id_clean)) %>%
+  filter(!is.na(cdr3a), cdr3a != "", cdr3a != "None") %>%
+  transmute(
+    barcode = barcode_id,
+    is_cell = "True",
+    contig_id = paste0(barcode_id, "_alpha"),
+    high_confidence = "True",
+    length = 500L,
+    chain = "TRA",
+    v_gene = clean_conga_genes(trav),
+    d_gene = "None",
+    j_gene = clean_conga_genes(traj),
+    c_gene = "TRAC",
+    full_length = "True",
+    productive = "True",
+    cdr3 = as.character(cdr3a),
+    cdr3_nt = dummy_cdr3_nt(cdr3a),
+    reads = 1000L,
+    umis = 10L,
+    raw_clonotype_id = paste0("clonotype_", clone_id_clean)
+  ) %>%
+  filter(v_gene != "None", j_gene != "None")
+
+df_beta <- md_tmp %>%
+  filter(!is.na(.data[[has_tcr_col]]), .data[[has_tcr_col]] == TRUE) %>%
+  filter(!is.na(clone_id_clean)) %>%
+  filter(!is.na(cdr3b), cdr3b != "", cdr3b != "None") %>%
+  transmute(
+    barcode = barcode_id,
+    is_cell = "True",
+    contig_id = paste0(barcode_id, "_beta"),
+    high_confidence = "True",
+    length = 500L,
+    chain = "TRB",
+    v_gene = clean_conga_genes(trbv),
+    d_gene = "None",
+    j_gene = clean_conga_genes(trbj),
+    c_gene = "TRBC",
+    full_length = "True",
+    productive = "True",
+    cdr3 = as.character(cdr3b),
+    cdr3_nt = dummy_cdr3_nt(cdr3b),
+    reads = 1000L,
+    umis = 10L,
+    raw_clonotype_id = paste0("clonotype_", clone_id_clean)
+  ) %>%
+  filter(v_gene != "None", j_gene != "None")
+
+conga_compat_df <- dplyr::bind_rows(df_alpha, df_beta) %>%
+  distinct()
+
+conga_diag <- tibble::tibble(
+  metric = c(
+    "input_cells",
+    "alpha_rows",
+    "beta_rows",
+    "total_rows",
+    "unique_barcodes",
+    "unique_clonotypes"
+  ),
+  value = c(
+    nrow(md_tmp),
+    nrow(df_alpha),
+    nrow(df_beta),
+    nrow(conga_compat_df),
+    dplyr::n_distinct(conga_compat_df$barcode),
+    dplyr::n_distinct(conga_compat_df$raw_clonotype_id)
+  )
+)
+save_table_safe(conga_diag, "conga_prepare_diagnostics.tsv")
+
+if (nrow(conga_compat_df) == 0) {
+  stop(
+    "CoNGA pseudo-contig input is empty after filtering. ",
+    "Check has_tcr, clone_id, cdr3a/cdr3b, and V/J gene columns."
+  )
+}
+
+conga_input_csv <- file.path(params$outdir, params$data_dir, "conga_pseudo_contigs.csv")
+write.csv(conga_compat_df, conga_input_csv, row.names = FALSE, quote = FALSE)
+
+message(glue(
+  "Exported {nrow(conga_compat_df)} pseudo-contigs across ",
+  "{dplyr::n_distinct(conga_compat_df$barcode)} cells and ",
+  "{dplyr::n_distinct(conga_compat_df$raw_clonotype_id)} clonotypes."
+))
+```
+
+# run-conga
+```{r}
+#| label: run-conga
+
+Sys.setenv(MPLCONFIGDIR = ".")
+
+repo_base <- params$conga_repo_dir %||% "/opt/tools/conga"
+
+find_script_recursive <- function(base, script_name) {
+  standard_locs <- c(
+    file.path(base, script_name),
+    file.path(base, "scripts", script_name),
+    file.path(base, "conga", "scripts", script_name)
+  )
+  found_standard <- standard_locs[file.exists(standard_locs)]
+  if (length(found_standard) > 0) return(found_standard[1])
+
+  all_files <- list.files(
+    base,
+    pattern = paste0("^", script_name, "$"),
+    recursive = TRUE,
+    full.names = TRUE
+  )
+  if (length(all_files) == 0) return(NULL)
+  all_files[1]
+}
+
+setup_script <- find_script_recursive(repo_base, "setup_10x_for_conga.py")
+run_script   <- find_script_recursive(repo_base, "run_conga.py")
+
+if (is.null(setup_script) || !file.exists(setup_script)) {
+  stop("Could not locate setup_10x_for_conga.py under conga_repo_dir: ", repo_base)
+}
+if (is.null(run_script) || !file.exists(run_script)) {
+  stop("Could not locate run_conga.py under conga_repo_dir: ", repo_base)
+}
+
+input_csv <- file.path(params$outdir, params$data_dir, "conga_pseudo_contigs.csv")
+if (!file.exists(input_csv)) {
+  stop("Missing CoNGA pseudo-contig input CSV: ", input_csv)
+}
+
+local_contigs <- "conga_pseudo_contigs.csv"
+ok_copy <- file.copy(input_csv, local_contigs, overwrite = TRUE)
+if (!ok_copy || !file.exists(local_contigs)) {
+  stop("Failed to copy CoNGA pseudo-contig CSV into working directory.")
+}
+
+setup_args <- c(
+  setup_script,
+  "--filtered_contig_annotations_csvfile", local_contigs,
+  "--organism", params$organism
+)
+
+message("Step 1: Running CoNGA setup...")
+setup_log <- system2(
+  params$conga_python_bin,
+  args = setup_args,
+  stdout = TRUE,
+  stderr = TRUE
+)
+setup_status <- attr(setup_log, "status")
+if (is.null(setup_status)) setup_status <- 0L
+writeLines(setup_log, "conga_setup.log.txt")
+
+candidate_clones <- c(
+  "conga_pseudo_contigs_tcrdist_clones.tsv",
+  "conga_pseudo_contigs_clones.tsv"
+)
+candidate_bcmap <- c(
+  "conga_pseudo_contigs_bcmap.txt",
+  "conga_pseudo_contigs_barcode_mapping.tsv",
+  "conga_pseudo_contigs_barcode_map.tsv"
+)
+
+find_first_existing <- function(paths) {
+  x <- paths[file.exists(paths)]
+  if (length(x) > 0) x[1] else NULL
+}
+
+clones_file <- find_first_existing(candidate_clones)
+bcmap_file  <- find_first_existing(candidate_bcmap)
+
+if (is.null(clones_file)) {
+  found <- list.files(".", pattern = "clones.*tsv$|tcrdist_clones.*tsv$", recursive = TRUE, full.names = TRUE)
+  if (length(found) > 0) clones_file <- found[1]
+}
+if (is.null(bcmap_file)) {
+  found <- list.files(".", pattern = "bcmap|barcode.*map", recursive = TRUE, full.names = TRUE)
+  if (length(found) > 0) bcmap_file <- found[1]
+}
+
+if (setup_status != 0L || is.null(clones_file) || is.null(bcmap_file)) {
+  stop(
+    paste0(
+      "CRITICAL: CoNGA setup failed to create either the clones file or the barcode map file.\n",
+      "setup_script: ", setup_script, "\n",
+      "setup_status: ", setup_status, "\n",
+      "clones_file found: ", ifelse(is.null(clones_file), "NO", clones_file), "\n",
+      "bcmap_file found: ", ifelse(is.null(bcmap_file), "NO", bcmap_file), "\n",
+      "See conga_setup.log.txt for details."
+    )
+  )
+}
+
+dir.create(file.path(params$outdir, params$data_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$tables_dir), recursive = TRUE, showWarnings = FALSE)
+
+file.copy(clones_file, file.path(params$outdir, params$data_dir, basename(clones_file)), overwrite = TRUE)
+file.copy(bcmap_file, file.path(params$outdir, params$data_dir, basename(bcmap_file)), overwrite = TRUE)
+file.copy("conga_setup.log.txt", file.path(params$outdir, params$tables_dir, "conga_setup.log.txt"), overwrite = TRUE)
+
+outfile_prefix <- file.path(params$outdir, params$data_dir, params$outfile_prefix)
+gex_dir <- normalizePath(file.path(params$outdir, params$data_dir, "gex_10x_mtx"), mustWork = FALSE)
+
+if (!dir.exists(gex_dir)) {
+  stop("CoNGA expected GEX directory does not exist: ", gex_dir)
+}
+
+# detect whether this CoNGA version supports --bcmap_file
+help_out <- system2(
+  params$conga_python_bin,
+  args = c(run_script, "--help"),
+  stdout = TRUE,
+  stderr = TRUE
+)
+help_txt <- paste(help_out, collapse = "\n")
+supports_bcmap_flag <- grepl("--bcmap_file", help_txt, fixed = TRUE)
+
+# run_args <- c(
+#   run_script,
+#   if (isTRUE(params$run_all)) "--all" else "--graph_vs_graph",
+#   "--organism", params$organism,
+#   "--clones_file", normalizePath(clones_file, mustWork = TRUE),
+#   "--gex_data", gex_dir,
+#   "--gex_data_type", params$gex_data_type,
+#   "--outfile_prefix", outfile_prefix
+# )
+# Define the set of flags that avoid on-the-fly C++ compilation
+safe_conga_flags <- c(
+  "--graph_vs_graph",
+  "--graph_vs_graph_stats",
+  "--graph_vs_features",
+  "--cluster_vs_cluster",
+  "--find_hotspot_features",
+  "--find_gex_cluster_degs"
+)
+
+run_args <- c(
+  run_script,
+  safe_conga_flags, # Use the safe list instead of --all
+  "--organism", params$organism,
+  "--clones_file", normalizePath(clones_file, mustWork = TRUE),
+  "--gex_data", gex_dir,
+  "--gex_data_type", params$gex_data_type,
+  "--outfile_prefix", outfile_prefix
+)
+
+# If your version supports the bcmap flag (calculated in your previous logic)
+# if (supports_bcmap_flag) {
+#   run_args <- c(run_args, "--bcmap_file", normalizePath(bcmap_file, mustWork = TRUE))
+# }
+
+
+if (supports_bcmap_flag) {
+  run_args <- c(
+    run_args,
+    "--bcmap_file", normalizePath(bcmap_file, mustWork = TRUE)
+  )
+}
+
+message("Step 2: Starting main CoNGA run...")
+message("run_script: ", run_script)
+message("clones_file: ", normalizePath(clones_file, mustWork = TRUE))
+message("bcmap_file: ", normalizePath(bcmap_file, mustWork = TRUE))
+message("supports_bcmap_flag: ", supports_bcmap_flag)
+message("gex_dir: ", gex_dir)
+message("outfile_prefix: ", outfile_prefix)
+message("run_args:")
+print(run_args)
+
+run_log <- system2(
+  params$conga_python_bin,
+  args = run_args,
+  stdout = TRUE,
+  stderr = TRUE
+)
+run_status <- attr(run_log, "status")
+if (is.null(run_status)) run_status <- 0L
+writeLines(run_log, "conga_run.log.txt")
+file.copy("conga_run.log.txt", file.path(params$outdir, params$tables_dir, "conga_run.log.txt"), overwrite = TRUE)
+
+final_h5ad <- paste0(outfile_prefix, "_final.h5ad")
+if (run_status != 0L || !file.exists(final_h5ad)) {
+  cat("---- Begin conga_run.log.txt ----\n")
+  cat(paste(run_log, collapse = "\n"))
+  cat("\n---- End conga_run.log.txt ----\n")
+
+  stop(
+    paste0(
+      "Final CoNGA h5ad object was not created.\n",
+      "run_status: ", run_status, "\n",
+      "Expected final_h5ad: ", final_h5ad, "\n",
+      "Check conga_run.log.txt."
+    )
+  )
+}
+
+```
+
+
+# extract-conga-results
+```{r}
+#| label: extract-conga-results
+reticulate::use_python(params$conga_python_bin, required = TRUE)
+anndata <- reticulate::import("anndata", delay_load = FALSE)
+pd <- reticulate::import("pandas", delay_load = FALSE)
+np <- reticulate::import("numpy", delay_load = FALSE)
+
+py$final_h5ad <- final_h5ad
+py$out_tsv <- file.path(params$outdir, params$tables_dir, "conga_results.tsv")
+py$out_edges <- file.path(params$outdir, params$tables_dir, "conga_edges.tsv")
+
+reticulate::py_run_string("
+import anndata as ad
+import pandas as pd
+import numpy as np
+
+adata = ad.read_h5ad(final_h5ad)
+obs = adata.obs.copy()
+obs['cell_id'] = obs.index.astype(str)
+
+# Build a clonotype key compatible with SCRATCH clone_id = A:cdr3a|B:cdr3b
+if all(x in obs.columns for x in ['cdr3a','cdr3b']):
+    obs['clone_id'] = 'A:' + obs['cdr3a'].astype(str) + '|B:' + obs['cdr3b'].astype(str)
+else:
+    obs['clone_id'] = np.nan
+
+# pull CoNGA core outputs where available
+def maybe(col):
+    return obs[col] if col in obs.columns else np.nan
+
+out = pd.DataFrame({
+    'cell_id': obs['cell_id'],
+    'clone_id': obs['clone_id'],
+    'conga_score': maybe('conga_scores'),
+    'conga_gex_cluster': maybe('clusters_gex'),
+    'conga_tcr_cluster': maybe('clusters_tcr'),
+    'conga_clone_size': maybe('clone_sizes'),
+    'nndists_tcr': maybe('nndists_tcr'),
+    'nndists_gex': maybe('nndists_gex'),
+    'is_invariant': maybe('is_invariant')
+})
+
+if 'X_gex_2d' in adata.obsm.keys():
+    xy = np.asarray(adata.obsm['X_gex_2d'])
+    out['conga_gex_2d_1'] = xy[:,0]
+    out['conga_gex_2d_2'] = xy[:,1]
+else:
+    out['conga_gex_2d_1'] = np.nan
+    out['conga_gex_2d_2'] = np.nan
+
+if 'X_tcr_2d' in adata.obsm.keys():
+    xy = np.asarray(adata.obsm['X_tcr_2d'])
+    out['conga_tcr_2d_1'] = xy[:,0]
+    out['conga_tcr_2d_2'] = xy[:,1]
+else:
+    out['conga_tcr_2d_1'] = np.nan
+    out['conga_tcr_2d_2'] = np.nan
+
+out.to_csv(out_tsv, sep='\\t', index=False)
+
+# optional edge extraction if neighbors exist in uns
+edge_rows = []
+if hasattr(adata, 'uns') and 'all_nbrs' in adata.uns:
+    all_nbrs = adata.uns['all_nbrs']
+    try:
+        for nbr_frac, pair in all_nbrs.items():
+            gex_nbrs, tcr_nbrs = pair
+            for i in range(len(gex_nbrs)):
+                for j in np.asarray(gex_nbrs[i]).tolist():
+                    edge_rows.append((str(obs.index[i]), str(obs.index[j]), 'gex', str(nbr_frac)))
+                for j in np.asarray(tcr_nbrs[i]).tolist():
+                    edge_rows.append((str(obs.index[i]), str(obs.index[j]), 'tcr', str(nbr_frac)))
+    except Exception:
+        pass
+
+edges = pd.DataFrame(edge_rows, columns=['source','target','edge_type','nbr_frac'])
+edges.to_csv(out_edges, sep='\\t', index=False)
+")
+```
+
+# merge-conga-into-seurat
+```{r}
+#| label: merge-conga-into-seurat
+conga_tbl <- fread(file.path(params$outdir, params$tables_dir, "conga_results.tsv")) %>% as.data.frame()
+
+# CoNGA is clonotype-level after reduction to one representative cell per clone.
+# Merge back to all Seurat cells by clone_id.
+conga_clone_tbl <- conga_tbl %>%
+  filter(!is.na(clone_id), clone_id != "") %>%
+  group_by(clone_id) %>%
+  summarise(
+    conga_score = suppressWarnings(as.numeric(first(conga_score))),
+    conga_gex_cluster = as.character(first(conga_gex_cluster)),
+    conga_tcr_cluster = as.character(first(conga_tcr_cluster)),
+    conga_clone_size = suppressWarnings(as.numeric(first(conga_clone_size))),
+    nndists_tcr = suppressWarnings(as.numeric(first(nndists_tcr))),
+    nndists_gex = suppressWarnings(as.numeric(first(nndists_gex))),
+    is_invariant = as.logical(first(is_invariant)),
+    conga_gex_2d_1 = suppressWarnings(as.numeric(first(conga_gex_2d_1))),
+    conga_gex_2d_2 = suppressWarnings(as.numeric(first(conga_gex_2d_2))),
+    conga_tcr_2d_1 = suppressWarnings(as.numeric(first(conga_tcr_2d_1))),
+    conga_tcr_2d_2 = suppressWarnings(as.numeric(first(conga_tcr_2d_2))),
+    .groups = "drop"
+  )
+
+seu_md <- seu@meta.data %>%
+  tibble::rownames_to_column("cell_id")
+
+seu_md2 <- seu_md %>%
+  left_join(conga_clone_tbl, by = setNames("clone_id", clone_id_col))
+
+rownames(seu_md2) <- seu_md2$cell_id
+seu_md2$cell_id <- NULL
+seu@meta.data <- as.data.frame(seu_md2)
+
+save_rds_safe(seu, "seurat_with_CoNGA.rds")
+save_table_safe(conga_clone_tbl, "conga_clone_level_results.tsv")
+```
+
+# ensure-embedding
+```{r}
+#| label: ensure-embedding
+reduction_to_use <- params$reduction_use
+if (!(reduction_to_use %in% names(seu@reductions)) && isTRUE(params$make_umap_if_missing)) {
+  seu <- safe_make_umap(
+    seu,
+    reduction_name = params$reduction_use,
+    dims = 1:params$umap_dims_max,
+    nfeatures = params$umap_nfeatures
+  )
+}
+if (!(reduction_to_use %in% names(seu@reductions))) {
+  reduction_to_use <- if ("umap" %in% names(seu@reductions)) "umap" else if ("tsne" %in% names(seu@reductions)) "tsne" else if ("pca" %in% names(seu@reductions)) "pca" else stop("No usable embedding found.")
+}
+```
+
+# build-export
+```{r}
+#| label: build-export
+
+# build-export
+embed_df <- as.data.frame(Embeddings(seu, reduction_to_use)) %>%
+  tibble::rownames_to_column("cell_id")
+
+sample_col_export    <- choose_col(seu@meta.data, "META_SAMPLE", sample_col)
+patient_col_export   <- choose_col(seu@meta.data, "META_PATIENT", patient_col)
+condition_col_export <- choose_col(seu@meta.data, "META_TIMECOND", condition_col)
+timepoint_col_export <- choose_col(seu@meta.data, "META_TIMEPOINT", timepoint_col)
+batch_col_export     <- choose_col(seu@meta.data, "META_BATCH", batch_col)
+
+export_cells <- seu@meta.data %>%
+  tibble::rownames_to_column("cell_id") %>%
+  transmute(
+    cell_id,
+    sample = if (!is.null(sample_col_export)) as.character(.data[[sample_col_export]]) else NA_character_,
+    patient = if (!is.null(patient_col_export)) as.character(.data[[patient_col_export]]) else NA_character_,
+    condition = if (!is.null(condition_col_export)) as.character(.data[[condition_col_export]]) else NA_character_,
+    timepoint = if (!is.null(timepoint_col_export)) as.character(.data[[timepoint_col_export]]) else NA_character_,
+    batch = if (!is.null(batch_col_export)) as.character(.data[[batch_col_export]]) else NA_character_,
+    annot = as.character(.data[[label_col]]),
+    clone_id = as.character(.data[[clone_id_col]]),
+    clone_size = suppressWarnings(as.numeric(.data[[clone_size_col]])),
+    has_tcr = as.logical(.data[[has_tcr_col]]),
+    paired_tcr = as.logical(.data[[paired_tcr_col]]),
+    tcri_score = if (!is.null(tcri_score_col_md)) suppressWarnings(as.numeric(.data[[tcri_score_col_md]])) else NA_real_,
+    tcri_group = if (!is.null(tcri_group_col_md)) as.character(.data[[tcri_group_col_md]]) else NA_character_,
+    conga_score = suppressWarnings(as.numeric(.data[["conga_score"]])),
+    conga_gex_cluster = as.character(.data[["conga_gex_cluster"]]),
+    conga_tcr_cluster = as.character(.data[["conga_tcr_cluster"]]),
+    conga_clone_size = suppressWarnings(as.numeric(.data[["conga_clone_size"]])),
+    nndists_tcr = suppressWarnings(as.numeric(.data[["nndists_tcr"]])),
+    nndists_gex = suppressWarnings(as.numeric(.data[["nndists_gex"]])),
+    is_invariant = as.logical(.data[["is_invariant"]])
+  ) %>%
+  left_join(embed_df, by = "cell_id")
+
+save_table_safe(export_cells, "conga_export_cells.tsv")
+
+print(colSums(!is.na(export_cells[, c("sample", "patient", "condition", "timepoint")])))
+
+
+# embed_df <- as.data.frame(Embeddings(seu, reduction_to_use)) %>%
+#   tibble::rownames_to_column("cell_id")
+# 
+# export_cells <- seu@meta.data %>%
+#   tibble::rownames_to_column("cell_id") %>%
+#   transmute(
+#     cell_id,
+#     sample = if (!is.null(sample_col)) .data[[sample_col]] else NA_character_,
+#     patient = if (!is.null(patient_col)) .data[[patient_col]] else NA_character_,
+#     condition = if (!is.null(condition_col)) .data[[condition_col]] else NA_character_,
+#     timepoint = if (!is.null(timepoint_col)) .data[[timepoint_col]] else NA_character_,
+#     batch = if (!is.null(batch_col)) .data[[batch_col]] else NA_character_,
+#     annot = .data[[label_col]],
+#     clone_id = .data[[clone_id_col]],
+#     clone_size = suppressWarnings(as.numeric(.data[[clone_size_col]])),
+#     has_tcr = as.logical(.data[[has_tcr_col]]),
+#     paired_tcr = as.logical(.data[[paired_tcr_col]]),
+#     tcri_score = if (!is.null(tcri_score_col_md)) suppressWarnings(as.numeric(.data[[tcri_score_col_md]])) else NA_real_,
+#     tcri_group = if (!is.null(tcri_group_col_md)) as.character(.data[[tcri_group_col_md]]) else NA_character_,
+#     conga_score = suppressWarnings(as.numeric(.data[["conga_score"]])),
+#     conga_gex_cluster = as.character(.data[["conga_gex_cluster"]]),
+#     conga_tcr_cluster = as.character(.data[["conga_tcr_cluster"]]),
+#     conga_clone_size = suppressWarnings(as.numeric(.data[["conga_clone_size"]])),
+#     nndists_tcr = suppressWarnings(as.numeric(.data[["nndists_tcr"]])),
+#     nndists_gex = suppressWarnings(as.numeric(.data[["nndists_gex"]])),
+#     is_invariant = as.logical(.data[["is_invariant"]])
+#   ) %>%
+#   left_join(embed_df, by = "cell_id")
+# 
+# save_table_safe(export_cells, "conga_export_cells.tsv")
+```
+
+# Merge diagnostics
+```{r}
+#| label: merge-diagnostics
+merge_diagnostics <- tibble(
+  metric = c(
+    "Cells in Seurat",
+    "Representative clonotypes in CoNGA",
+    "Cells with merged CoNGA score",
+    "Cells with merged CoNGA GEX cluster",
+    "Fraction with CoNGA score",
+    "Fraction with CoNGA GEX cluster"
+  ),
+  value = c(
+    ncol(seu),
+    nrow(conga_tbl),
+    sum(!is.na(export_cells$conga_score)),
+    sum(!is.na(export_cells$conga_gex_cluster)),
+    sprintf("%.2f%%", 100 * mean(!is.na(export_cells$conga_score))),
+    sprintf("%.2f%%", 100 * mean(!is.na(export_cells$conga_gex_cluster)))
+  )
+)
+save_table_safe(merge_diagnostics, "conga_merge_diagnostics.tsv")
+```
+
+# summary-tables
+```{r}
+#| label: summary-tables
+
+summary_rollup <- tibble(
+  metric = c(
+    "Report label",
+    "Cells in Seurat",
+    "Cells with CoNGA scores",
+    "TCR-positive cells",
+    "Paired TCR cells",
+    "Unique CoNGA GEX clusters",
+    "Unique CoNGA TCR clusters",
+    "Unique annotations",
+    "Unique samples",
+    "Selected embedding"
+  ),
+  value = c(
+    params$report_label,
+    nrow(export_cells),
+    sum(!is.na(export_cells$conga_score)),
+    sum(export_cells$has_tcr, na.rm = TRUE),
+    sum(export_cells$paired_tcr, na.rm = TRUE),
+    length(unique(na.omit(export_cells$conga_gex_cluster))),
+    length(unique(na.omit(export_cells$conga_tcr_cluster))),
+    length(unique(na.omit(export_cells$annot))),
+    length(unique(na.omit(export_cells$sample))),
+    reduction_to_use
+  )
+)
+save_table_safe(summary_rollup, "conga_summary_rollup.tsv")
+
+cluster_summary <- export_cells %>%
+  filter(!is.na(conga_gex_cluster)) %>%
+  count(conga_gex_cluster, name = "n_cells") %>%
+  mutate(frac = n_cells / sum(n_cells)) %>%
+  arrange(desc(n_cells))
+save_table_safe(cluster_summary, "conga_cluster_summary.tsv")
+
+annotation_conga_summary <- export_cells %>%
+  filter(!is.na(conga_score), !is.na(annot)) %>%
+  group_by(annot) %>%
+  summarise(
+    n_cells = n(),
+    mean_conga = mean(conga_score, na.rm = TRUE),
+    median_conga = median(conga_score, na.rm = TRUE),
+    sd_conga = sd(conga_score, na.rm = TRUE),
+    n_clustered = sum(!is.na(conga_gex_cluster)),
+    frac_clustered = n_clustered / n_cells,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_conga))
+save_table_safe(annotation_conga_summary, "annotation_conga_summary.tsv")
+
+sample_conga_summary <- export_cells %>%
+  filter(!is.na(sample)) %>%
+  group_by(sample) %>%
+  summarise(
+    n_cells = n(),
+    n_clustered = sum(!is.na(conga_gex_cluster)),
+    frac_clustered = n_clustered / n_cells,
+    mean_conga = mean(conga_score, na.rm = TRUE),
+    median_conga = median(conga_score, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(frac_clustered))
+save_table_safe(sample_conga_summary, "sample_conga_summary.tsv")
+
+cluster_annotation_tbl <- export_cells %>%
+  filter(!is.na(conga_gex_cluster), !is.na(annot)) %>%
+  count(conga_gex_cluster, annot, name = "n_cells")
+save_table_safe(cluster_annotation_tbl, "conga_cluster_annotation_composition.tsv")
+
+cluster_sample_tbl <- export_cells %>%
+  filter(!is.na(conga_gex_cluster), !is.na(sample)) %>%
+  count(conga_gex_cluster, sample, name = "n_cells")
+save_table_safe(cluster_sample_tbl, "conga_cluster_sample_composition.tsv")
+
+# Safe TCRi ↔ CoNGA association summary
+assoc_df <- export_cells %>%
+  dplyr::select(
+    dplyr::any_of(c(
+      "cell_id",
+      "sample",
+      "annot",
+      "clone_id",
+      "tcri_score",
+      "conga_score"
+    ))
+  ) %>%
+  dplyr::filter(
+    !is.na(tcri_score),
+    !is.na(conga_score)
+  )
+
+save_table_safe(
+  tibble::tibble(
+    metric = c(
+      "cells_with_tcri_and_conga",
+      "unique_samples",
+      "unique_clones"
+    ),
+    value = c(
+      nrow(assoc_df),
+      dplyr::n_distinct(assoc_df$sample),
+      dplyr::n_distinct(assoc_df$clone_id)
+    )
+  ),
+  "tcri_conga_overlap_diagnostics.tsv"
+)
+
+if (nrow(assoc_df) >= 3) {
+
+  pearson_cor <- tryCatch(
+    stats::cor(
+      assoc_df$tcri_score,
+      assoc_df$conga_score,
+      use = "pairwise.complete.obs",
+      method = "pearson"
+    ),
+    error = function(e) NA_real_
+  )
+
+  spearman_cor <- tryCatch(
+    stats::cor(
+      assoc_df$tcri_score,
+      assoc_df$conga_score,
+      use = "pairwise.complete.obs",
+      method = "spearman"
+    ),
+    error = function(e) NA_real_
+  )
+
+  pearson_p <- tryCatch(
+    stats::cor.test(
+      assoc_df$tcri_score,
+      assoc_df$conga_score,
+      method = "pearson"
+    )$p.value,
+    error = function(e) NA_real_
+  )
+
+  spearman_p <- tryCatch(
+    stats::cor.test(
+      assoc_df$tcri_score,
+      assoc_df$conga_score,
+      method = "spearman",
+      exact = FALSE
+    )$p.value,
+    error = function(e) NA_real_
+  )
+
+  tcri_conga_assoc_tbl <- tibble::tibble(
+    n_cells = nrow(assoc_df),
+    pearson_cor = pearson_cor,
+    pearson_p = pearson_p,
+    spearman_cor = spearman_cor,
+    spearman_p = spearman_p
+  )
+
+} else {
+  tcri_conga_assoc_tbl <- tibble::tibble(
+    n_cells = nrow(assoc_df),
+    pearson_cor = NA_real_,
+    pearson_p = NA_real_,
+    spearman_cor = NA_real_,
+    spearman_p = NA_real_,
+    note = "Too few overlapping non-missing TCRi and CoNGA scores to compute correlation."
+  )
+}
+
+save_table_safe(tcri_conga_assoc_tbl, "tcri_conga_association.tsv")
+
+
+```
+
+# overview
+```{r}
+#| label: overview
+kable(summary_rollup, caption = "High-level overview of CoNGA analysis.") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+# CoNGA score distributions density-plot
+```{r}
+#| label: density-plot
+if (isTRUE(params$show_density_plot) && any(!is.na(export_cells$conga_score))) {
+  p_density <- export_cells %>%
+    filter(!is.na(conga_score)) %>%
+    ggplot(aes(x = conga_score)) +
+    geom_density(fill = "steelblue", alpha = 0.5, linewidth = 0.8) +
+    labs(
+      title = "Distribution of CoNGA scores",
+      x = "CoNGA score",
+      y = "Density"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_density
+  save_plot_safe(p_density, glue("conga_score_density.{params$figure_format}"))
+}
+```
+
+# Embedding overlays
+```{r}
+#| label: conga-feature-plot
+if (isTRUE(params$show_feature_plot) && any(!is.na(export_cells$conga_score))) {
+  p_feature <- FeaturePlot(
+    seu,
+    reduction = reduction_to_use,
+    features = "conga_score",
+    raster = isTRUE(params$raster_large_umap)
+  ) +
+    ggtitle("Embedding overlay: CoNGA score") +
+    theme_scratch_pub(params$base_size)
+
+  p_feature
+  save_plot_safe(p_feature, glue("conga_feature_plot.{params$figure_format}"), width = 8, height = 6)
+}
+```
+
+# conga-cluster-umap
+```{r}
+#| label: conga-cluster-umap
+if (isTRUE(params$show_cluster_umap) && any(!is.na(export_cells$conga_gex_cluster))) {
+  p_cluster <- DimPlot(
+    seu,
+    reduction = reduction_to_use,
+    group.by = "conga_gex_cluster",
+    label = FALSE,
+    raster = isTRUE(params$raster_large_umap)
+  ) +
+    ggtitle("Embedding overlay: CoNGA GEX cluster") +
+    theme_scratch_pub(params$base_size)
+
+  p_cluster
+  save_plot_safe(p_cluster, glue("conga_cluster_umap.{params$figure_format}"), width = 8, height = 6)
+}
+```
+
+# CoNGA by annotation
+```{r}
+#| label: violin-by-annotation
+if (isTRUE(params$show_violin_by_annotation) && any(!is.na(export_cells$conga_score))) {
+  annot_order <- annotation_conga_summary %>%
+    arrange(desc(mean_conga)) %>%
+    pull(annot)
+
+  p_violin_annot <- export_cells %>%
+    filter(!is.na(conga_score), !is.na(annot)) %>%
+    mutate(annot = factor(annot, levels = annot_order)) %>%
+    ggplot(aes(x = annot, y = conga_score, fill = annot)) +
+    geom_violin(scale = "width", trim = TRUE, alpha = 0.8) +
+    geom_boxplot(width = 0.12, outlier.size = 0.2, fill = "white") +
+    coord_flip() +
+    guides(fill = "none") +
+    labs(title = "CoNGA score by annotation", x = NULL, y = "CoNGA score") +
+    theme_scratch_pub(params$base_size)
+
+  p_violin_annot
+  save_plot_safe(p_violin_annot, glue("conga_violin_by_annotation.{params$figure_format}"), width = 10, height = 8)
+}
+```
+
+# CoNGA by sample / condition / patient / timepoint
+```{r}
+#| label: boxplots-by-group
+if (isTRUE(params$show_boxplots_by_sample) && any(!is.na(export_cells$sample))) {
+  plot_box_by_group(export_cells, "sample", "conga_score", "CoNGA score by sample", glue("conga_boxplot_by_sample.{params$figure_format}"))
+}
+if (isTRUE(params$show_boxplots_by_condition) && any(!is.na(export_cells$condition))) {
+  plot_box_by_group(export_cells, "condition", "conga_score", "CoNGA score by condition", glue("conga_boxplot_by_condition.{params$figure_format}"))
+}
+if (isTRUE(params$show_boxplots_by_patient) && any(!is.na(export_cells$patient))) {
+  plot_box_by_group(export_cells, "patient", "conga_score", "CoNGA score by patient", glue("conga_boxplot_by_patient.{params$figure_format}"))
+}
+if (isTRUE(params$show_boxplots_by_timepoint) && any(!is.na(export_cells$timepoint))) {
+  plot_box_by_group(export_cells, "timepoint", "conga_score", "CoNGA score by timepoint", glue("conga_boxplot_by_timepoint.{params$figure_format}"))
+}
+```
+
+# cluster-composition
+```{r}
+#| label: cluster-composition
+if (isTRUE(params$show_cluster_composition) && nrow(cluster_summary) > 0) {
+  top_clusters <- cluster_summary %>%
+    slice_head(n = params$top_n_clusters) %>%
+    pull(conga_gex_cluster)
+
+  p_cluster_bar <- cluster_summary %>%
+    filter(conga_gex_cluster %in% top_clusters) %>%
+    mutate(conga_gex_cluster = fct_reorder(conga_gex_cluster, n_cells)) %>%
+    ggplot(aes(x = conga_gex_cluster, y = n_cells)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = comma) +
+    labs(title = "Top CoNGA GEX clusters", x = NULL, y = "Cells") +
+    theme_scratch_pub(params$base_size)
+
+  p_cluster_bar
+  save_plot_safe(p_cluster_bar, glue("conga_cluster_size_barplot.{params$figure_format}"))
+}
+```
+
+# cluster heatmaps
+```{r}
+#| label: annotation-heatmap
+if (isTRUE(params$show_cluster_annotation_heatmap) && nrow(cluster_annotation_tbl) > 0) {
+  top_clusters <- cluster_summary %>%
+    filter(n_cells >= params$min_cluster_size_plot) %>%
+    slice_head(n = params$top_n_clusters) %>%
+    pull(conga_gex_cluster)
+
+  # mat_df <- cluster_annotation_tbl %>%
+  #   filter(conga_gex_cluster %in% top_clusters) %>%
+  #   pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+  #   as.data.frame()
+  # 
+  # rownames(mat_df) <- paste0("C", sprintf("%02d", mat_df$conga_gex_cluster))
+  # mat_df$conga_gex_cluster <- NULL
+  # mat <- as.matrix(mat_df)
+  mat_df <- cluster_annotation_tbl %>%
+    filter(conga_gex_cluster %in% top_clusters) %>%
+    pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+  
+  rownames(mat_df) <- paste0(
+    "C",
+    stringr::str_pad(as.character(mat_df$conga_gex_cluster), width = 2, side = "left", pad = "0")
+  )
+  mat_df$conga_gex_cluster <- NULL
+  mat <- as.matrix(mat_df)
+
+
+  max_mat <- max(mat, na.rm = TRUE)
+  if (!is.finite(max_mat) || max_mat <= 0) max_mat <- 1
+
+  ht <- ComplexHeatmap::Heatmap(
+    mat,
+    name = "Cells",
+    col = circlize::colorRamp2(
+      c(0, max_mat / 2, max_mat),
+      c("white", "gold", "firebrick")
+    ),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    row_names_gp = grid::gpar(fontsize = 9),
+    row_names_max_width = grid::unit(18, "mm"),
+    column_names_gp = grid::gpar(fontsize = 10),
+    column_names_rot = 45,
+    column_title = "Annotation composition of CoNGA clusters",
+    column_title_gp = grid::gpar(fontsize = 13, fontface = "bold"),
+    heatmap_legend_param = list(title = "Cells")
+  )
+
+  ComplexHeatmap::draw(
+    ht,
+    heatmap_legend_side = "right",
+    padding = grid::unit(c(5, 5, 5, 20), "mm")
+  )
+}
+
+
+# #| label: annotation-heatmap
+# if (isTRUE(params$show_cluster_annotation_heatmap) && nrow(cluster_annotation_tbl) > 0) {
+#   top_clusters <- cluster_summary %>%
+#     filter(n_cells >= params$min_cluster_size_plot) %>%
+#     slice_head(n = params$top_n_clusters) %>%
+#     pull(conga_gex_cluster)
+# 
+#   mat_df <- cluster_annotation_tbl %>%
+#     filter(conga_gex_cluster %in% top_clusters) %>%
+#     pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+#     as.data.frame()
+# 
+#   rownames(mat_df) <- mat_df$conga_gex_cluster
+#   mat_df$conga_gex_cluster <- NULL
+#   mat <- as.matrix(mat_df)
+# 
+#   ht <- Heatmap(
+#     mat,
+#     name = "Cells",
+#     col = colorRamp2(c(0, max(mat, na.rm = TRUE) / 2, max(mat, na.rm = TRUE)),
+#                      c("white", "gold", "firebrick")),
+#     cluster_rows = TRUE,
+#     cluster_columns = TRUE,
+#     row_names_side = "left",
+#     column_title = "Annotation composition of CoNGA clusters",
+#     heatmap_legend_param = list(title = "Cells")
+#   )
+#   draw(ht)
+# }
+```
+
+# sample heatmaps
+```{r}
+#| label: sample-heatmap
+if (isTRUE(params$show_cluster_sample_heatmap) && nrow(cluster_sample_tbl) > 0) {
+  top_clusters <- cluster_summary %>%
+    filter(n_cells >= params$min_cluster_size_plot) %>%
+    slice_head(n = params$top_n_clusters) %>%
+    pull(conga_gex_cluster)
+
+  mat_df <- cluster_sample_tbl %>%
+    filter(conga_gex_cluster %in% top_clusters) %>%
+    pivot_wider(names_from = sample, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+
+  rownames(mat_df) <- mat_df$conga_gex_cluster
+  mat_df$conga_gex_cluster <- NULL
+  mat <- as.matrix(mat_df)
+
+  ht <- Heatmap(
+    mat,
+    name = "Cells",
+    col = colorRamp2(c(0, max(mat, na.rm = TRUE) / 2, max(mat, na.rm = TRUE)),
+                     c("white", "skyblue", "navy")),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    column_title = "Sample composition of CoNGA clusters",
+    heatmap_legend_param = list(title = "Cells")
+  )
+  draw(ht)
+}
+```
+
+# TCRi and CoNGA association
+```{r}
+#| label: tcri-vs-conga-assoc-plot
+if (isTRUE(params$show_tcri_vs_conga) && any(!is.na(export_cells$tcri_score)) && any(!is.na(export_cells$conga_score))) {
+  p_assoc <- export_cells %>%
+    filter(!is.na(tcri_score), !is.na(conga_score)) %>%
+    ggplot(aes(x = tcri_score, y = conga_score)) +
+    geom_point(alpha = 0.35, size = 1.1) +
+    geom_smooth(method = "lm", se = TRUE, color = "firebrick") +
+    labs(
+      title = "Association: TCRi vs CoNGA scores",
+      x = "TCRi score",
+      y = "CoNGA score"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_assoc)
+  save_plot_safe(p_assoc, glue("tcri_vs_conga_scatter.{params$figure_format}"))
+}
+```
+
+
+# clone-size-vs-conga-plot
+```{r}
+#| label: clone-size-vs-conga-plot
+if (any(!is.na(export_cells$clone_size)) && any(!is.na(export_cells$conga_score))) {
+  p_size_conga <- export_cells %>%
+    filter(!is.na(clone_size), !is.na(conga_score)) %>%
+    ggplot(aes(x = log10(clone_size), y = conga_score)) +
+    geom_point(alpha = 0.2, size = 1) +
+    geom_smooth(method = "lm", color = "darkblue") +
+    labs(
+      title = "Clone Size vs CoNGA score",
+      x = "log10(Clone Size)",
+      y = "CoNGA score"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_size_conga)
+  save_plot_safe(p_size_conga, glue("clonesize_vs_conga_scatter.{params$figure_format}"))
+}
+```
+
+# tcri-conga-association-summary
+```{r}
+#| label: tcri-conga-association-summary
+
+# Build TCRi ↔ CoNGA association table safely
+tcri_conga_assoc_tbl <- tibble::tibble()
+
+if (exists("export_cells")) {
+
+  assoc_df <- export_cells %>%
+    dplyr::select(
+      dplyr::any_of(c(
+        "cell_id",
+        "sample",
+        "annot",
+        "clone_id",
+        "tcri_score",
+        "conga_score"
+      ))
+    ) %>%
+    dplyr::filter(
+      !is.na(tcri_score),
+      !is.na(conga_score)
+    )
+
+  save_table_safe(
+    tibble::tibble(
+      metric = c(
+        "cells_with_tcri_and_conga",
+        "unique_samples",
+        "unique_clones"
+      ),
+      value = c(
+        nrow(assoc_df),
+        dplyr::n_distinct(assoc_df$sample),
+        dplyr::n_distinct(assoc_df$clone_id)
+      )
+    ),
+    "tcri_conga_overlap_diagnostics.tsv"
+  )
+
+  if (nrow(assoc_df) >= 3) {
+
+    pearson_cor <- tryCatch(
+      stats::cor(
+        assoc_df$tcri_score,
+        assoc_df$conga_score,
+        use = "pairwise.complete.obs",
+        method = "pearson"
+      ),
+      error = function(e) NA_real_
+    )
+
+    spearman_cor <- tryCatch(
+      stats::cor(
+        assoc_df$tcri_score,
+        assoc_df$conga_score,
+        use = "pairwise.complete.obs",
+        method = "spearman"
+      ),
+      error = function(e) NA_real_
+    )
+
+    pearson_p <- tryCatch(
+      stats::cor.test(
+        assoc_df$tcri_score,
+        assoc_df$conga_score,
+        method = "pearson"
+      )$p.value,
+      error = function(e) NA_real_
+    )
+
+    spearman_p <- tryCatch(
+      stats::cor.test(
+        assoc_df$tcri_score,
+        assoc_df$conga_score,
+        method = "spearman",
+        exact = FALSE
+      )$p.value,
+      error = function(e) NA_real_
+    )
+
+    tcri_conga_assoc_tbl <- tibble::tibble(
+      n_cells = nrow(assoc_df),
+      pearson_cor = pearson_cor,
+      pearson_p = pearson_p,
+      spearman_cor = spearman_cor,
+      spearman_p = spearman_p
+    )
+
+  } else {
+    tcri_conga_assoc_tbl <- tibble::tibble(
+      n_cells = nrow(assoc_df),
+      pearson_cor = NA_real_,
+      pearson_p = NA_real_,
+      spearman_cor = NA_real_,
+      spearman_p = NA_real_,
+      note = "Too few overlapping non-missing TCRi and CoNGA scores to compute correlation."
+    )
+  }
+
+} else {
+  tcri_conga_assoc_tbl <- tibble::tibble(
+    n_cells = 0,
+    pearson_cor = NA_real_,
+    pearson_p = NA_real_,
+    spearman_cor = NA_real_,
+    spearman_p = NA_real_,
+    note = "export_cells object not found."
+  )
+}
+
+save_table_safe(tcri_conga_assoc_tbl, "tcri_conga_association_summary.tsv")
+```
+
+
+##Summary Display
+```{r}
+#| label: summary-tables-display
+if (isTRUE(params$show_summary_tables)) {
+  kable(cluster_summary %>% slice_head(n = params$top_n_clusters),
+        caption = "Top CoNGA GEX clusters by cell count.") %>%
+    kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+  kable(annotation_conga_summary %>% slice_head(n = params$top_n_states_heatmap),
+        caption = "Top annotations ranked by mean CoNGA score.") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+  kable(merge_diagnostics,
+        caption = "CoNGA merge diagnostics.") %>%
+    kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+  if (exists("tcri_conga_assoc_tbl") &&
+      nrow(tcri_conga_assoc_tbl) > 0 &&
+      any(!is.na(tcri_conga_assoc_tbl$pearson_cor) |
+          !is.na(tcri_conga_assoc_tbl$spearman_cor) |
+          !is.na(tcri_conga_assoc_tbl$note))) {
+    kable(tcri_conga_assoc_tbl,
+          caption = "Association between TCRi and CoNGA scores.") %>%
+      kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+  }
+}
+
+```
+
+# warnings
+```{r}
+#| label: warnings
+
+# warnings
+condition_missing <- is.null(condition_col_export) || all(is.na(export_cells$condition))
+patient_missing   <- is.null(patient_col_export)   || all(is.na(export_cells$patient))
+timepoint_missing <- is.null(timepoint_col_export) || all(is.na(export_cells$timepoint))
+
+warn_tbl <- tibble(
+  warning = c(
+    "Few cells with CoNGA scores",
+    "Few cells with CoNGA clusters",
+    "Condition metadata unresolved or empty after export",
+    "Patient metadata unresolved or empty after export",
+    "Timepoint metadata unresolved or empty after export"
+  ),
+  triggered = c(
+    mean(!is.na(export_cells$conga_score)) < 0.5,
+    mean(!is.na(export_cells$conga_gex_cluster)) < 0.5,
+    condition_missing,
+    patient_missing,
+    timepoint_missing
+  ),
+  interpretation = c(
+    "Less than half the cells in Seurat received a propagated CoNGA score.",
+    "Less than half the cells in Seurat received a propagated CoNGA cluster.",
+    "Condition metadata were present in the input object but were not resolved or retained correctly in the exported CoNGA table.",
+    "Patient metadata were present in the input object but were not resolved or retained correctly in the exported CoNGA table.",
+    "Timepoint metadata were present in the input object but were not resolved or retained correctly in the exported CoNGA table."
+  )
+) %>%
+  filter(triggered)
+
+if (nrow(warn_tbl) == 0) {
+  cat("No major automatic warnings were triggered under the current CoNGA settings.")
+} else {
+  print(
+    kable(
+      warn_tbl %>% select(-triggered),
+      caption = "Automatically generated CoNGA warnings and notes."
+    ) %>%
+      kable_styling(
+        full_width = TRUE,
+        bootstrap_options = c("striped", "hover", "condensed")
+      )
+  )
+}
+
+# warn_tbl <- tibble(
+#   warning = c(
+#     "Few cells with CoNGA scores",
+#     "Few cells with CoNGA clusters",
+#     "No condition metadata",
+#     "No patient metadata",
+#     "No timepoint metadata"
+#   ),
+#   triggered = c(
+#     mean(!is.na(export_cells$conga_score)) < 0.5,
+#     mean(!is.na(export_cells$conga_gex_cluster)) < 0.5,
+#     all(is.na(export_cells$condition)),
+#     all(is.na(export_cells$patient)),
+#     all(is.na(export_cells$timepoint))
+#   ),
+#   interpretation = c(
+#     "Less than half the cells in Seurat received a propagated CoNGA score.",
+#     "Less than half the cells in Seurat received a propagated CoNGA cluster.",
+#     "Condition-level summaries were skipped because condition metadata were unavailable.",
+#     "Patient-level summaries were skipped because patient metadata were unavailable.",
+#     "Timepoint-level summaries were skipped because timepoint metadata were unavailable."
+#   )
+# ) %>%
+#   filter(triggered)
+# 
+# if (nrow(warn_tbl) == 0) {
+#   cat("No major automatic warnings were triggered under the current CoNGA settings.")
+# } else {
+#   kable(warn_tbl %>% select(-triggered), caption = "Automatically generated CoNGA warnings and notes.") %>%
+#     kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover", "condensed"))
+# }
+```
+
+# session-info
+```{r}
+#| label: session-info
+writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.conga.txt"))
+sessionInfo()
+```
+
+
+
+
+
+

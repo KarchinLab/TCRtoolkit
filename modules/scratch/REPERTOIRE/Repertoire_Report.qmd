@@ -1,0 +1,1332 @@
+---
+title: "SCRATCH-TCR: Repertoire Analysis Report"
+author: "Syed Shujaat Ali Zaidi"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+    df-print: paged
+    css: repertoire_report.css
+execute:
+  echo: false
+  warning: false
+  message: false
+
+
+params:
+  # ======================================================
+  # Inputs
+  # ======================================================
+  seurat_rds: "data/seurat_with_consensus_clonotype_clusters.rds"
+  export_cells_file: "data/consensus_export_cells.tsv"
+  outdir: "Repertoire_Report"
+
+  # Optional inputs
+  metadata_file: ""
+  previous_summary_file: ""
+
+  # ======================================================
+  # Output controls
+  # ======================================================
+  data_dir: "data"
+  tables_dir: "tables"
+  figures_dir: "figures"
+  save_tables: true
+  save_figures: true
+  save_updated_seurat: false
+  figure_format: "png"
+  figure_width: 10
+  figure_height: 7
+  figure_dpi: 300
+  base_size: 12
+
+  # ======================================================
+  # Metadata mapping
+  # ======================================================
+  label_col: ""
+  sample_col: "META_SAMPLE"
+  patient_col: "META_PATIENT"
+  condition_col: "META_TIMECOND"
+  timepoint_col: "META_TIMEPOINT"
+  batch_col: "META_BATCH"
+  clone_id_col: "clone_id"
+  clone_size_col: "clone_size"
+  paired_tcr_col: "paired_tcr"
+  has_tcr_col: "has_tcr"
+  consensus_cluster_col: "consensus_cluster"
+
+  label_candidates: "annot;Annotation;celltype;CellType;predicted_labels;predicted.celltype.l2;predicted.celltype.l1;celltypist;celltypist_label;azimuth_labels;seurat_clusters"
+  sample_candidates: "META_SAMPLE;sample;orig.ident;sample_id;Sample;SampleID"
+  patient_candidates: "META_PATIENT;patient_id;patient;Patient;subject;donor;case_id"
+  condition_candidates: "META_TIMECOND;condition;Condition;group;Group;status"
+  timepoint_candidates: "META_TIMEPOINT;timepoint;Timepoint;visit;Visit;day;Day;META_TIMECOND"
+  batch_candidates: "META_BATCH;batch;Batch;library;Library;run;Run;lane;Lane"
+  clone_id_candidates: "clone_id;CTaa;clonotype;clone"
+  clone_size_candidates: "clone_size;CloneSize;clone_n"
+  paired_tcr_candidates: "paired_tcr;paired;is_paired"
+  has_tcr_candidates: "has_tcr;hasTCR;tcr_positive"
+  consensus_cluster_candidates: "consensus_cluster;consensus;consensus_id"
+
+  # ======================================================
+  # Repertoire / binning controls
+  # ======================================================
+  min_cells_per_clone_plot: 2
+  top_n_shared_clones: 50
+  top_n_flux_clones: 30
+  shareability_min_n_groups: 2
+  min_cells_per_group: 10
+  top_n_clusters: 20
+  
+
+  # Clone burden / homeostasis bins
+  clone_bin_breaks: "0;1e-4;0.001;0.01;0.1;1.0"
+  clone_bin_labels: "Rare;Small;Medium;Large;Hyperexpanded"
+  use_relative_clone_frequencies: true
+
+  # Similarity / overlap
+  overlap_metric: "jaccard"
+  diversity_metrics: "shannon;simpson;inv_simpson;richness"
+  longitudinal_require_ordered_time: false
+
+  # ======================================================
+  # Figure/report toggles
+  # ======================================================
+  show_diversity_boxplots: true
+  show_clone_burden_barplot: true
+  show_rank_abundance: true
+  show_shareability_barplot: true
+  show_shareability_heatmap: true
+  show_sample_overlap_heatmap: true
+  show_phenotypic_flux: true
+  show_longitudinal_clone_tracking: true
+  show_consensus_cluster_burden: true
+  show_summary_tables: true
+
+  report_label: "Repertoire Analysis"
+---
+
+
+###############################################################################
+# Read the integrated Seurat object or exported cell-level table and standardize clonotype, metadata, and annotation fields.
+# Compute repertoire summaries including clone frequencies, diversity metrics, clonal burden, and cross-sample shareability.
+# Quantify sample-to-sample overlap and identify clonotypes spanning multiple biological groups or phenotypic states.
+# Generate publication-quality figures for diversity, burden, shareability, overlap, phenotypic flux, and optional longitudinal tracking.
+# Export repertoire summary tables and figures for the final master summary report.
+###############################################################################
+# setup
+```{r}
+#| label: setup
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(forcats)
+  library(scales)
+  library(glue)
+  library(knitr)
+  library(kableExtra)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(ggalluvial)
+  library(patchwork)
+})
+
+options(stringsAsFactors = FALSE)
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$data_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$tables_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$figures_dir), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
+
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+      plot.subtitle = element_text(size = base_size, hjust = 0),
+      axis.title = element_text(face = "bold"),
+      axis.text = element_text(color = "black"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+      strip.background = element_rect(fill = "grey95", color = "grey80"),
+      strip.text = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.key = element_blank(),
+      plot.caption = element_text(size = base_size - 2, color = "grey40")
+    )
+}
+
+save_plot_safe <- function(plot_obj, filename,
+                           width = params$figure_width,
+                           height = params$figure_height,
+                           dpi = params$figure_dpi) {
+  if (!isTRUE(params$save_figures)) return(invisible(NULL))
+  ggplot2::ggsave(
+    filename = file.path(params$outdir, params$figures_dir, filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+save_table_safe <- function(df, filename) {
+  if (!isTRUE(params$save_tables)) return(invisible(NULL))
+  data.table::fwrite(df, file.path(params$outdir, params$tables_dir, filename), sep = "\t")
+}
+
+safe_read_table <- function(path) {
+  if (is.null(path) || is.na(path) || path == "" || !file.exists(path)) return(NULL)
+  ext <- tolower(tools::file_ext(path))
+  if (ext %in% c("tsv", "tab", "txt")) {
+    data.table::fread(path, sep = "\t")
+  } else {
+    data.table::fread(path)
+  }
+}
+
+require_file <- function(path, msg = NULL) {
+  if (!file.exists(path)) stop(msg %||% paste("Missing required file:", path))
+  path
+}
+
+sanitize_param_string <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NULL)
+  trimws(gsub("\\u00A0", " ", as.character(x)))
+}
+
+normalize_colnames <- function(df) {
+  colnames(df) <- trimws(gsub("\\u00A0", " ", colnames(df)))
+  df
+}
+
+split_candidate_string <- function(x) {
+  if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(character())
+  x <- gsub('"', "", as.character(x))
+  x <- trimws(unlist(strsplit(x, ";", fixed = TRUE)))
+  x[nzchar(x)]
+}
+
+parse_numeric_param_vector <- function(x) {
+  vals <- split_candidate_string(x)
+  as.numeric(vals)
+}
+
+parse_character_param_vector <- function(x) {
+  split_candidate_string(x)
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  df <- normalize_colnames(df)
+  preferred <- sanitize_param_string(preferred)
+
+  if (length(candidates) == 1 && is.character(candidates)) {
+    candidates <- split_candidate_string(candidates)
+  }
+  candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
+
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+  NULL
+}
+
+safe_n_unique <- function(x) length(unique(na.omit(x)))
+
+calc_shannon <- function(x) {
+  x <- x[x > 0]
+  p <- x / sum(x)
+  -sum(p * log(p))
+}
+
+calc_simpson <- function(x) {
+  x <- x[x > 0]
+  p <- x / sum(x)
+  1 - sum(p^2)
+}
+
+calc_inv_simpson <- function(x) {
+  x <- x[x > 0]
+  p <- x / sum(x)
+  1 / sum(p^2)
+}
+
+calc_richness <- function(x) {
+  sum(x > 0)
+}
+
+calc_overlap_score <- function(a, b, metric = "jaccard") {
+  a <- unique(na.omit(a))
+  b <- unique(na.omit(b))
+  inter <- length(intersect(a, b))
+  union_n <- length(union(a, b))
+  if (metric == "jaccard") {
+    ifelse(union_n > 0, inter / union_n, NA_real_)
+  } else {
+    denom <- min(length(a), length(b))
+    ifelse(denom > 0, inter / denom, NA_real_)
+  }
+}
+
+save_rds_safe <- function(obj, filename) {
+  saveRDS(obj, file.path(params$outdir, params$data_dir, filename))
+}
+
+save_rdata_safe <- function(..., filename) {
+  save(..., file = file.path(params$outdir, params$data_dir, filename))
+}
+
+```
+
+# loading Inputs
+```{r}
+#| label: read-inputs
+require_file(params$seurat_rds, sprintf("Seurat RDS not found: %s", params$seurat_rds))
+
+seu <- readRDS(params$seurat_rds)
+export_cells_in <- safe_read_table(params$export_cells_file)
+metadata_tbl <- safe_read_table(params$metadata_file)
+previous_summary_tbl <- safe_read_table(params$previous_summary_file)
+
+if (is.null(export_cells_in)) {
+  export_cells_in <- seu@meta.data %>% tibble::rownames_to_column("cell_id")
+}
+```
+
+# Resolving Columns
+```{r}
+#| label: resolve-columns
+df0 <- normalize_colnames(as.data.frame(export_cells_in))
+
+label_col <- first_existing_col(df0, params$label_col, params$label_candidates)
+sample_col <- first_existing_col(df0, params$sample_col, params$sample_candidates)
+patient_col <- first_existing_col(df0, params$patient_col, params$patient_candidates)
+condition_col <- first_existing_col(df0, params$condition_col, params$condition_candidates)
+timepoint_col <- first_existing_col(df0, params$timepoint_col, params$timepoint_candidates)
+batch_col <- first_existing_col(df0, params$batch_col, params$batch_candidates)
+clone_id_col <- first_existing_col(df0, params$clone_id_col, params$clone_id_candidates)
+clone_size_col <- first_existing_col(df0, params$clone_size_col, params$clone_size_candidates)
+paired_tcr_col <- first_existing_col(df0, params$paired_tcr_col, params$paired_tcr_candidates)
+has_tcr_col <- first_existing_col(df0, params$has_tcr_col, params$has_tcr_candidates)
+consensus_cluster_col <- first_existing_col(df0, params$consensus_cluster_col, params$consensus_cluster_candidates)
+
+if (is.null(label_col)) stop("Could not resolve an annotation label column.")
+if (is.null(sample_col)) stop("Could not resolve a sample column.")
+if (is.null(clone_id_col)) stop("Could not resolve a clone ID column.")
+if (is.null(clone_size_col)) stop("Could not resolve a clone size column.")
+if (is.null(has_tcr_col)) stop("Could not resolve a has_tcr column.")
+if (is.null(paired_tcr_col)) stop("Could not resolve a paired_tcr column.")
+
+print(list(
+  resolved_label_col = label_col,
+  resolved_sample_col = sample_col,
+  resolved_patient_col = patient_col,
+  resolved_condition_col = condition_col,
+  resolved_timepoint_col = timepoint_col,
+  resolved_batch_col = batch_col,
+  resolved_clone_id_col = clone_id_col,
+  resolved_clone_size_col = clone_size_col,
+  resolved_paired_tcr_col = paired_tcr_col,
+  resolved_has_tcr_col = has_tcr_col,
+  resolved_consensus_cluster_col = consensus_cluster_col
+))
+
+```
+
+# standardize-export
+```{r}
+#| label: standardize-export
+export_cells <- as.data.frame(export_cells_in) %>%
+  mutate(
+    sample = as.character(.data[[sample_col]]),
+    patient = if (!is.null(patient_col)) as.character(.data[[patient_col]]) else NA_character_,
+    condition = if (!is.null(condition_col)) as.character(.data[[condition_col]]) else NA_character_,
+    timepoint = if (!is.null(timepoint_col)) as.character(.data[[timepoint_col]]) else NA_character_,
+    batch = if (!is.null(batch_col)) as.character(.data[[batch_col]]) else NA_character_,
+    annot = as.character(.data[[label_col]]),
+    clone_id = as.character(.data[[clone_id_col]]),
+    clone_size = suppressWarnings(as.numeric(.data[[clone_size_col]])),
+    has_tcr = as.logical(.data[[has_tcr_col]]),
+    paired_tcr = as.logical(.data[[paired_tcr_col]]),
+    consensus_cluster = if (!is.null(consensus_cluster_col)) as.character(.data[[consensus_cluster_col]]) else NA_character_
+  ) %>%
+  mutate(
+    clone_id = ifelse(is.na(clone_id) | clone_id == "", NA_character_, clone_id),
+    clone_size = ifelse(is.na(clone_size), 0, clone_size)
+  )
+```
+
+# Clone frequencies and burden bins
+```{r}
+#| label: clone-frequency-and-bins
+#| results: asis
+clone_bin_breaks <- parse_numeric_param_vector(params$clone_bin_breaks)
+clone_bin_labels <- parse_character_param_vector(params$clone_bin_labels)
+
+if (length(clone_bin_breaks) < 2) {
+  stop("clone_bin_breaks must contain at least two numeric break values.")
+}
+if (length(clone_bin_labels) != (length(clone_bin_breaks) - 1)) {
+  stop("clone_bin_labels must have exactly length(clone_bin_breaks) - 1 entries.")
+}
+
+clone_counts_by_sample <- export_cells %>%
+  filter(!is.na(clone_id), has_tcr) %>%
+  count(sample, clone_id, name = "n_cells")
+
+sample_totals <- export_cells %>%
+  filter(has_tcr) %>%
+  count(sample, name = "n_tcr_cells")
+
+clone_counts_by_sample <- clone_counts_by_sample %>%
+  left_join(sample_totals, by = "sample") %>%
+  mutate(
+    clone_freq = ifelse(n_tcr_cells > 0, n_cells / n_tcr_cells, NA_real_),
+    clone_bin = cut(
+      clone_freq,
+      breaks = clone_bin_breaks,
+      labels = clone_bin_labels,
+      include.lowest = TRUE,
+      right = TRUE
+    )
+  )
+
+save_table_safe(clone_counts_by_sample, "clone_counts_by_sample.tsv")
+
+print(
+  kableExtra::kbl(
+    clone_counts_by_sample %>% slice_head(n = 20),
+    caption = "Example clone frequencies and clone-size bins by sample."
+  ) %>%
+    kableExtra::kable_styling(
+      full_width = TRUE,
+      bootstrap_options = c("striped", "hover", "condensed", "responsive")
+    )
+)
+
+```
+
+# Diversity matrics
+```{r}
+#| label: diversity-metrics
+#| results: asis
+diversity_tbl <- clone_counts_by_sample %>%
+  group_by(sample) %>%
+  summarise(
+    n_clones = n(),
+    shannon = calc_shannon(n_cells),
+    simpson = calc_simpson(n_cells),
+    inv_simpson = calc_inv_simpson(n_cells),
+    richness = calc_richness(n_cells),
+    .groups = "drop"
+  )
+
+if (any(!is.na(export_cells$patient))) {
+  diversity_by_patient <- clone_counts_by_sample %>%
+    left_join(export_cells %>% distinct(sample, patient), by = "sample") %>%
+    filter(!is.na(patient)) %>%
+    group_by(patient, clone_id) %>%
+    summarise(n_cells = sum(n_cells), .groups = "drop") %>%
+    group_by(patient) %>%
+    summarise(
+      n_clones = n(),
+      shannon = calc_shannon(n_cells),
+      simpson = calc_simpson(n_cells),
+      inv_simpson = calc_inv_simpson(n_cells),
+      richness = calc_richness(n_cells),
+      .groups = "drop"
+    )
+  save_table_safe(diversity_by_patient, "diversity_by_patient.tsv")
+}
+
+if (any(!is.na(export_cells$condition))) {
+  diversity_by_condition <- clone_counts_by_sample %>%
+    left_join(export_cells %>% distinct(sample, condition), by = "sample") %>%
+    filter(!is.na(condition)) %>%
+    group_by(condition, clone_id) %>%
+    summarise(n_cells = sum(n_cells), .groups = "drop") %>%
+    group_by(condition) %>%
+    summarise(
+      n_clones = n(),
+      shannon = calc_shannon(n_cells),
+      simpson = calc_simpson(n_cells),
+      inv_simpson = calc_inv_simpson(n_cells),
+      richness = calc_richness(n_cells),
+      .groups = "drop"
+    )
+  save_table_safe(diversity_by_condition, "diversity_by_condition.tsv")
+}
+
+save_table_safe(diversity_tbl, "diversity_by_sample.tsv")
+
+print(
+  kableExtra::kbl(
+    diversity_tbl,
+    caption = "Diversity metrics by sample."
+  ) %>%
+    kableExtra::kable_styling(
+      full_width = TRUE,
+      bootstrap_options = c("striped", "hover", "condensed", "responsive")
+    )
+)
+
+```
+
+# Expansion / contraction and clone burden
+```{r}
+#| label: clone-burden
+#| results: asis
+clone_burden_tbl <- clone_counts_by_sample %>%
+  count(sample, clone_bin, name = "n_clones") %>%
+  left_join(
+    clone_counts_by_sample %>% count(sample, name = "n_total_clones"),
+    by = "sample"
+  ) %>%
+  mutate(frac_clones = n_clones / n_total_clones)
+
+save_table_safe(clone_burden_tbl, "clone_burden_by_sample.tsv")
+
+clone_burden_cells_tbl <- clone_counts_by_sample %>%
+  group_by(sample, clone_bin) %>%
+  summarise(
+    n_cells = sum(n_cells),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    clone_counts_by_sample %>%
+      group_by(sample) %>%
+      summarise(total_cells = sum(n_cells), .groups = "drop"),
+    by = "sample"
+  ) %>%
+  mutate(frac_cells = n_cells / total_cells)
+
+save_table_safe(clone_burden_cells_tbl, "clone_burden_cells_by_sample.tsv")
+
+print(
+  kableExtra::kbl(
+    clone_burden_cells_tbl,
+    caption = "Clone burden by sample and clone-size bin."
+  ) %>%
+    kableExtra::kable_styling(
+      full_width = TRUE,
+      bootstrap_options = c("striped", "hover", "condensed", "responsive")
+    )
+)
+
+```
+
+# Rank Abundance
+```{r}
+#| label: rank-abundance
+#| results: asis
+clone_rank_tbl <- clone_counts_by_sample %>%
+  filter(n_cells >= params$min_cells_per_clone_plot) %>%
+  group_by(sample) %>%
+  arrange(desc(n_cells), .by_group = TRUE) %>%
+  mutate(rank = row_number()) %>%
+  ungroup()
+
+save_table_safe(clone_rank_tbl, "clone_rank_abundance.tsv")
+
+print(
+  kableExtra::kbl(
+    clone_rank_tbl %>% slice_head(n = 30),
+    caption = "Top ranked clonotypes by sample."
+  ) %>%
+    kableExtra::kable_styling(
+      full_width = TRUE,
+      bootstrap_options = c("striped", "hover", "condensed", "responsive")
+    )
+)
+
+```
+
+# Shareability
+```{r}
+#| label: shareability
+#| results: asis
+shareability_tbl <- export_cells %>%
+  filter(!is.na(clone_id), has_tcr) %>%
+  distinct(sample, patient, condition, clone_id) %>%
+  group_by(clone_id) %>%
+  summarise(
+    n_samples = safe_n_unique(sample),
+    n_patients = safe_n_unique(patient),
+    n_conditions = safe_n_unique(condition),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    shared_across_samples = n_samples >= params$shareability_min_n_groups,
+    shared_across_patients = n_patients >= params$shareability_min_n_groups,
+    shared_across_conditions = n_conditions >= params$shareability_min_n_groups
+  ) %>%
+  arrange(desc(n_samples), desc(n_patients), desc(n_conditions))
+
+save_table_safe(shareability_tbl, "clone_shareability.tsv")
+
+top_shared_clones_tbl <- shareability_tbl %>%
+  slice_head(n = params$top_n_shared_clones)
+save_table_safe(top_shared_clones_tbl, "top_shared_clones.tsv")
+
+print(
+  kableExtra::kbl(
+    top_shared_clones_tbl,
+    caption = "Top shared clonotypes."
+  ) %>%
+    kableExtra::kable_styling(
+      full_width = TRUE,
+      bootstrap_options = c("striped", "hover", "condensed", "responsive")
+    )
+)
+
+```
+
+# Sample Overlap
+```{r}
+#| label: sample-overlap
+#| results: asis
+samples_vec <- sort(unique(na.omit(export_cells$sample)))
+sample_clone_sets <- lapply(samples_vec, function(s) {
+  export_cells %>%
+    filter(sample == s, !is.na(clone_id), has_tcr) %>%
+    pull(clone_id) %>%
+    unique()
+})
+names(sample_clone_sets) <- samples_vec
+
+overlap_mat <- matrix(NA_real_, nrow = length(samples_vec), ncol = length(samples_vec))
+rownames(overlap_mat) <- samples_vec
+colnames(overlap_mat) <- samples_vec
+
+for (i in seq_along(samples_vec)) {
+  for (j in seq_along(samples_vec)) {
+    overlap_mat[i, j] <- calc_overlap_score(
+      sample_clone_sets[[i]],
+      sample_clone_sets[[j]],
+      metric = params$overlap_metric
+    )
+  }
+}
+
+overlap_df <- as.data.frame(overlap_mat) %>%
+  tibble::rownames_to_column("sample")
+
+save_table_safe(overlap_df, "sample_overlap_matrix.tsv")
+
+print(
+  kableExtra::kbl(
+    overlap_df,
+    caption = paste("Sample overlap matrix using", params$overlap_metric, "similarity.")
+  ) %>%
+    kableExtra::kable_styling(
+      full_width = TRUE,
+      bootstrap_options = c("striped", "hover", "condensed", "responsive")
+    )
+)
+
+```
+
+# Phenotypic flux
+```{r}
+#| label: phenotypic-flux
+#| results: asis
+flux_clone_candidates <- export_cells %>%
+  filter(!is.na(clone_id), clone_size >= params$min_cells_per_clone_plot, has_tcr) %>%
+  group_by(clone_id) %>%
+  summarise(
+    n_states = safe_n_unique(annot),
+    total_cells = n(),
+    .groups = "drop"
+  ) %>%
+  filter(n_states > 1) %>%
+  arrange(desc(total_cells), desc(n_states)) %>%
+  slice_head(n = params$top_n_flux_clones)
+
+flux_tbl <- export_cells %>%
+  filter(clone_id %in% flux_clone_candidates$clone_id) %>%
+  count(clone_id, sample, annot, name = "n_cells")
+
+save_table_safe(flux_tbl, "phenotypic_flux.tsv")
+
+print(
+  kableExtra::kbl(
+    flux_tbl %>% slice_head(n = 30),
+    caption = "Phenotypic flux table for top expanded multi-state clonotypes."
+  ) %>%
+    kableExtra::kable_styling(
+      full_width = TRUE,
+      bootstrap_options = c("striped", "hover", "condensed", "responsive")
+    )
+)
+
+```
+
+# Longitudinal clone tracking
+```{r}
+#| label: longitudinal-tracking
+#| results: asis
+longitudinal_tbl <- NULL
+if (any(!is.na(export_cells$timepoint))) {
+  longitudinal_tbl <- export_cells %>%
+    filter(!is.na(clone_id), !is.na(timepoint), has_tcr) %>%
+    count(clone_id, sample, patient, timepoint, name = "n_cells") %>%
+    group_by(clone_id) %>%
+    summarise(
+      n_timepoints = safe_n_unique(timepoint),
+      total_cells = sum(n_cells),
+      .groups = "drop"
+    ) %>%
+    filter(n_timepoints > 1) %>%
+    arrange(desc(total_cells), desc(n_timepoints))
+
+  save_table_safe(longitudinal_tbl, "longitudinal_clone_tracking_summary.tsv")
+
+  print(
+    kableExtra::kbl(
+      longitudinal_tbl %>% slice_head(n = 30),
+      caption = "Longitudinally recurrent clonotypes."
+    ) %>%
+      kableExtra::kable_styling(
+        full_width = TRUE,
+        bootstrap_options = c("striped", "hover", "condensed", "responsive")
+      )
+  )
+} else {
+  cat("No longitudinal clone tracking table was produced because no timepoint metadata were available.\n")
+}
+
+```
+
+# consensus-cluster-burden
+```{r}
+#| label: consensus-cluster-burden
+#| results: asis
+consensus_burden_tbl <- NULL
+consensus_cluster_summary <- NULL
+
+if (any(!is.na(export_cells$consensus_cluster))) {
+  consensus_burden_tbl <- export_cells %>%
+    filter(!is.na(consensus_cluster)) %>%
+    count(sample, consensus_cluster, name = "n_cells") %>%
+    group_by(sample) %>%
+    mutate(frac_cells = n_cells / sum(n_cells)) %>%
+    ungroup()
+
+  save_table_safe(consensus_burden_tbl, "consensus_cluster_burden.tsv")
+
+  consensus_cluster_summary <- export_cells %>%
+    filter(!is.na(consensus_cluster)) %>%
+    count(consensus_cluster, name = "n_cells") %>%
+    mutate(frac_cells = n_cells / sum(n_cells)) %>%
+    arrange(desc(n_cells))
+
+  save_table_safe(consensus_cluster_summary, "consensus_cluster_summary.tsv")
+
+  print(
+    kableExtra::kbl(
+      consensus_cluster_summary,
+      caption = "Consensus clonotype cluster burden summary."
+    ) %>%
+      kableExtra::kable_styling(
+        full_width = TRUE,
+        bootstrap_options = c("striped", "hover", "condensed", "responsive")
+      )
+  )
+} else {
+  cat("No consensus cluster burden table was produced because no consensus cluster column was available in the current export table.\n")
+}
+
+```
+
+
+
+# Report overview
+```{r}
+#| label: overview
+#| results: asis
+summary_rollup <- tibble(
+  metric = c(
+    "Report label",
+    "Cells in export table",
+    "TCR-positive cells",
+    "Paired TCR cells",
+    "Unique samples",
+    "Unique patients",
+    "Unique conditions",
+    "Unique timepoints",
+    "Unique clonotypes",
+    "Shared clonotypes across samples"
+  ),
+  value = c(
+    params$report_label,
+    nrow(export_cells),
+    sum(export_cells$has_tcr, na.rm = TRUE),
+    sum(export_cells$paired_tcr, na.rm = TRUE),
+    safe_n_unique(export_cells$sample),
+    safe_n_unique(export_cells$patient),
+    safe_n_unique(export_cells$condition),
+    safe_n_unique(export_cells$timepoint),
+    safe_n_unique(export_cells$clone_id),
+    sum(shareability_tbl$shared_across_samples, na.rm = TRUE)
+  )
+)
+
+save_table_safe(summary_rollup, "repertoire_summary_rollup.tsv")
+
+print(
+  kableExtra::kbl(
+    summary_rollup,
+    caption = "High-level overview of repertoire analysis."
+  ) %>%
+    kableExtra::kable_styling(
+      full_width = FALSE,
+      bootstrap_options = c("striped", "hover", "condensed")
+    )
+)
+
+
+```
+
+# Diversity plots
+```{r}
+#| label: diversity-plots
+if (isTRUE(params$show_diversity_boxplots) && nrow(diversity_tbl) > 0) {
+  div_long <- diversity_tbl %>%
+    pivot_longer(
+      cols = c(shannon, simpson, inv_simpson, richness),
+      names_to = "metric",
+      values_to = "value"
+    )
+
+  p_div <- ggplot(div_long, aes(x = metric, y = value, fill = metric)) +
+    geom_boxplot(alpha = 0.85, outlier.size = 0.4) +
+    geom_jitter(width = 0.12, size = 1.2, alpha = 0.7) +
+    guides(fill = "none") +
+    labs(
+      title = "Repertoire diversity across samples",
+      x = NULL,
+      y = "Metric value"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_div)
+  save_plot_safe(p_div, glue("diversity_boxplots.{params$figure_format}"))
+}
+```
+
+# Clone burden plots
+```{r}
+#| label: clone-burden-plots
+if (isTRUE(params$show_clone_burden_barplot) && nrow(clone_burden_cells_tbl) > 0) {
+
+  sample_order <- clone_burden_cells_tbl %>%
+    mutate(clone_bin = factor(clone_bin, levels = clone_bin_labels)) %>%
+    group_by(sample) %>%
+    summarise(
+      burden_score = sum(frac_cells * as.numeric(clone_bin), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(burden_score)) %>%
+    pull(sample)
+
+  p_burden <- clone_burden_cells_tbl %>%
+    mutate(
+      sample = factor(sample, levels = sample_order),
+      clone_bin = factor(clone_bin, levels = clone_bin_labels)
+    ) %>%
+    ggplot(aes(x = sample, y = n_cells, fill = clone_bin)) +
+    geom_col(position = "fill") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "Clonal burden across samples",
+      subtitle = "Samples ordered by overall expansion burden.",
+      x = NULL,
+      y = "Fraction of cells",
+      fill = "Clone bin"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_burden)
+  save_plot_safe(p_burden, glue("clone_burden_by_sample.{params$figure_format}"))
+}
+
+```
+
+# Rank-abundance
+```{r}
+#| label: rank-abundance-plot
+if (isTRUE(params$show_rank_abundance) && nrow(clone_rank_tbl) > 0) {
+  p_rank <- ggplot(clone_rank_tbl, aes(x = rank, y = n_cells, color = sample)) +
+    geom_line(linewidth = 0.9, alpha = 0.8) +
+    geom_point(size = 1.2, alpha = 0.9) +
+    scale_x_log10() +
+    scale_y_log10() +
+    labs(
+      title = "Clone rank-abundance curve",
+      subtitle = glue("Only clones with at least {params$min_cells_per_clone_plot} cells are shown."),
+      x = "Clone rank (log10)",
+      y = "Cells per clone (log10)",
+      color = "Sample"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print (p_rank)
+  save_plot_safe(p_rank, glue("clone_rank_abundance.{params$figure_format}"))
+}
+```
+
+# Shareability
+```{r}
+#| label: shareability-plots
+if (isTRUE(params$show_shareability_barplot) && nrow(shareability_tbl) > 0) {
+  share_bar_tbl <- tibble(
+    category = c("Shared across samples", "Shared across patients", "Shared across conditions"),
+    n_clones = c(
+      sum(shareability_tbl$shared_across_samples, na.rm = TRUE),
+      sum(shareability_tbl$shared_across_patients, na.rm = TRUE),
+      sum(shareability_tbl$shared_across_conditions, na.rm = TRUE)
+    )
+  )
+
+  p_share <- ggplot(share_bar_tbl, aes(x = category, y = n_clones)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = comma) +
+    labs(
+      title = "Clone shareability summary",
+      x = NULL,
+      y = "Number of clones"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print (p_share)
+  save_plot_safe(p_share, glue("clone_shareability_barplot.{params$figure_format}"))
+}
+```
+
+# Shareability heatmap
+```{r}
+#| label: shareability-heatmap
+if (isTRUE(params$show_shareability_heatmap) && nrow(top_shared_clones_tbl) > 0) {
+  share_heat_tbl <- export_cells %>%
+    filter(clone_id %in% top_shared_clones_tbl$clone_id, !is.na(sample), has_tcr) %>%
+    count(clone_id, sample, name = "n_cells") %>%
+    pivot_wider(names_from = sample, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+
+  rownames(share_heat_tbl) <- share_heat_tbl$clone_id
+  share_heat_tbl$clone_id <- NULL
+  share_mat <- as.matrix(share_heat_tbl)
+
+  max_mat <- max(share_mat, na.rm = TRUE)
+  if (!is.finite(max_mat) || max_mat <= 0) max_mat <- 1
+
+  ht <- ComplexHeatmap::Heatmap(
+    share_mat,
+    name = "Cells",
+    col = circlize::colorRamp2(
+      c(0, max_mat / 2, max_mat),
+      c("white", "gold", "firebrick")
+    ),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    row_names_gp = grid::gpar(fontsize = 5),
+    column_names_gp = grid::gpar(fontsize = 8),
+    column_names_rot = 45,
+    row_dend_width = grid::unit(2.5, "cm"),
+    column_dend_height = grid::unit(2.0, "cm"),
+    rect_gp = grid::gpar(col = "grey85"),
+    column_title = "Top shared clonotypes across samples",
+    heatmap_legend_param = list(title = "Cells")
+  )
+  ComplexHeatmap::draw(ht)
+
+  pdf(
+    file.path(params$outdir, params$figures_dir, "shareability_heatmap.pdf"),
+    width = 10,
+    height = 12
+  )
+  ComplexHeatmap::draw(ht)
+  dev.off()
+}
+
+
+```
+
+# sample-overlap-heatmap
+```{r}
+#| label: sample-overlap-heatmap
+if (isTRUE(params$show_sample_overlap_heatmap) && length(samples_vec) > 1) {
+  ht <- Heatmap(
+    overlap_mat,
+    name = params$overlap_metric,
+    col = colorRamp2(c(0, 0.5, 1), c("white", "gold", "firebrick")),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    row_names_gp = grid::gpar(fontsize = 9),
+    column_names_gp = grid::gpar(fontsize = 9),
+    column_names_rot = 45,
+    rect_gp = grid::gpar(col = "grey85"),
+    column_title = paste("Sample overlap by", params$overlap_metric),
+    heatmap_legend_param = list(title = params$overlap_metric)
+  )
+  draw(ht)
+}
+```
+
+# phenotypic-flux-plot
+# phenotypic-flux-plot
+```{r}
+# #| label: phenotypic-flux-plot
+# if (isTRUE(params$show_phenotypic_flux) && nrow(flux_tbl) > 0) {
+#   flux_plot_tbl <- flux_tbl %>%
+#     group_by(clone_id) %>%
+#     mutate(total_clone_cells = sum(n_cells)) %>%
+#     ungroup() %>%
+#     arrange(desc(total_clone_cells)) %>%
+#     mutate(clone_id = fct_inorder(clone_id))
+# 
+#   p_flux <- ggplot(
+#     flux_plot_tbl,
+#     aes(y = n_cells, axis1 = sample, axis2 = annot)
+#   ) +
+#     geom_alluvium(aes(fill = clone_id), width = 1/12, alpha = 0.85) +
+#     geom_stratum(width = 1/12, fill = "grey85", color = "black") +
+#     geom_text(
+#       stat = "stratum",
+#       aes(
+#         label = after_stat(stratum),
+#         hjust = ifelse(after_stat(x) == 1, 1, 0)
+#       ),
+#       nudge_x = ifelse(unique(flux_plot_tbl$sample)[1] == unique(flux_plot_tbl$sample)[1], 0, 0),
+#       size = 3
+#     ) +
+#     scale_x_discrete(limits = c("Sample", "Phenotype"), expand = c(.05, .05)) +
+#     guides(
+#       fill = guide_legend(
+#         ncol = 1,
+#         byrow = FALSE
+#       )
+#     ) +
+#     labs(
+#       title = "Phenotypic flux of expanded clonotypes",
+#       x = NULL,
+#       y = "Cells",
+#       fill = "clone_id"
+#     ) +
+#     theme_scratch_pub(params$base_size) +
+#     theme(
+#       legend.position = "right",
+#       legend.direction = "vertical",
+#       legend.title = element_text(face = "bold"),
+#       legend.text = element_text(size = 8),
+#       legend.key.height = unit(0.45, "cm"),
+#       legend.key.width = unit(0.45, "cm")
+#     )
+# 
+#   print(p_flux)
+# 
+#   save_plot_safe(
+#     p_flux,
+#     glue("phenotypic_flux_alluvial.{params$figure_format}"),
+#     width = 14,
+#     height = 8
+#   )
+# }
+
+
+
+#| label: phenotypic-flux-plot
+if (isTRUE(params$show_phenotypic_flux) && nrow(flux_tbl) > 0) {
+  flux_plot_tbl <- flux_tbl %>%
+    group_by(clone_id) %>%
+    mutate(total_clone_cells = sum(n_cells)) %>%
+    ungroup() %>%
+    arrange(desc(total_clone_cells)) %>%
+    mutate(clone_id = fct_inorder(clone_id))
+
+  p_flux <- ggplot(
+    flux_plot_tbl,
+    aes(y = n_cells, axis1 = sample, axis2 = annot)
+  ) +
+    geom_alluvium(aes(fill = clone_id), width = 1/12, alpha = 0.85) +
+    geom_stratum(width = 1/12, fill = "grey85", color = "black") +
+    geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 3) +
+    scale_x_discrete(limits = c("Sample", "Phenotype"), expand = c(.05, .05)) +
+    guides(
+      fill = guide_legend(
+        ncol = 1,
+        byrow = FALSE
+      )
+    ) +
+    labs(
+      title = "Phenotypic flux of expanded clonotypes",
+      x = NULL,
+      y = "Cells",
+      fill = "clone_id"
+    ) +
+    theme_scratch_pub(params$base_size) +
+    theme(
+      legend.position = "right",
+      legend.direction = "vertical",
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(size = 6),
+      legend.key.height = unit(0.45, "cm"),
+      legend.key.width = unit(0.45, "cm")
+    )
+
+  print(p_flux)
+
+  save_plot_safe(
+    p_flux,
+    glue("phenotypic_flux_alluvial.{params$figure_format}"),
+    width = 14,
+    height = 8
+  )
+}
+
+
+
+```
+
+# Longitudional Clone Tracking
+```{r}
+#| label: longitudinal-tracking-plot
+#| results: asis
+if (isTRUE(params$show_longitudinal_clone_tracking) && !is.null(longitudinal_tbl) && nrow(longitudinal_tbl) > 0) {
+  top_longitudinal <- export_cells %>%
+    filter(!is.na(clone_id), !is.na(timepoint), has_tcr) %>%
+    count(clone_id, timepoint, name = "n_cells") %>%
+    group_by(clone_id) %>%
+    summarise(
+      total_cells = sum(n_cells),
+      n_timepoints = safe_n_unique(timepoint),
+      .groups = "drop"
+    ) %>%
+    filter(n_timepoints > 1) %>%
+    arrange(desc(total_cells)) %>%
+    slice_head(n = params$top_n_flux_clones) %>%
+    pull(clone_id)
+
+  long_plot_tbl <- export_cells %>%
+    filter(clone_id %in% top_longitudinal, !is.na(timepoint), has_tcr) %>%
+    count(clone_id, timepoint, name = "n_cells")
+
+  p_long <- ggplot(long_plot_tbl, aes(x = timepoint, y = n_cells, color = clone_id, group = clone_id)) +
+    geom_line(linewidth = 0.9) +
+    geom_point(size = 2) +
+    labs(
+      title = "Longitudinal tracking of recurrent clonotypes",
+      x = "Timepoint",
+      y = "Cells",
+      color = "Clone"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_long)
+  save_plot_safe(p_long, glue("longitudinal_clone_tracking.{params$figure_format}"), width = 11, height = 7)
+} else {
+  cat("No longitudinal clone tracking plot was produced because no usable timepoint metadata were available.\n")
+}
+
+```
+
+# consensus-burden-plot
+```{r}
+#| label: consensus-burden-plot
+#| results: asis
+if (isTRUE(params$show_consensus_cluster_burden) && !is.null(consensus_burden_tbl) && nrow(consensus_burden_tbl) > 0) {
+  top_n_cons <- params$top_n_clusters
+  if (is.null(top_n_cons) || length(top_n_cons) == 0 || is.na(top_n_cons)) {
+    top_n_cons <- 20
+  }
+  top_n_cons <- as.integer(top_n_cons)
+
+  top_cons <- consensus_burden_tbl %>%
+    group_by(consensus_cluster) %>%
+    summarise(total_cells = sum(n_cells), .groups = "drop") %>%
+    arrange(desc(total_cells)) %>%
+    slice_head(n = top_n_cons) %>%
+    pull(consensus_cluster)
+
+  p_cons <- consensus_burden_tbl %>%
+    filter(consensus_cluster %in% top_cons) %>%
+    ggplot(aes(x = sample, y = frac_cells, fill = consensus_cluster)) +
+    geom_col(position = "fill") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "Consensus clonotype burden across samples",
+      x = NULL,
+      y = "Fraction of cells",
+      fill = "Consensus cluster"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_cons)
+  save_plot_safe(p_cons, glue("consensus_cluster_burden.{params$figure_format}"), width = 11, height = 8)
+} else {
+  cat("No consensus burden plot was produced because consensus cluster assignments were not available in the current repertoire input.\n")
+}
+
+
+
+```
+
+# save-repertoire-objects
+```{r}
+#| label: save-repertoire-objects
+save_rds_safe(export_cells, "repertoire_export_cells.rds")
+
+save_rdata_safe(
+  export_cells,
+  clone_counts_by_sample,
+  diversity_tbl,
+  clone_burden_tbl,
+  clone_burden_cells_tbl,
+  clone_rank_tbl,
+  shareability_tbl,
+  top_shared_clones_tbl,
+  overlap_mat,
+  flux_tbl,
+  longitudinal_tbl,
+  consensus_burden_tbl,
+  consensus_cluster_summary,
+  summary_rollup,
+  filename = "repertoire_analysis_objects.RData"
+)
+```
+
+# Summary tables display
+```{r}
+#| label: summary-tables-display
+#| results: asis
+if (isTRUE(params$show_summary_tables)) {
+
+  print(
+    kableExtra::kbl(
+      diversity_tbl,
+      caption = "Diversity metrics by sample."
+    ) %>%
+      kableExtra::kable_styling(
+        full_width = TRUE,
+        bootstrap_options = c("striped", "hover", "condensed", "responsive")
+      )
+  )
+
+  print(
+    kableExtra::kbl(
+      top_shared_clones_tbl,
+      caption = "Top shared clonotypes."
+    ) %>%
+      kableExtra::kable_styling(
+        full_width = TRUE,
+        bootstrap_options = c("striped", "hover", "condensed", "responsive")
+      )
+  )
+
+  if (!is.null(consensus_cluster_summary) && nrow(consensus_cluster_summary) > 0) {
+    top_n_cons <- params$top_n_clusters
+    if (is.null(top_n_cons) || length(top_n_cons) == 0 || is.na(top_n_cons)) {
+      top_n_cons <- 20
+    }
+    top_n_cons <- as.integer(top_n_cons)
+
+    print(
+      kableExtra::kbl(
+        consensus_cluster_summary %>% slice_head(n = top_n_cons),
+        caption = "Top consensus clonotype clusters by burden."
+      ) %>%
+        kableExtra::kable_styling(
+          full_width = TRUE,
+          bootstrap_options = c("striped", "hover", "condensed", "responsive")
+        )
+    )
+  } else {
+    cat("Consensus-cluster summary table was skipped because no consensus clusters were available in the current repertoire input.\n")
+  }
+}
+
+```
+
+# Warnings
+```{r}
+#| label: warnings
+#| results: asis
+warn_tbl <- tibble(
+  warning = c(
+    "Few unique clonotypes",
+    "No patient metadata",
+    "No condition metadata",
+    "No timepoint metadata",
+    "No consensus clusters available",
+    "Limited shareability across samples"
+  ),
+  triggered = c(
+    safe_n_unique(export_cells$clone_id) < 20,
+    all(is.na(export_cells$patient)),
+    all(is.na(export_cells$condition)),
+    all(is.na(export_cells$timepoint)),
+    all(is.na(export_cells$consensus_cluster)),
+    sum(shareability_tbl$shared_across_samples, na.rm = TRUE) < 5
+  ),
+  interpretation = c(
+    "Fewer than 20 unique clonotypes were detected, which may limit repertoire-level interpretation.",
+    "Patient-level summaries were skipped because patient metadata were unavailable.",
+    "Condition-level summaries were skipped because condition metadata were unavailable.",
+    "Longitudinal summaries were skipped because timepoint metadata were unavailable.",
+    "Consensus-cluster-aware summaries were limited because no consensus clusters were present.",
+    "Very few clones were shared across samples under the current threshold."
+  )
+) %>%
+  filter(triggered)
+
+if (nrow(warn_tbl) == 0) {
+  cat("No major automatic warnings were triggered under the current repertoire reporting settings.")
+} else {
+  print(
+    kableExtra::kbl(
+      warn_tbl %>% select(-triggered),
+      caption = "Automatically generated repertoire analysis warnings and notes."
+    ) %>%
+      kableExtra::kable_styling(
+        full_width = TRUE,
+        bootstrap_options = c("striped", "hover", "condensed")
+      )
+  )
+}
+
+```
+
+# session info
+```{r}
+#| label: session-info
+writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.repertoire.txt"))
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+

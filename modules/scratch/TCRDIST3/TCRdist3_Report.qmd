@@ -1,0 +1,1532 @@
+---
+title: "SCRATCH-TCR: TCRdist3 Analysis"
+author: "Syed Shujaat Ali Zaidi"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+    df-print: paged
+execute:
+  echo: false
+  warning: false
+  message: false
+
+params:
+  # ======================================================
+  # Inputs
+  # ======================================================
+  seurat_rds: "data/seurat_tcells_with_TCR.rds"
+  tcr_export_cells_file: "tables/tcr_export_cells_with_embedding.tsv"
+  outdir: "TCRdist3_Report"
+
+  # Optional precomputed inputs
+  tcrdist_clusters_file: ""
+  tcrdist_neighbors_file: ""
+  tcrdist_distance_file: ""
+  organism: "human"
+  db_file: "alphabeta_gammadelta_db.tsv"
+  tcrdist_radius: 50
+  python_bin: "/opt/conda/envs/tcrenv/bin/python"
+
+  # ======================================================
+  # Output controls
+  # ======================================================
+  data_dir: "data"
+  tables_dir: "tables"
+  figures_dir: "figures"
+  save_tables: true
+  save_figures: true
+  save_updated_seurat: true
+  figure_format: "png"
+  figure_width: 10
+  figure_height: 7
+  figure_dpi: 300
+  base_size: 12
+
+  # ======================================================
+  # Metadata mapping
+  # ======================================================
+  label_col: ""
+  sample_col: "META_SAMPLE"
+  patient_col: "META_PATIENT"
+  condition_col: "META_TIMECOND"
+  timepoint_col: "META_TIMEPOINT"
+  batch_col: "META_BATCH"
+  clone_id_col: "clone_id"
+  clone_size_col: "clone_size"
+  paired_tcr_col: "paired_tcr"
+  has_tcr_col: "has_tcr"
+
+  clone_match_mode: "cdr3b_from_CTaa"
+  derive_clone_key_from_CTaa: true
+
+  label_candidates: "predicted_labels;predicted.celltype.l2;predicted.celltype.l1;azimuth_labels;celltypist;celltypist_label;majority_voting;scType;sctype;sctype_label;celltype;CellType;annot;Annotation;seurat_clusters"
+  sample_candidates: "META_SAMPLE;orig.ident;sample;sample_id;Sample;SampleID"
+  patient_candidates: "META_PATIENT;patient_id;patient;Patient;subject;donor;case_id"
+  condition_candidates: "META_TIMECOND;condition;Condition;group;Group;status"
+  timepoint_candidates: "META_TIMEPOINT;timepoint;Timepoint;visit;Visit;day;Day;META_TIMECOND"
+  batch_candidates: "META_BATCH;batch;Batch;library;Library;run;Run;lane;Lane"
+  clone_id_candidates: "clone_id;CTaa;clonotype;clone"
+  clone_size_candidates: "clone_size;CloneSize;clone_n"
+  paired_tcr_candidates: "paired_tcr;paired;is_paired"
+  has_tcr_candidates: "has_tcr;hasTCR;tcr_positive"
+
+  # ======================================================
+  # Embedding controls
+  # ======================================================
+  reduction_use: "umap"
+  make_umap_if_missing: true
+  umap_dims_max: 30
+  umap_nfeatures: 3000
+  raster_large_umap: true
+
+  # ======================================================
+  # Analysis controls
+  # ======================================================
+  subset_to_tcr_positive: true
+  subset_to_paired_tcr: true
+  min_cells_total: 100
+  
+  min_cells_per_group: 10
+  min_cluster_size_plot: 3
+  top_n_clusters: 20
+  top_n_neighbors: 50
+  top_n_states_heatmap: 20
+
+  show_cluster_umap: true
+  show_neighbor_graph: true
+  show_cluster_size_barplot: true
+  show_annotation_heatmap: true
+  show_sample_heatmap: true
+  show_summary_tables: true
+  
+  
+
+
+  report_label: "TCRdist3 Analysis"
+---
+
+
+# setup
+```{r}
+#| label: setup
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(forcats)
+  library(scales)
+  library(glue)
+  library(knitr)
+  library(kableExtra)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(patchwork)
+  library(reticulate)
+})
+
+reticulate::use_python("/opt/conda/envs/tcrenv/bin/python", required = TRUE)
+
+options(stringsAsFactors = FALSE)
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$data_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$tables_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$figures_dir), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
+
+Sys.setenv(RETICULATE_PYTHON = "/opt/conda/envs/tcrenv/bin/python")
+Sys.setenv(LD_LIBRARY_PATH = paste(
+  "/opt/conda/envs/tcrenv/lib",
+  Sys.getenv("LD_LIBRARY_PATH"),
+  sep = ":"
+))
+
+
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+      plot.subtitle = element_text(size = base_size, hjust = 0),
+      axis.title = element_text(face = "bold"),
+      axis.text = element_text(color = "black"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+      strip.background = element_rect(fill = "grey95", color = "grey80"),
+      strip.text = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.key = element_blank(),
+      plot.caption = element_text(size = base_size - 2, color = "grey40")
+    )
+}
+
+save_plot_safe <- function(plot_obj, filename,
+                           width = params$figure_width,
+                           height = params$figure_height,
+                           dpi = params$figure_dpi) {
+  if (!isTRUE(params$save_figures)) return(invisible(NULL))
+  ggsave(
+    filename = file.path(params$outdir, params$figures_dir, filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+save_table_safe <- function(df, filename) {
+  if (!isTRUE(params$save_tables)) return(invisible(NULL))
+  fwrite(df, file.path(params$outdir, params$tables_dir, filename), sep = "\t")
+}
+
+save_rds_safe <- function(obj, filename) {
+  if (!isTRUE(params$save_updated_seurat)) return(invisible(NULL))
+  saveRDS(obj, file.path(params$outdir, params$data_dir, filename))
+}
+
+require_file <- function(path, msg = NULL) {
+  if (!file.exists(path)) stop(msg %||% paste("Missing required file:", path))
+  path
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+  NULL
+}
+
+safe_make_umap <- function(seu, reduction_name = "umap", dims = 1:30, nfeatures = 3000, seed = 1234) {
+  if ("RNA" %in% names(seu@assays)) DefaultAssay(seu) <- "RNA"
+  npcs <- min(max(dims), max(2, ncol(seu) - 1), 50)
+  nf <- min(nfeatures, nrow(seu))
+
+  if (!"pca" %in% Reductions(seu)) {
+    seu <- FindVariableFeatures(seu, nfeatures = nf, verbose = FALSE)
+    seu <- ScaleData(seu, verbose = FALSE)
+    seu <- RunPCA(seu, npcs = npcs, verbose = FALSE)
+  }
+
+  use_dims <- dims[dims <= npcs]
+  if (length(use_dims) < 2) use_dims <- 1:min(10, npcs)
+
+  seu <- FindNeighbors(seu, dims = use_dims, verbose = FALSE)
+  seu <- RunUMAP(seu, dims = use_dims, reduction.name = reduction_name, verbose = FALSE)
+  seu
+}
+
+extract_cdr3b_from_CTaa <- function(x) {
+  x <- as.character(x)
+  out <- rep(NA_character_, length(x))
+  has_b <- grepl("\\|B:", x)
+  out[has_b] <- sub("^.*\\|B:", "", x[has_b])
+  only_b <- grepl("^B:", x)
+  out[only_b] <- sub("^B:", "", x[only_b])
+  out
+}
+
+split_candidate_string <- function(x) {
+  if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(character())
+  x <- gsub('"', "", as.character(x))
+  x <- trimws(unlist(strsplit(x, ";", fixed = TRUE)))
+  x[nzchar(x)]
+}
+
+safe_percent <- function(x, denom) {
+  ifelse(denom > 0, x / denom, 0)
+}
+
+# MD Anderson Publication Theme
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2),
+      panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+      strip.background = element_rect(fill = "grey95")
+    )
+}
+
+# sanitize_param_string <- function(x) {
+#   if (is.null(x) || length(x) == 0) return(NULL)
+#   trimws(gsub("\\u00A0", " ", as.character(x)))
+# }
+
+# first_existing_col <- function(df, preferred, candidates = character()) {
+#   preferred <- sanitize_param_string(preferred)
+#   if (length(candidates) == 1 && is.character(candidates)) {
+#     candidates <- split_candidate_string(candidates)
+#   }
+#   candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
+# 
+#   if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+#   hits <- intersect(candidates, colnames(df))
+#   if (length(hits) > 0) return(hits[[1]])
+#   NULL
+# }
+
+sanitize_param_string <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NULL)
+  trimws(gsub("\\u00A0", " ", as.character(x)))
+}
+
+normalize_colnames <- function(df) {
+  colnames(df) <- trimws(gsub("\\u00A0", " ", colnames(df)))
+  df
+}
+
+split_candidate_string <- function(x) {
+  if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(character())
+  x <- gsub('"', "", as.character(x))
+  x <- trimws(unlist(strsplit(x, ";", fixed = TRUE)))
+  x[nzchar(x)]
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  df <- normalize_colnames(df)
+  preferred <- sanitize_param_string(preferred)
+
+  if (length(candidates) == 1 && is.character(candidates)) {
+    candidates <- split_candidate_string(candidates)
+  }
+  candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
+
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+
+  NULL
+}
+
+```
+
+# read-inputs
+```{r}
+#| label: read-inputs
+require_file(params$seurat_rds, sprintf("Seurat RDS not found: %s", params$seurat_rds))
+seu <- readRDS(params$seurat_rds)
+
+```
+
+# resolved columns
+```{r}
+#| label: resolve-columns
+
+
+md <- normalize_colnames(seu@meta.data)
+seu@meta.data <- md
+
+label_col <- first_existing_col(md, params$label_col, params$label_candidates)
+sample_col <- first_existing_col(md, params$sample_col, params$sample_candidates)
+patient_col <- first_existing_col(md, params$patient_col, params$patient_candidates)
+condition_col <- first_existing_col(md, params$condition_col, params$condition_candidates)
+timepoint_col <- first_existing_col(md, params$timepoint_col, params$timepoint_candidates)
+batch_col <- first_existing_col(md, params$batch_col, params$batch_candidates)
+
+clone_id_col <- first_existing_col(md, params$clone_id_col, params$clone_id_candidates)
+clone_size_col <- first_existing_col(md, params$clone_size_col, params$clone_size_candidates)
+paired_tcr_col <- first_existing_col(md, params$paired_tcr_col, params$paired_tcr_candidates)
+has_tcr_col <- first_existing_col(md, params$has_tcr_col, params$has_tcr_candidates)
+
+tcri_score_col_md <- first_existing_col(md, params$tcri_score_col, params$tcri_score_candidates)
+tcri_group_col_md <- first_existing_col(md, params$tcri_group_col, params$tcri_group_candidates)
+conga_cluster_col_md <- first_existing_col(md, params$conga_cluster_col, params$conga_cluster_candidates_md)
+conga_score_col_md <- first_existing_col(md, params$conga_score_col, params$conga_score_candidates_md)
+
+if (is.null(label_col)) stop("Could not resolve an annotation label column in Seurat metadata.")
+if (is.null(sample_col)) stop("Could not resolve sample column in Seurat metadata.")
+if (is.null(patient_col)) stop("Could not resolve patient column in Seurat metadata.")
+if (is.null(condition_col)) stop("Could not resolve condition column in Seurat metadata.")
+if (is.null(timepoint_col)) stop("Could not resolve timepoint column in Seurat metadata.")
+if (is.null(clone_id_col)) stop("Could not resolve a clone ID column in Seurat metadata.")
+if (is.null(clone_size_col)) stop("Could not resolve a clone size column in Seurat metadata.")
+if (is.null(has_tcr_col)) stop("Could not resolve a has_tcr column in Seurat metadata.")
+if (is.null(paired_tcr_col)) stop("Could not resolve a paired_tcr column in Seurat metadata.")
+
+if (!"META_SAMPLE" %in% colnames(seu@meta.data) && !is.null(sample_col)) {
+  seu$META_SAMPLE <- as.character(seu@meta.data[[sample_col]])
+}
+if (!"META_PATIENT" %in% colnames(seu@meta.data) && !is.null(patient_col)) {
+  seu$META_PATIENT <- as.character(seu@meta.data[[patient_col]])
+}
+if (!"META_TIMECOND" %in% colnames(seu@meta.data) && !is.null(condition_col)) {
+  seu$META_TIMECOND <- as.character(seu@meta.data[[condition_col]])
+}
+if (!"META_TIMEPOINT" %in% colnames(seu@meta.data) && !is.null(timepoint_col)) {
+  seu$META_TIMEPOINT <- as.character(seu@meta.data[[timepoint_col]])
+}
+if (!"META_BATCH" %in% colnames(seu@meta.data) && !is.null(batch_col)) {
+  seu$META_BATCH <- as.character(seu@meta.data[[batch_col]])
+}
+
+print(list(
+  resolved_label_col = label_col,
+  resolved_sample_col = sample_col,
+  resolved_patient_col = patient_col,
+  resolved_condition_col = condition_col,
+  resolved_timepoint_col = timepoint_col,
+  resolved_batch_col = batch_col,
+  resolved_clone_id_col = clone_id_col,
+  resolved_clone_size_col = clone_size_col,
+  resolved_paired_tcr_col = paired_tcr_col,
+  resolved_has_tcr_col = has_tcr_col,
+  resolved_tcri_score_col = tcri_score_col_md,
+  resolved_conga_score_col = conga_score_col_md
+))
+
+
+```
+
+# subset-for-tcrdist3
+```{r}
+#| label: subset-for-tcrdist3
+seu_t <- seu
+
+if (isTRUE(params$subset_to_tcr_positive)) {
+  keep <- !is.na(seu_t@meta.data[[has_tcr_col]]) & as.logical(seu_t@meta.data[[has_tcr_col]])
+  seu_t <- subset(seu_t, cells = rownames(seu_t@meta.data)[keep])
+}
+
+if (isTRUE(params$subset_to_paired_tcr)) {
+  keep <- !is.na(seu_t@meta.data[[paired_tcr_col]]) & as.logical(seu_t@meta.data[[paired_tcr_col]])
+  seu_t <- subset(seu_t, cells = rownames(seu_t@meta.data)[keep])
+}
+
+if (ncol(seu_t) < params$min_cells_total) {
+  stop("Too few cells remain for tcrdist3 analysis after filtering: ", ncol(seu_t))
+}
+```
+
+#  build-tcrdist3-input
+```{r}
+#| label: build-tcrdist3-input
+seu_md <- seu_t@meta.data %>%
+  tibble::rownames_to_column("cell_id") %>%
+  mutate(
+    clone_id_md = as.character(.data[[clone_id_col]]),
+    cdr3_b_aa = if (isTRUE(params$derive_clone_key_from_CTaa)) {
+      extract_cdr3b_from_CTaa(clone_id_md)
+    } else {
+      clone_id_md
+    }
+  ) %>%
+  filter(!is.na(cdr3_b_aa), cdr3_b_aa != "")
+
+# Try to recover TRBV / TRBJ from metadata if present, otherwise leave NA.
+v_col <- intersect(c("trbv", "v_b_gene", "vb_gene", "TRBV"), colnames(seu_md))
+j_col <- intersect(c("trbj", "j_b_gene", "jb_gene", "TRBJ"), colnames(seu_md))
+
+seu_md$v_b_gene <- if (length(v_col) > 0) as.character(seu_md[[v_col[1]]]) else NA_character_
+seu_md$j_b_gene <- if (length(j_col) > 0) as.character(seu_md[[j_col[1]]]) else NA_character_
+
+# Collapse to one row per clone for tcrdist3
+tcrdist_input <- seu_md %>%
+  group_by(clone_id_md, cdr3_b_aa) %>%
+  summarise(
+    v_b_gene = first(na.omit(v_b_gene)) %||% NA_character_,
+    j_b_gene = first(na.omit(j_b_gene)) %||% NA_character_,
+    count = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    clone_id = clone_id_md
+  ) %>%
+  select(clone_id, cdr3_b_aa, v_b_gene, j_b_gene, count)
+
+# tcrdist3 expects canonical column names for beta chain
+tcrdist_input <- tcrdist_input %>%
+  transmute(
+    clone_id = clone_id,
+    subject = "SCRATCH",
+    cell_type = "T",
+    v_b_gene = v_b_gene,
+    j_b_gene = j_b_gene,
+    cdr3_b_aa = cdr3_b_aa,
+    count = count
+  ) %>%
+  filter(!is.na(cdr3_b_aa), cdr3_b_aa != "")
+
+min_unique_clones <- params$min_unique_clones
+if (is.null(min_unique_clones) || length(min_unique_clones) == 0 || is.na(min_unique_clones)) {
+  min_unique_clones <- 25
+}
+min_unique_clones <- as.integer(min_unique_clones)
+
+if (nrow(tcrdist_input) < min_unique_clones) {
+  stop("Too few unique beta-chain clonotypes for tcrdist3: ", nrow(tcrdist_input))
+}
+
+save_table_safe(tcrdist_input, "tcrdist3_input_clones.tsv")
+
+
+```
+
+# run-tcrdist3
+```{r}
+#| label: run-tcrdist3
+python_bin <- "/opt/conda/envs/tcrenv/bin/python"
+if (!is.null(params$python_bin) && params$python_bin != "") {
+  python_bin <- params$python_bin
+}
+
+Sys.setenv(RETICULATE_PYTHON = python_bin)
+Sys.setenv(
+  LD_LIBRARY_PATH = paste(
+    "/opt/conda/envs/tcrenv/lib",
+    Sys.getenv("LD_LIBRARY_PATH"),
+    sep = ":"
+  )
+)
+
+organism <- params$organism
+if (is.null(organism) || length(organism) == 0 || is.na(organism) || organism == "") {
+  organism <- "human"
+}
+
+db_file <- params$db_file
+if (is.null(db_file) || length(db_file) == 0 || is.na(db_file) || db_file == "") {
+  db_file <- "alphabeta_gammadelta_db.tsv"
+}
+
+tcrdist_radius <- params$tcrdist_radius
+if (is.null(tcrdist_radius) || length(tcrdist_radius) == 0 || is.na(tcrdist_radius)) {
+  tcrdist_radius <- 50
+}
+tcrdist_radius <- as.integer(tcrdist_radius)
+
+tcrdist_input_path <- file.path(params$outdir, params$tables_dir, "tcrdist3_input_clones.tsv")
+tcrdist_results_path <- file.path(params$outdir, params$tables_dir, "tcrdist3_clusters.tsv")
+tcrdist_neighbors_path <- file.path(params$outdir, params$tables_dir, "tcrdist3_neighbors.tsv")
+tcrdist_dist_path <- file.path(params$outdir, params$tables_dir, "tcrdist3_distance_summary.tsv")
+
+py_script <- file.path(params$outdir, params$data_dir, "run_tcrdist3.py")
+test_py <- file.path(params$outdir, params$data_dir, "test_tcrdist3_env.py")
+py_log <- file.path(params$outdir, params$data_dir, "tcrdist3_python.log")
+
+py_lines <- c(
+  "import os",
+  "import pandas as pd",
+  "import numpy as np",
+  "from scipy.sparse.csgraph import connected_components",
+  "from tcrdist.repertoire import TCRrep",
+  "",
+  sprintf("tcrdist_input_path = r'%s'", tcrdist_input_path),
+  sprintf("tcrdist_results_path = r'%s'", tcrdist_results_path),
+  sprintf("tcrdist_neighbors_path = r'%s'", tcrdist_neighbors_path),
+  sprintf("tcrdist_dist_path = r'%s'", tcrdist_dist_path),
+  sprintf("organism = r'%s'", organism),
+  sprintf("db_file = r'%s'", db_file),
+  sprintf("radius = %d", tcrdist_radius),
+  "",
+  "print('Running TCRdist3 python step')",
+  "print('Input table:', tcrdist_input_path)",
+  "print('Organism:', organism)",
+  "print('DB file:', db_file)",
+  "print('Radius:', radius)",
+  "",
+  "df = pd.read_csv(tcrdist_input_path, sep='\\t')",
+  "print('Input shape:', df.shape)",
+  "",
+  "if df.shape[0] == 0:",
+  "    raise ValueError('tcrdist_input is empty.')",
+  "",
+  "print('Starting input cleanup and gene normalization')",
+  "",
+  "# Basic cleanup",
+  "for col in ['clone_id', 'cdr3_b_aa', 'v_b_gene', 'j_b_gene']:",
+  "    if col in df.columns:",
+  "        df[col] = df[col].astype(str).str.strip()",
+  "",
+  "df = df.replace({'nan': np.nan, 'None': np.nan, '': np.nan})",
+  "",
+  "# Keep only rows with essential beta-chain fields",
+  "df = df.dropna(subset=['clone_id', 'cdr3_b_aa', 'v_b_gene', 'j_b_gene']).copy()",
+  "print('After dropping missing clone/V/J/CDR3 fields:', df.shape)",
+  "",
+  "# Normalize gene names",
+  "df['v_b_gene'] = df['v_b_gene'].str.replace(r'\\s+', '', regex=True)",
+  "df['j_b_gene'] = df['j_b_gene'].str.replace(r'\\s+', '', regex=True)",
+  "",
+  "# If allele is missing, add *01",
+  "df['v_b_gene'] = df['v_b_gene'].apply(lambda x: x if pd.isna(x) else (x if '*' in x else x + '*01'))",
+  "df['j_b_gene'] = df['j_b_gene'].apply(lambda x: x if pd.isna(x) else (x if '*' in x else x + '*01'))",
+  "",
+  "# Keep only beta-chain V/J genes",
+  "df = df[",
+  "    df['v_b_gene'].str.startswith('TRBV', na=False) &",
+  "    df['j_b_gene'].str.startswith('TRBJ', na=False)",
+  "].copy()",
+  "print('After TRBV/TRBJ prefix filter:', df.shape)",
+  "",
+  "if df.shape[0] == 0:",
+  "    raise ValueError('No valid beta-chain rows remain after V/J filtering.')",
+  "",
+  "if df.shape[0] < 10:",
+  "    raise ValueError(f'Too few valid clones remain for tcrdist3 after gene filtering: {df.shape[0]}')",
+  "",
+  "print('Example normalized genes:')",
+  "print(df[['v_b_gene','j_b_gene']].drop_duplicates().head(20).to_string(index=False))",
+  "",
+  "tr = TCRrep(",
+  "    cell_df=df,",
+  "    organism=organism,",
+  "    chains=['beta'],",
+  "    db_file=db_file,",
+  "    infer_all_genes=True,",
+  "    infer_cdrs=True,",
+  "    deduplicate=False,",
+  "    compute_distances=False",
+  ")",
+  "",
+  "# Compatibility across tcrdist3 versions",
+  "if hasattr(tr, 'compute_distances'):",
+  "    tr.compute_distances()",
+  "",
+  "pw = None",
+  "for attr in ['pw_beta', 'pw_tcrdist', 'pw_cdr3_b_aa', 'pw_beta_tcrdist']:",
+  "    if hasattr(tr, attr):",
+  "        candidate = getattr(tr, attr)",
+  "        if candidate is not None:",
+  "            pw = np.asarray(candidate)",
+  "            print(f'Using distance matrix attribute: {attr}')",
+  "            break",
+  "",
+  "if pw is None:",
+  "    for attr in dir(tr):",
+  "        if attr.startswith('pw'):",
+  "            candidate = getattr(tr, attr)",
+  "            try:",
+  "                arr = np.asarray(candidate)",
+  "                if arr.ndim == 2 and arr.shape[0] == arr.shape[1] and arr.shape[0] == df.shape[0]:",
+  "                    pw = arr",
+  "                    print(f'Using fallback distance matrix attribute: {attr}')",
+  "                    break",
+  "            except Exception:",
+  "                pass",
+  "",
+  "if pw is None:",
+  "    raise AttributeError('Could not find a usable pairwise distance matrix on the TCRrep object.')",
+  "",
+  "adj = (pw <= radius).astype(int)",
+  "np.fill_diagonal(adj, 0)",
+  "",
+  "n_components, labels = connected_components(adj, directed=False, connection='weak')",
+  "cluster_sizes = pd.Series(labels).value_counts().to_dict()",
+  "",
+  "clone_df = df.copy()",
+  "clone_df['tcrdist_cluster'] = labels.astype(str)",
+  "clone_df['tcrdist_group'] = labels.astype(str)",
+  "clone_df['tcrdist_score'] = adj.sum(axis=1).astype(float)",
+  "clone_df['tcrdist_radius'] = float(radius)",
+  "clone_df['tcrdist_pvalue'] = np.nan",
+  "clone_df['tcrdist_qvalue'] = np.nan",
+  "clone_df['tcrdist_cluster_size'] = [cluster_sizes[x] for x in labels]",
+  "clone_df['metaclonotype'] = ['MC_' + str(x) for x in labels]",
+  "",
+  "clone_df[['clone_id','cdr3_b_aa','tcrdist_cluster','tcrdist_group','tcrdist_score','tcrdist_radius','tcrdist_pvalue','tcrdist_qvalue','tcrdist_cluster_size','metaclonotype']].to_csv(",
+  "    tcrdist_results_path, sep='\\t', index=False",
+  ")",
+  "",
+  "rows, cols = np.where(np.triu(adj, k=1) > 0)",
+  "edges = pd.DataFrame({",
+  "    'source': df.iloc[rows]['clone_id'].astype(str).values,",
+  "    'target': df.iloc[cols]['clone_id'].astype(str).values,",
+  "    'distance': pw[rows, cols].astype(float),",
+  "    'radius': float(radius)",
+  "})",
+  "edges.to_csv(tcrdist_neighbors_path, sep='\\t', index=False)",
+  "",
+  "dist_summary = pd.DataFrame({",
+  "    'metric': ['n_clones','radius','mean_degree','median_degree','max_degree'],",
+  "    'value': [",
+  "        int(df.shape[0]),",
+  "        float(radius),",
+  "        float(adj.sum(axis=1).mean()),",
+  "        float(np.median(adj.sum(axis=1))),",
+  "        float(adj.sum(axis=1).max())",
+  "    ]",
+  "})",
+  "dist_summary.to_csv(tcrdist_dist_path, sep='\\t', index=False)",
+  "",
+  "print('TCRdist3 python step completed successfully')"
+)
+writeLines(py_lines, py_script)
+
+
+writeLines(
+  c(
+    "import sys",
+    "print(sys.executable)",
+    "import pandas",
+    "import numpy",
+    "import scipy",
+    "from tcrdist.repertoire import TCRrep",
+    "print('PYTHON IMPORT SUCCESS!')"
+  ),
+  test_py
+)
+
+test_res <- system2(
+  python_bin,
+  args = test_py,
+  stdout = TRUE,
+  stderr = TRUE
+)
+
+test_status <- attr(test_res, "status")
+if (is.null(test_status)) test_status <- 0L
+
+if (test_status != 0L) {
+  writeLines(test_res, py_log)
+  stop(
+    paste0(
+      "Python environment test failed before running tcrdist3.\n",
+      "See log: ", py_log, "\n\n",
+      paste(test_res, collapse = "\n")
+    )
+  )
+}
+
+res <- system2(
+  python_bin,
+  args = py_script,
+  stdout = TRUE,
+  stderr = TRUE
+)
+
+status <- attr(res, "status")
+if (is.null(status)) status <- 0L
+
+writeLines(
+  c(
+    "=== Python environment test ===",
+    test_res,
+    "",
+    "=== TCRdist3 run ===",
+    res
+  ),
+  py_log
+)
+
+if (status != 0L) {
+  stop(
+    paste0(
+      "TCRdist3 Python script failed with exit status ", status, ".\n",
+      "See log: ", py_log, "\n\n",
+      paste(res, collapse = "\n")
+    )
+  )
+}
+
+if (!file.exists(tcrdist_results_path)) {
+  stop("TCRdist3 did not produce the expected cluster output file: ", tcrdist_results_path)
+}
+if (!file.exists(tcrdist_neighbors_path)) {
+  stop("TCRdist3 did not produce the expected neighbors output file: ", tcrdist_neighbors_path)
+}
+if (!file.exists(tcrdist_dist_path)) {
+  stop("TCRdist3 did not produce the expected distance summary file: ", tcrdist_dist_path)
+}
+
+cat("TCRdist3 Python step completed successfully.\n")
+cat("Detailed Python log saved to: ", py_log, "\n", sep = "")
+```
+
+# read-tcrdist3-results
+```{r}
+#| label: read-tcrdist3-results
+tcrdist_clusters_path <- file.path(params$outdir, params$tables_dir, "tcrdist3_clusters.tsv")
+tcrdist_neighbors_path <- file.path(params$outdir, params$tables_dir, "tcrdist3_neighbors.tsv")
+tcrdist_dist_path <- file.path(params$outdir, params$tables_dir, "tcrdist3_distance_summary.tsv")
+
+require_file(tcrdist_clusters_path, "Missing tcrdist3 cluster results file.")
+tcrdist_clusters <- fread(tcrdist_clusters_path)
+
+tcrdist_neighbors <- if (file.exists(tcrdist_neighbors_path)) {
+  fread(tcrdist_neighbors_path)
+} else {
+  data.table::data.table()
+}
+
+tcrdist_distance_summary <- if (file.exists(tcrdist_dist_path)) {
+  fread(tcrdist_dist_path)
+} else {
+  data.table::data.table()
+}
+
+if (!"clone_id" %in% colnames(tcrdist_clusters)) {
+  stop("tcrdist_clusters.tsv is missing required column: clone_id")
+}
+if (!"cdr3_b_aa" %in% colnames(tcrdist_clusters)) {
+  stop("tcrdist_clusters.tsv is missing required column: cdr3_b_aa")
+}
+if (!"tcrdist_cluster" %in% colnames(tcrdist_clusters)) {
+  stop("tcrdist_clusters.tsv is missing required column: tcrdist_cluster")
+}
+
+```
+
+# Merge TCRdist3 annotations back into Seurat
+```{r}
+#| label: merge-tcrdist-into-seurat
+seu_md_full <- seu@meta.data %>%
+  tibble::rownames_to_column("cell_id") %>%
+  mutate(
+    clone_id_md = as.character(.data[[clone_id_col]]),
+    clone_key = if (isTRUE(params$derive_clone_key_from_CTaa)) {
+      extract_cdr3b_from_CTaa(clone_id_md)
+    } else {
+      clone_id_md
+    }
+  )
+
+tcrdist_map <- tcrdist_clusters %>%
+  mutate(
+    clone_id = as.character(clone_id),
+    clone_key = as.character(cdr3_b_aa)
+  ) %>%
+  select(
+    clone_id,
+    clone_key,
+    tcrdist_cluster,
+    tcrdist_group,
+    tcrdist_score,
+    tcrdist_radius,
+    tcrdist_pvalue,
+    tcrdist_qvalue,
+    tcrdist_cluster_size,
+    metaclonotype
+  ) %>%
+  distinct(clone_key, .keep_all = TRUE)
+
+seu_md_full <- seu_md_full %>%
+  left_join(
+    tcrdist_map %>%
+      select(
+        clone_key,
+        tcrdist_cluster,
+        tcrdist_group,
+        tcrdist_score,
+        tcrdist_radius,
+        tcrdist_pvalue,
+        tcrdist_qvalue,
+        tcrdist_cluster_size,
+        metaclonotype
+      ),
+    by = "clone_key"
+  )
+
+rownames(seu_md_full) <- seu_md_full$cell_id
+seu@meta.data <- seu_md_full %>% select(-cell_id)
+
+save_rds_safe(seu, "seurat_with_TCRdist3.rds")
+```
+
+# ensure-embedding
+```{r}
+#| label: ensure-embedding
+reduction_to_use <- params$reduction_use
+if (!(reduction_to_use %in% names(seu@reductions)) && isTRUE(params$make_umap_if_missing)) {
+  seu <- safe_make_umap(
+    seu,
+    reduction_name = params$reduction_use,
+    dims = 1:params$umap_dims_max,
+    nfeatures = params$umap_nfeatures
+  )
+}
+if (!(reduction_to_use %in% names(seu@reductions))) {
+  reduction_to_use <- if ("umap" %in% names(seu@reductions)) "umap" else if ("tsne" %in% names(seu@reductions)) "tsne" else if ("pca" %in% names(seu@reductions)) "pca" else stop("No usable embedding found.")
+}
+```
+
+# build-export
+```{r}
+#| label: build-export
+# Explicitly mapping resolved names into the export table
+export_cells <- seu@meta.data %>%
+  tibble::rownames_to_column("cell_id") %>%
+  transmute(
+    cell_id = cell_id,
+    sample    = as.character(.data[[sample_col]]),
+    patient   = as.character(.data[[patient_col]]),
+    condition = as.character(.data[[condition_col]]),
+    annot     = as.character(.data[[label_col]]),
+    clone_id  = as.character(.data[[clone_id_col]]),
+    # TCRdist3 results
+    tcrdist_cluster = as.character(tcrdist_cluster),
+    tcrdist_score   = suppressWarnings(as.numeric(tcrdist_score)),
+    metaclonotype   = as.character(metaclonotype)
+  ) %>%
+  left_join(as.data.frame(Embeddings(seu, reduction_to_use)) %>% tibble::rownames_to_column("cell_id"), by = "cell_id")
+
+# Create the display labels (DIST_01...) for the plots
+cluster_summary <- export_cells %>%
+  filter(!is.na(tcrdist_cluster)) %>%
+  count(tcrdist_cluster, name = "n_cells") %>%
+  mutate(tcrdist_display = paste0("DIST_", sprintf("%02d", seq_len(n()))))
+
+export_cells <- export_cells %>% 
+  left_join(cluster_summary %>% select(tcrdist_cluster, tcrdist_display), by = "tcrdist_cluster")
+
+save_table_safe(export_cells, "tcrdist3_export_cells.tsv")
+
+
+# #| label: build-export
+# embed_df <- as.data.frame(Embeddings(seu, reduction = reduction_to_use)) %>%
+#   tibble::rownames_to_column("cell_id")
+# 
+# export_cells <- seu@meta.data %>%
+#   tibble::rownames_to_column("cell_id") %>%
+#   transmute(
+#     cell_id = cell_id,
+#     sample = if (!is.null(sample_col) && sample_col %in% colnames(seu@meta.data)) as.character(.data[[sample_col]]) else NA_character_,
+#     patient = if (!is.null(patient_col) && patient_col %in% colnames(seu@meta.data)) as.character(.data[[patient_col]]) else NA_character_,
+#     condition = if (!is.null(condition_col) && condition_col %in% colnames(seu@meta.data)) as.character(.data[[condition_col]]) else NA_character_,
+#     timepoint = if (!is.null(timepoint_col) && timepoint_col %in% colnames(seu@meta.data)) as.character(.data[[timepoint_col]]) else NA_character_,
+#     batch = if (!is.null(batch_col) && batch_col %in% colnames(seu@meta.data)) as.character(.data[[batch_col]]) else NA_character_,
+#     annot = if (!is.null(label_col) && label_col %in% colnames(seu@meta.data)) as.character(.data[[label_col]]) else NA_character_,
+#     clone_id = as.character(.data[[clone_id_col]]),
+#     clone_size = if (!is.null(clone_size_col) && clone_size_col %in% colnames(seu@meta.data)) suppressWarnings(as.numeric(.data[[clone_size_col]])) else NA_real_,
+#     paired_tcr = if (!is.null(paired_tcr_col) && paired_tcr_col %in% colnames(seu@meta.data)) as.logical(.data[[paired_tcr_col]]) else NA,
+#     has_tcr = if (!is.null(has_tcr_col) && has_tcr_col %in% colnames(seu@meta.data)) as.logical(.data[[has_tcr_col]]) else NA,
+#     tcrdist_cluster = if ("tcrdist_cluster" %in% colnames(seu@meta.data)) as.character(tcrdist_cluster) else NA_character_,
+#     tcrdist_group = if ("tcrdist_group" %in% colnames(seu@meta.data)) as.character(tcrdist_group) else NA_character_,
+#     tcrdist_score = if ("tcrdist_score" %in% colnames(seu@meta.data)) suppressWarnings(as.numeric(tcrdist_score)) else NA_real_,
+#     tcrdist_radius = if ("tcrdist_radius" %in% colnames(seu@meta.data)) suppressWarnings(as.numeric(tcrdist_radius)) else NA_real_,
+#     tcrdist_pvalue = if ("tcrdist_pvalue" %in% colnames(seu@meta.data)) suppressWarnings(as.numeric(tcrdist_pvalue)) else NA_real_,
+#     tcrdist_qvalue = if ("tcrdist_qvalue" %in% colnames(seu@meta.data)) suppressWarnings(as.numeric(tcrdist_qvalue)) else NA_real_,
+#     tcrdist_cluster_size = if ("tcrdist_cluster_size" %in% colnames(seu@meta.data)) suppressWarnings(as.numeric(tcrdist_cluster_size)) else NA_real_,
+#     metaclonotype = if ("metaclonotype" %in% colnames(seu@meta.data)) as.character(metaclonotype) else NA_character_
+#   ) %>%
+#   left_join(embed_df, by = "cell_id")
+# 
+# save_table_safe(export_cells, "tcrdist3_export_cells.tsv")
+
+```
+
+# Merge diagnostics
+```{r}
+#| label: merge-diagnostics
+merge_diag <- tibble::tibble(
+  metric = c(
+    "n_cells_in_seurat",
+    "n_cells_in_export",
+    "n_unique_clones_input",
+    "n_unique_clones_clustered",
+    "n_neighbor_edges",
+    "n_distance_summary_rows"
+  ),
+  value = c(
+    ncol(seu),
+    nrow(export_cells),
+    dplyr::n_distinct(export_cells$clone_id[!is.na(export_cells$clone_id)]),
+    if (exists("tcrdist_clusters") && nrow(tcrdist_clusters) > 0) {
+      dplyr::n_distinct(tcrdist_clusters$clone_id[!is.na(tcrdist_clusters$clone_id)])
+    } else {
+      0
+    },
+    if (exists("tcrdist_neighbors") && nrow(tcrdist_neighbors) > 0) {
+      nrow(tcrdist_neighbors)
+    } else {
+      0
+    },
+    if (exists("tcrdist_distance_summary") && nrow(tcrdist_distance_summary) > 0) {
+      nrow(tcrdist_distance_summary)
+    } else {
+      0
+    }
+  )
+)
+
+save_table_safe(merge_diag, "tcrdist3_merge_diagnostics.tsv")
+```
+
+# summary-tables
+```{r}
+#| label: summary-tables
+#| results: hide
+
+summary_rollup <- tibble(
+  metric = c(
+    "Report label",
+    "Cells in Seurat",
+    "Cells with TCRdist3 clusters",
+    "Cells with TCRdist3 scores",
+    "Cells with metaclonotype",
+    "TCR-positive cells",
+    "Paired TCR cells",
+    "Unique TCRdist3 clusters",
+    "Unique annotations",
+    "Unique samples",
+    "Selected embedding"
+  ),
+  value = c(
+    params$report_label,
+    nrow(export_cells),
+    sum(!is.na(export_cells$tcrdist_cluster)),
+    sum(!is.na(export_cells$tcrdist_score)),
+    sum(!is.na(export_cells$metaclonotype)),
+    if ("has_tcr" %in% colnames(seu@meta.data)) sum(seu@meta.data[[has_tcr_col]], na.rm = TRUE) else NA,
+    if ("paired_tcr" %in% colnames(seu@meta.data)) sum(seu@meta.data[[paired_tcr_col]], na.rm = TRUE) else NA,
+    length(unique(na.omit(export_cells$tcrdist_cluster))),
+    length(unique(na.omit(export_cells$annot))),
+    length(unique(na.omit(export_cells$sample))),
+    reduction_to_use
+  )
+)
+save_table_safe(summary_rollup, "tcrdist3_summary_rollup.tsv")
+
+cluster_summary <- export_cells %>%
+  filter(!is.na(tcrdist_cluster)) %>%
+  count(tcrdist_cluster, name = "n_cells") %>%
+  mutate(frac = n_cells / sum(n_cells)) %>%
+  arrange(desc(n_cells)) %>%
+  mutate(tcrdist_display = paste0("DIST_", sprintf("%02d", seq_len(n()))))
+
+cluster_label_map <- cluster_summary %>%
+  select(tcrdist_cluster, tcrdist_display)
+
+export_cells <- export_cells %>%
+  left_join(cluster_label_map, by = "tcrdist_cluster")
+
+seu@meta.data$tcrdist_display <- export_cells$tcrdist_display[
+  match(rownames(seu@meta.data), export_cells$cell_id)
+]
+
+cluster_annotation_tbl <- export_cells %>%
+  filter(!is.na(tcrdist_cluster), !is.na(annot)) %>%
+  count(tcrdist_cluster, annot, name = "n_cells")
+
+cluster_sample_tbl <- export_cells %>%
+  filter(!is.na(tcrdist_cluster), !is.na(sample)) %>%
+  count(tcrdist_cluster, sample, name = "n_cells")
+
+annotation_tcrdist_summary <- export_cells %>%
+  filter(!is.na(annot)) %>%
+  group_by(annot) %>%
+  summarise(
+    n_cells = n(),
+    n_tcrdist = sum(!is.na(tcrdist_cluster)),
+    frac_tcrdist = n_tcrdist / n_cells,
+    mean_tcrdist = mean(tcrdist_score, na.rm = TRUE),
+    median_tcrdist = median(tcrdist_score, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(frac_tcrdist))
+
+save_table_safe(cluster_summary, "tcrdist3_cluster_summary.tsv")
+save_table_safe(annotation_tcrdist_summary, "annotation_tcrdist3_summary.tsv")
+save_table_safe(cluster_annotation_tbl, "tcrdist3_cluster_annotation_composition.tsv")
+save_table_safe(cluster_sample_tbl, "tcrdist3_cluster_sample_composition.tsv")
+save_table_safe(export_cells, "tcrdist3_export_cells.tsv")
+
+
+
+```
+
+# overview
+```{r}
+#| label: overview
+#| results: asis
+
+cat("### High-Level Analysis Overview\n")
+
+if (exists("summary_rollup") && nrow(summary_rollup) > 0) {
+  print(
+    kable(summary_rollup, caption = "High-level overview of TCRdist3 analysis.") %>%
+      kable_styling(
+        full_width = FALSE,
+        bootstrap_options = c("striped", "hover", "condensed")
+      )
+  )
+} else {
+  cat("Overview table was not available because summary statistics were not generated.\n")
+}
+
+
+```
+
+# score-density
+```{r}
+#| label: score-density
+if (isTRUE(params$show_score_density) && any(!is.na(export_cells$tcrdist_score))) {
+  p_density <- export_cells %>%
+    filter(!is.na(tcrdist_score)) %>%
+    ggplot(aes(x = tcrdist_score)) +
+    geom_density(fill = "steelblue", alpha = 0.5, linewidth = 0.8) +
+    labs(
+      title = "Distribution of TCRdist3 scores",
+      subtitle = "Mapped clone-level neighborhood degree.",
+      x = "TCRdist3 score",
+      y = "Density"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_density)
+  save_plot_safe(p_density, glue("tcrdist3_score_density.{params$figure_format}"))
+}
+```
+
+# Cluster-umap
+```{r}
+#| label: cluster-umap
+#| fig-width: 12
+#| fig-height: 9
+
+if (isTRUE(params$show_cluster_umap) && any(!is.na(export_cells$tcrdist_display))) {
+
+  cells_dist <- colnames(seu)[!is.na(seu@meta.data$tcrdist_display) & seu@meta.data$tcrdist_display != ""]
+  n_dist <- length(cells_dist)
+  n_total <- ncol(seu)
+
+  cat(sprintf(
+    "**TCRdist3 cluster assignment note:** %s of %s cells (%.2f%%) received a TCRdist3 cluster assignment. Only assigned cells are highlighted by TCRdist3 display labels.\n\n",
+    scales::comma(n_dist),
+    scales::comma(n_total),
+    100 * n_dist / max(1, n_total)
+  ))
+
+  p_cluster <- DimPlot(
+    seu,
+    reduction = reduction_to_use,
+    group.by = "tcrdist_display",
+    label = TRUE,
+    repel = TRUE,
+    raster = isTRUE(params$raster_large_umap)
+  ) +
+    ggtitle("Embedding overlay: TCRdist3 clusters") +
+    theme_scratch_pub(params$base_size) +
+    theme(
+      legend.position = "none"
+    )
+
+  print(p_cluster)
+
+  ggplot2::ggsave(
+    filename = file.path(params$outdir, params$figures_dir, glue("tcrdist3_cluster_umap.{params$figure_format}")),
+    plot = p_cluster,
+    width = 12,
+    height = 9,
+    dpi = params$figure_dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+} else {
+  cat("No TCRdist3 cluster UMAP was produced because no TCRdist3-assigned cells were available.\n")
+}
+
+# #| label: cluster-umap
+# #| fig-width: 16
+# #| fig-height: 12
+# if (isTRUE(params$show_cluster_umap) && any(!is.na(export_cells$gliph_cluster_display))) {
+# 
+#   seu$gliph_cluster_display <- export_cells$gliph_cluster_display[
+#     match(colnames(seu), export_cells$cell_id)
+#   ]
+# 
+#   p_cluster <- DimPlot(
+#     seu,
+#     reduction = reduction_to_use,
+#     group.by = "gliph_cluster_display",
+#     label = TRUE,
+#     repel = TRUE,
+#     raster = isTRUE(params$raster_large_umap)
+#   ) +
+#     ggtitle("Embedding overlay: GLIPH2 clusters") +
+#     theme_scratch_pub(params$base_size) +
+#     theme(
+#       legend.text = element_text(size = 7),
+#       legend.title = element_text(size = 9)
+#     )
+# 
+#   tryCatch({
+#     print(p_cluster)
+#   }, error = function(e) {
+#     message("Inline patchwork rendering failed; figure will still be saved.")
+#   })
+# 
+#   save_plot_safe(
+#     p_cluster,
+#     glue("gliph2_cluster_umap.{params$figure_format}"),
+#     width = 16,
+#     height = 12
+#   )
+# }
+```
+
+# Cluster size barplot
+```{r}
+#| label: cluster-size-barplot
+if (nrow(cluster_summary) > 0) {
+  p_bar <- cluster_summary %>%
+    slice_head(n = 20) %>%
+    mutate(tcrdist_display = fct_reorder(tcrdist_display, n_cells)) %>%
+    ggplot(aes(x = tcrdist_display, y = n_cells)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    labs(title = "Top TCRdist3 Structural Clusters", x = NULL, y = "Cell Count") +
+    theme_scratch_pub()
+  
+  print(p_bar)
+  save_plot_safe(p_bar, glue("tcrdist3_cluster_size_barplot.{params$figure_format}"))
+}
+
+
+```
+
+# annotation-heatmap
+```{r}
+#| label: annotation-heatmap
+#| fig-width: 14
+#| fig-height: 10
+#| results: asis
+
+if (exists("cluster_annotation_tbl") && nrow(cluster_annotation_tbl) > 0) {
+
+  top_cls <- cluster_summary %>%
+    slice_head(n = params$top_n_clusters) %>%
+    pull(tcrdist_cluster)
+
+  mat_df <- cluster_annotation_tbl %>%
+    filter(tcrdist_cluster %in% top_cls) %>%
+    left_join(cluster_label_map, by = "tcrdist_cluster") %>%
+    pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+
+  if (nrow(mat_df) > 0 && ncol(mat_df) > 2) {
+    rownames(mat_df) <- mat_df$tcrdist_display
+    mat <- as.matrix(
+      mat_df[, !(colnames(mat_df) %in% c("tcrdist_cluster", "tcrdist_display")), drop = FALSE]
+    )
+
+    cond_anno <- export_cells %>%
+      filter(tcrdist_cluster %in% top_cls, !is.na(condition)) %>%
+      left_join(cluster_label_map, by = "tcrdist_cluster") %>%
+      group_by(tcrdist_display) %>%
+      summarise(
+        dominant = tools::toTitleCase(tolower(names(which.max(table(condition))))),
+        .groups = "drop"
+      )
+
+    cond_vec <- cond_anno$dominant[match(rownames(mat), cond_anno$tcrdist_display)]
+    cond_vec[is.na(cond_vec)] <- "Unknown"
+
+    ann_colors <- c(
+      "Pre" = "#66c2a5",
+      "Post" = "#fc8d62",
+      "Normal" = "#8da0cb",
+      "Unknown" = "grey80"
+    )
+
+    row_ha <- rowAnnotation(
+      Clinical_State = cond_vec,
+      col = list(Clinical_State = ann_colors),
+      gp = gpar(col = "white", lwd = 1)
+    )
+
+    max_mat <- max(mat, na.rm = TRUE)
+    if (!is.finite(max_mat) || max_mat <= 0) max_mat <- 1
+
+    cat("### TCRdist3 Structural Specificity vs. Cell State\n")
+
+    ht <- Heatmap(
+      mat,
+      name = "Cells",
+      right_annotation = row_ha,
+      col = colorRamp2(c(0, max_mat / 2, max_mat), c("#f7fbff", "#6baed6", "#08306b")),
+      cluster_rows = TRUE,
+      cluster_columns = TRUE,
+      rect_gp = gpar(col = "white", lwd = 1),
+      column_title = "Cell Type Composition of Top Structural Clusters",
+      row_names_gp = gpar(fontsize = 10, fontface = "bold"),
+      column_names_rot = 45
+    )
+
+    draw(ht, heatmap_legend_side = "right")
+  } else {
+    cat("*Insufficient data to generate the annotation heatmap.*")
+  }
+
+} else {
+  cat("*Insufficient data in `cluster_annotation_tbl` to generate heatmap.*")
+}
+
+```
+
+# sample-heatmap
+```{r}
+#| label: sample-heatmap
+#| fig-width: 14
+#| fig-height: 10
+#| results: asis
+
+if (isTRUE(params$show_sample_heatmap) && exists("cluster_sample_tbl") && nrow(cluster_sample_tbl) > 0) {
+
+  top_clusters <- cluster_summary %>%
+    filter(n_cells >= params$min_cluster_size_plot) %>%
+    slice_head(n = params$top_n_clusters) %>%
+    pull(tcrdist_cluster)
+
+  mat_df <- cluster_sample_tbl %>%
+    filter(tcrdist_cluster %in% top_clusters) %>%
+    left_join(cluster_label_map, by = "tcrdist_cluster") %>%
+    pivot_wider(names_from = sample, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+
+  if (nrow(mat_df) > 0 && ncol(mat_df) > 2) {
+    rownames(mat_df) <- mat_df$tcrdist_display
+    mat <- as.matrix(mat_df[, !(colnames(mat_df) %in% c("tcrdist_cluster", "tcrdist_display")), drop = FALSE])
+
+    max_mat <- max(mat, na.rm = TRUE)
+    if (!is.finite(max_mat) || max_mat <= 0) max_mat <- 1
+
+    cat("### Sample-wise structural distribution\n")
+
+    ht <- Heatmap(
+      mat,
+      name = "Cells",
+      col = colorRamp2(
+        c(0, max_mat / 2, max_mat),
+        c("white", "skyblue", "navy")
+      ),
+      cluster_rows = TRUE,
+      cluster_columns = TRUE,
+      row_names_side = "left",
+      row_names_gp = grid::gpar(fontsize = 9, fontface = "bold"),
+      column_names_gp = grid::gpar(fontsize = 9),
+      column_names_rot = 45,
+      column_title = "Sample composition of TCRdist3 clusters",
+      heatmap_legend_param = list(title = "Cells")
+    )
+
+    draw(ht, heatmap_legend_side = "right")
+  } else {
+    cat("*Insufficient cluster-by-sample matrix to generate the sample heatmap.*")
+  }
+
+} else {
+  cat("*No sample heatmap was produced because no TCRdist3 cluster/sample composition table was available.*")
+}
+
+```
+
+# Fraction with TCRdist3 annotation by grouping
+```{r}
+#| label: fraction-plots
+#| fig-height: 8
+#| fig-width: 10
+#| results: asis
+
+# 1. Advanced Plotting Function
+# We use a robust internal check to ensure we don't crash on empty data
+plot_tcrdist_enrichment <- function(df, col_name, title_txt, fill_color = "steelblue") {
+  if (!col_name %in% colnames(df)) return(NULL)
+  
+  # Calculate summary on the fly to ensure fresh data
+  plot_data <- df %>%
+    filter(!is.na(.data[[col_name]])) %>%
+    group_by(label = .data[[col_name]]) %>%
+    summarise(
+      n_total = n(),
+      n_clust = sum(!is.na(tcrdist_cluster)),
+      # Using our global safe_percent helper
+      frac = safe_percent(n_clust, n_total),
+      .groups = "drop"
+    ) %>%
+    filter(n_total >= params$min_cells_per_group)
+  
+  if (nrow(plot_data) < 2) return(NULL)
+
+  p <- plot_data %>%
+    mutate(label = fct_reorder(label, frac)) %>%
+    ggplot(aes(x = label, y = frac)) +
+    geom_col(fill = fill_color, width = 0.7) +
+    coord_flip() +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(
+      title = title_txt,
+      subtitle = paste0("Minimum cells per group: ", params$min_cells_per_group),
+      x = NULL, y = "Percentage of Clones in TCRdist3 Clusters"
+    ) +
+    theme_scratch_pub(params$base_size)
+  
+  return(p)
+}
+
+# 2. Execution Blocks
+# We wrap these in 'print' and 'cat' to ensure Quarto places them correctly in the HTML
+cat("### Structural Enrichment by Category\n")
+
+# A. By Cell State (Annotation)
+p1 <- plot_tcrdist_enrichment(export_cells, "annot", "Enrichment by Cell State", "darkseagreen")
+if (!is.null(p1)) {
+  print(p1)
+  save_plot_safe(p1, "tcrdist3_enrichment_annotation.png")
+}
+
+# B. By Clinical Condition (The most important for your Ovarian cohort)
+p2 <- plot_tcrdist_enrichment(export_cells, "condition", "Enrichment by Clinical Condition", "#fc8d62")
+if (!is.null(p2)) {
+  cat("\n\n")
+  print(p2)
+  save_plot_safe(p2, "tcrdist3_enrichment_condition.png")
+}
+
+# C. By Sample
+p3 <- plot_tcrdist_enrichment(export_cells, "sample", "Enrichment by Sample", "#8da0cb")
+if (!is.null(p3)) {
+  cat("\n\n")
+  print(p3)
+  save_plot_safe(p3, "tcrdist3_enrichment_sample.png")
+}
+```
+
+# association-plots
+```{r}
+#| label: association-plots
+#| results: asis
+#| fig-width: 10
+#| fig-height: 6
+
+cat("### TCRdist3 vs. Integration Scores\n")
+
+# Check if TCRi scores exist in the original metadata
+tcri_col <- intersect(c("tcri_score", "TCRi_score"), colnames(seu@meta.data))
+
+if (length(tcri_col) > 0 && any(!is.na(export_cells$tcrdist_score))) {
+  p_assoc <- export_cells %>%
+    mutate(tcri_score = seu@meta.data[[tcri_col[1]]][match(cell_id, rownames(seu@meta.data))]) %>%
+    filter(!is.na(tcri_score), !is.na(tcrdist_score)) %>%
+    ggplot(aes(x = tcri_score, y = tcrdist_score)) +
+    geom_point(alpha = 0.2, color = "midnightblue", size = 0.8) +
+    geom_smooth(method = "lm", color = "firebrick", linewidth = 1) +
+    labs(title = "TCRi vs. TCRdist3 Convergence", x = "TCRi Score", y = "TCRdist3 Neighborhood Score") +
+    theme_scratch_pub()
+  
+  print(p_assoc)
+} else {
+  cat("*TCRi scores not found or insufficient overlap for association plotting.*")
+}
+
+```
+
+# Neighbor summary
+```{r}
+#| label: neighbor-summary
+#| results: asis
+
+cat("### Structural Neighbor Connectivity\n")
+
+if (exists("tcrdist_neighbors") && nrow(tcrdist_neighbors) > 0) {
+  neigh_sum <- tibble(
+    Metric = c("Total Structural Edges", "Unique Clones in Networks", "Maximum Neighborhood Degree"),
+    Value = c(
+      nrow(tcrdist_neighbors),
+      length(unique(c(tcrdist_neighbors$source, tcrdist_neighbors$target))),
+      max(export_cells$tcrdist_score, na.rm = TRUE)
+    )
+  )
+  
+  print(kable(neigh_sum, caption = "Summary of TCR structural connectivity.") %>%
+    kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover")))
+} else {
+  cat("*No structural neighbors identified within the defined radius.*")
+}
+
+```
+
+# summary-tables-display
+```{r}
+#| label: summary-tables-display
+#| results: asis
+
+cat("### Top Structural Clusters\n")
+print(kableExtra::kbl(cluster_summary %>% head(20), caption = "Top clusters by cell count") %>%
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed")))
+
+
+# #| label: summary-tables-display
+# #| results: asis
+# 
+# if (isTRUE(params$show_summary_tables)) {
+#   
+#   # Helper function for professional styling
+#   render_adv_table <- function(df, cap) {
+#     print(kableExtra::kbl(df, caption = cap) %>%
+#       kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed")))
+#   }
+# 
+#   cat("### TCRdist3 High-Level Overview\n")
+#   render_adv_table(summary_rollup, "Analysis Statistics")
+#   cat("\n\n<br>\n\n")
+# 
+#   cat("### Top Structural TCRdist3 Clusters\n")
+#   render_adv_table(cluster_summary %>% dplyr::select(tcrdist_display, n_cells, frac) %>% head(20), 
+#                    "Top Clusters by Structural Similarity")
+#   cat("\n\n<br>\n\n")
+# 
+#   cat("### Integration Diagnostics\n")
+#   render_adv_table(merge_diag, "Metadata Mapping Diagnostics")
+# }
+
+```
+
+# warnings
+```{r}
+#| label: warnings
+#| results: asis
+
+warn_tbl <- tibble(
+  warning = c(
+    "Low TCRdist3 clustering",
+    "Low neighborhood scores",
+    "Missing Condition metadata",
+    "Missing Patient metadata"
+  ),
+  triggered = c(
+    mean(!is.na(export_cells$tcrdist_cluster)) < 0.2,
+    mean(export_cells$tcrdist_score > 0, na.rm = TRUE) < 0.2,
+    all(is.na(export_cells$condition)),
+    all(is.na(export_cells$patient))
+  ),
+  interpretation = c(
+    "Less than 20% of cells formed structural clusters. Consider increasing the TCRdist3 radius.",
+    "Most clones are structural singletons. Neighborhood connectivity is low for this cohort.",
+    "Condition metadata (e.g., Pre/Post) was not found in the final export table.",
+    "Patient ID metadata was not found in the final export table."
+  )
+) %>%
+  filter(triggered)
+
+if (nrow(warn_tbl) == 0) {
+  cat("### <span style='color:green;'>System Status: Optimized</span>\n")
+  cat("No major warnings triggered for TCRdist3 structural analysis.")
+} else {
+  cat("### <span style='color:orange;'>Analysis Warnings</span>\n")
+  print(kable(warn_tbl %>% select(-triggered), caption = "TCRdist3 specific diagnostics.") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover", "condensed")))
+}
+
+```
+
+# session info
+```{r}
+#| label: session-info
+writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.tcrdist3.txt"))
+sessionInfo()
+```
+
+
+

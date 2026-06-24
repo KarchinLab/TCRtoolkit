@@ -1,0 +1,1173 @@
+---
+title: "SCRATCH-TCR: Clonotype Clustering Consensus Report"
+author: "Syed Shujaat Ali Zaidi"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+    df-print: paged
+execute:
+  echo: false
+  warning: false
+  message: false
+
+params:
+  # ======================================================
+  # Inputs
+  # ======================================================
+  seurat_rds: "data/seurat_with_GIANA.rds"
+  export_cells_file: "data/giana_export_cells.tsv"
+  outdir: "Clonotype_Clustering_Consensus_Report"
+
+  # Optional method-specific exports
+  gliph_export_cells_file: ""
+  tcrdist_export_cells_file: ""
+  giana_export_cells_file: ""
+
+  # Optional previous outputs
+  metadata_file: ""
+  previous_summary_file: ""
+
+  # ======================================================
+  # Output controls
+  # ======================================================
+  data_dir: "data"
+  tables_dir: "tables"
+  figures_dir: "figures"
+  save_tables: true
+  save_figures: true
+  save_updated_seurat: true
+  figure_format: "png"
+  figure_width: 10
+  figure_height: 7
+  figure_dpi: 300
+  base_size: 12
+
+  # ======================================================
+  # Metadata mapping in Seurat/export
+  # ======================================================
+  label_col: ""
+  sample_col: "sample"
+  patient_col: "patient"
+  condition_col: "condition"
+  timepoint_col: "timepoint"
+  batch_col: "batch"
+  clone_id_col: "clone_id"
+  clone_size_col: "clone_size"
+  paired_tcr_col: "paired_tcr"
+  has_tcr_col: "has_tcr"
+
+  label_candidates: "annot;Annotation;celltype;CellType;predicted_labels;predicted.celltype.l2;predicted.celltype.l1;celltypist;celltypist_label;azimuth_labels;seurat_clusters"
+  sample_candidates: "sample;META_SAMPLE;orig.ident;sample_id;Sample;SampleID"
+  patient_candidates: "patient;META_PATIENT;patient_id;Patient;subject;donor;case_id"
+  condition_candidates: "condition;META_TIMECOND;Condition;group;Group;status"
+  timepoint_candidates: "timepoint;META_TIMEPOINT;Timepoint;visit;Visit;day;Day"
+  batch_candidates: "batch;META_BATCH;Batch;library;Library;run;Run;lane;Lane"
+  clone_id_candidates: "clone_id;CTaa;clonotype;clone"
+  clone_size_candidates: "clone_size;CloneSize;clone_n"
+  paired_tcr_candidates: "paired_tcr;paired;is_paired"
+  has_tcr_candidates: "has_tcr;hasTCR;tcr_positive"
+
+  # ======================================================
+  # Method-specific columns
+  # ======================================================
+  gliph_cluster_col: "gliph_cluster"
+  gliph_pattern_col: "gliph_pattern"
+  tcrdist_cluster_col: "tcrdist_cluster"
+  tcrdist_group_col: "tcrdist_group"
+  giana_cluster_col: "giana_cluster"
+  giana_group_col: "giana_group"
+
+  gliph_cluster_candidates: "gliph_cluster;cluster;gliph2_cluster"
+  gliph_pattern_candidates: "gliph_pattern;pattern;motif"
+  tcrdist_cluster_candidates: "tcrdist_cluster;cluster;tcrdist_cluster_id"
+  tcrdist_group_candidates: "tcrdist_group;group;metaclonotype"
+  giana_cluster_candidates: "giana_cluster;cluster;giana_cluster_id"
+  giana_group_candidates: "giana_group;group;meta_group"
+
+  # ======================================================
+  # Consensus controls
+  # ======================================================
+  consensus_min_methods: 2
+  prefer_method_order: "gliph;tcrdist;giana"
+  use_majority_vote: true
+  consensus_label_prefix: "CONS"
+  assign_singleton_consensus: false
+  min_cells_per_group: 10
+  min_cluster_size_plot: 3
+  top_n_clusters: 20
+  top_n_states_heatmap: 30
+
+  # ======================================================
+  # Embedding controls
+  # ======================================================
+  reduction_use: "umap"
+  make_umap_if_missing: false
+  umap_dims_max: 30
+  umap_nfeatures: 3000
+  raster_large_umap: true
+  label_clusters: true
+
+  # ======================================================
+  # Figure/report toggles
+  # ======================================================
+  show_consensus_umap: true
+  show_consensus_size_barplot: true
+  show_method_overlap_heatmap: true
+  show_method_cluster_count_barplot: true
+  show_consensus_annotation_heatmap: true
+  show_consensus_sample_heatmap: true
+  show_fraction_by_annotation: true
+  show_fraction_by_sample: true
+  show_fraction_by_condition: true
+  show_fraction_by_patient: true
+  show_method_presence_barplot: true
+  show_summary_tables: true
+
+  report_label: "Clonotype Clustering Consensus"
+---
+
+###############################################################################
+# Integrates clonotype clustering results from GLIPH2, TCRdist3, and GIANA into a unified comparison framework within the TCR–GEX Seurat object.
+# Quantifies overlap across methods and derives a consensus clonotype cluster assignment using configurable multi-method support rules.
+# Supports flexible operation when all three methods are available or when only a subset of methods could be run.
+# Generates publication-quality visualizations of method overlap, consensus cluster structure, and cluster distribution across cell states and samples.
+# Exports an updated Seurat object and downstream-ready tables for final repertoire analysis and reporting.
+###############################################################################
+
+# setup
+```{r}
+#| label: setup
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(forcats)
+  library(scales)
+  library(glue)
+  library(knitr)
+  library(kableExtra)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(patchwork)
+})
+
+options(stringsAsFactors = FALSE)
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$data_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$tables_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$figures_dir), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
+
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+      plot.subtitle = element_text(size = base_size, hjust = 0),
+      axis.title = element_text(face = "bold"),
+      axis.text = element_text(color = "black"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+      strip.background = element_rect(fill = "grey95", color = "grey80"),
+      strip.text = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.key = element_blank(),
+      plot.caption = element_text(size = base_size - 2, color = "grey40")
+    )
+}
+
+save_plot_safe <- function(plot_obj, filename,
+                           width = params$figure_width,
+                           height = params$figure_height,
+                           dpi = params$figure_dpi) {
+  if (!isTRUE(params$save_figures)) return(invisible(NULL))
+  ggsave(
+    filename = file.path(params$outdir, params$figures_dir, filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+save_table_safe <- function(df, filename) {
+  if (!isTRUE(params$save_tables)) return(invisible(NULL))
+  fwrite(df, file.path(params$outdir, params$tables_dir, filename), sep = "\t")
+}
+
+save_rds_safe <- function(obj, filename) {
+  if (!isTRUE(params$save_updated_seurat)) return(invisible(NULL))
+  saveRDS(obj, file.path(params$outdir, params$data_dir, filename))
+}
+
+safe_read_table <- function(path) {
+  if (is.null(path) || is.na(path) || path == "" || !file.exists(path)) return(NULL)
+  ext <- tolower(tools::file_ext(path))
+  if (ext %in% c("tsv", "tab", "txt")) {
+    fread(path, sep = "\t")
+  } else {
+    fread(path)
+  }
+}
+
+require_file <- function(path, msg = NULL) {
+  if (!file.exists(path)) stop(msg %||% paste("Missing required file:", path))
+  path
+}
+# 
+# first_existing_col <- function(df, preferred, candidates = character()) {
+#   if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+#   hits <- intersect(candidates, colnames(df))
+#   if (length(hits) > 0) return(hits[[1]])
+#   NULL
+# }
+
+
+safe_make_umap <- function(seu, reduction_name = "umap", dims = 1:30, nfeatures = 3000, seed = 1234) {
+  if ("RNA" %in% names(seu@assays)) DefaultAssay(seu) <- "RNA"
+  npcs <- min(max(dims), max(2, ncol(seu) - 1), 50)
+  nf <- min(nfeatures, nrow(seu))
+
+  if (!"pca" %in% Reductions(seu)) {
+    seu <- FindVariableFeatures(seu, nfeatures = nf, verbose = FALSE)
+    seu <- ScaleData(seu, verbose = FALSE)
+    seu <- RunPCA(seu, npcs = npcs, verbose = FALSE)
+  }
+
+  use_dims <- dims[dims <= npcs]
+  if (length(use_dims) < 2) use_dims <- 1:min(10, npcs)
+
+  seu <- FindNeighbors(seu, dims = use_dims, verbose = FALSE)
+  seu <- RunUMAP(seu, dims = use_dims, reduction.name = reduction_name, verbose = FALSE)
+  seu
+}
+
+make_method_signature <- function(gliph, tcrdist, giana) {
+  paste0(
+    "GLIPH:", ifelse(is.na(gliph) | gliph == "", "NA", gliph),
+    "|TCRdist:", ifelse(is.na(tcrdist) | tcrdist == "", "NA", tcrdist),
+    "|GIANA:", ifelse(is.na(giana) | giana == "", "NA", giana)
+  )
+}
+
+safe_n_unique <- function(x) length(unique(na.omit(x)))
+
+sanitize_param_string <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NULL)
+  trimws(gsub("\\u00A0", " ", as.character(x)))
+}
+
+normalize_colnames <- function(df) {
+  colnames(df) <- trimws(gsub("\\u00A0", " ", colnames(df)))
+  df
+}
+
+split_candidate_string <- function(x) {
+  if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(character())
+  x <- gsub('"', "", as.character(x))
+  x <- trimws(unlist(strsplit(x, ";", fixed = TRUE)))
+  x[nzchar(x)]
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  df <- normalize_colnames(df)
+  preferred <- sanitize_param_string(preferred)
+
+  if (length(candidates) == 1 && is.character(candidates)) {
+    candidates <- split_candidate_string(candidates)
+  }
+  candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
+
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+  NULL
+}
+
+
+```
+
+# Input Loading
+```{r}
+#| label: read-inputs
+require_file(params$seurat_rds, sprintf("Seurat RDS not found: %s", params$seurat_rds))
+
+seu <- readRDS(params$seurat_rds)
+export_cells_main <- safe_read_table(params$export_cells_file)
+gliph_export_tbl <- safe_read_table(params$gliph_export_cells_file)
+tcrdist_export_tbl <- safe_read_table(params$tcrdist_export_cells_file)
+giana_export_tbl <- safe_read_table(params$giana_export_cells_file)
+metadata_tbl <- safe_read_table(params$metadata_file)
+previous_summary_tbl <- safe_read_table(params$previous_summary_file)
+
+if (is.null(export_cells_main)) {
+  export_cells_main <- seu@meta.data %>% tibble::rownames_to_column("cell_id")
+}
+```
+
+# Resolve Columns
+```{r}
+#| label: resolve-columns
+md <- normalize_colnames(seu@meta.data)
+seu@meta.data <- md
+
+label_col <- first_existing_col(md, params$label_col, params$label_candidates)
+sample_col <- first_existing_col(md, params$sample_col, params$sample_candidates)
+patient_col <- first_existing_col(md, params$patient_col, params$patient_candidates)
+condition_col <- first_existing_col(md, params$condition_col, params$condition_candidates)
+timepoint_col <- first_existing_col(md, params$timepoint_col, params$timepoint_candidates)
+batch_col <- first_existing_col(md, params$batch_col, params$batch_candidates)
+clone_id_col <- first_existing_col(md, params$clone_id_col, params$clone_id_candidates)
+clone_size_col <- first_existing_col(md, params$clone_size_col, params$clone_size_candidates)
+paired_tcr_col <- first_existing_col(md, params$paired_tcr_col, params$paired_tcr_candidates)
+has_tcr_col <- first_existing_col(md, params$has_tcr_col, params$has_tcr_candidates)
+
+gliph_cluster_col <- first_existing_col(md, params$gliph_cluster_col, params$gliph_cluster_candidates)
+gliph_pattern_col <- first_existing_col(md, params$gliph_pattern_col, params$gliph_pattern_candidates)
+tcrdist_cluster_col <- first_existing_col(md, params$tcrdist_cluster_col, params$tcrdist_cluster_candidates)
+tcrdist_group_col <- first_existing_col(md, params$tcrdist_group_col, params$tcrdist_group_candidates)
+giana_cluster_col <- first_existing_col(md, params$giana_cluster_col, params$giana_cluster_candidates)
+giana_group_col <- first_existing_col(md, params$giana_group_col, params$giana_group_candidates)
+
+if (is.null(label_col)) stop("Could not resolve an annotation label column in Seurat metadata.")
+if (is.null(sample_col)) stop("Could not resolve sample column in Seurat metadata.")
+if (is.null(patient_col)) stop("Could not resolve patient column in Seurat metadata.")
+if (is.null(condition_col)) stop("Could not resolve condition column in Seurat metadata.")
+if (is.null(timepoint_col)) stop("Could not resolve timepoint column in Seurat metadata.")
+if (is.null(clone_id_col)) stop("Could not resolve a clone ID column in Seurat metadata.")
+if (is.null(clone_size_col)) stop("Could not resolve a clone size column in Seurat metadata.")
+if (is.null(has_tcr_col)) stop("Could not resolve a has_tcr column in Seurat metadata.")
+if (is.null(paired_tcr_col)) stop("Could not resolve a paired_tcr column in Seurat metadata.")
+
+if (!"META_SAMPLE" %in% colnames(seu@meta.data) && !is.null(sample_col)) {
+  seu$META_SAMPLE <- as.character(seu@meta.data[[sample_col]])
+}
+if (!"META_PATIENT" %in% colnames(seu@meta.data) && !is.null(patient_col)) {
+  seu$META_PATIENT <- as.character(seu@meta.data[[patient_col]])
+}
+if (!"META_TIMECOND" %in% colnames(seu@meta.data) && !is.null(condition_col)) {
+  seu$META_TIMECOND <- as.character(seu@meta.data[[condition_col]])
+}
+if (!"META_TIMEPOINT" %in% colnames(seu@meta.data) && !is.null(timepoint_col)) {
+  seu$META_TIMEPOINT <- as.character(seu@meta.data[[timepoint_col]])
+}
+if (!"META_BATCH" %in% colnames(seu@meta.data) && !is.null(batch_col)) {
+  seu$META_BATCH <- as.character(seu@meta.data[[batch_col]])
+}
+
+print(list(
+  resolved_label_col = label_col,
+  resolved_sample_col = sample_col,
+  resolved_patient_col = patient_col,
+  resolved_condition_col = condition_col,
+  resolved_timepoint_col = timepoint_col,
+  resolved_batch_col = batch_col,
+  resolved_clone_id_col = clone_id_col,
+  resolved_clone_size_col = clone_size_col,
+  resolved_paired_tcr_col = paired_tcr_col,
+  resolved_has_tcr_col = has_tcr_col,
+  resolved_gliph_cluster_col = gliph_cluster_col,
+  resolved_gliph_pattern_col = gliph_pattern_col,
+  resolved_tcrdist_cluster_col = tcrdist_cluster_col,
+  resolved_tcrdist_group_col = tcrdist_group_col,
+  resolved_giana_cluster_col = giana_cluster_col,
+  resolved_giana_group_col = giana_group_col
+))
+
+```
+
+# Ensure Embedding
+```{r}
+#| label: ensure-embedding
+reduction_to_use <- params$reduction_use
+if (!(reduction_to_use %in% names(seu@reductions)) && isTRUE(params$make_umap_if_missing)) {
+  seu <- safe_make_umap(
+    seu,
+    reduction_name = params$reduction_use,
+    dims = 1:params$umap_dims_max,
+    nfeatures = params$umap_nfeatures
+  )
+}
+if (!(reduction_to_use %in% names(seu@reductions))) {
+  reduction_to_use <- if ("umap" %in% names(seu@reductions)) "umap" else if ("tsne" %in% names(seu@reductions)) "tsne" else if ("pca" %in% names(seu@reductions)) "pca" else stop("No usable embedding found.")
+}
+```
+
+# Build Export table
+```{r}
+# Build Export table
+```{r}
+#| label: build-export
+embed_df <- as.data.frame(Embeddings(seu, reduction_to_use)) %>%
+  tibble::rownames_to_column("cell_id")
+
+export_cells <- seu@meta.data %>%
+  tibble::rownames_to_column("cell_id") %>%
+  transmute(
+    cell_id,
+    sample = if (!is.null(sample_col)) as.character(.data[[sample_col]]) else NA_character_,
+    patient = if (!is.null(patient_col)) as.character(.data[[patient_col]]) else NA_character_,
+    condition = if (!is.null(condition_col)) as.character(.data[[condition_col]]) else NA_character_,
+    timepoint = if (!is.null(timepoint_col)) as.character(.data[[timepoint_col]]) else NA_character_,
+    batch = if (!is.null(batch_col)) as.character(.data[[batch_col]]) else NA_character_,
+    annot = as.character(.data[[label_col]]),
+    clone_id = as.character(.data[[clone_id_col]]),
+    clone_size = suppressWarnings(as.numeric(.data[[clone_size_col]])),
+    has_tcr = as.logical(.data[[has_tcr_col]]),
+    paired_tcr = as.logical(.data[[paired_tcr_col]]),
+    gliph_cluster = if (!is.null(gliph_cluster_col)) as.character(.data[[gliph_cluster_col]]) else NA_character_,
+    gliph_pattern = if (!is.null(gliph_pattern_col)) as.character(.data[[gliph_pattern_col]]) else NA_character_,
+    tcrdist_cluster = if (!is.null(tcrdist_cluster_col)) as.character(.data[[tcrdist_cluster_col]]) else NA_character_,
+    tcrdist_group = if (!is.null(tcrdist_group_col)) as.character(.data[[tcrdist_group_col]]) else NA_character_,
+    giana_cluster = if (!is.null(giana_cluster_col)) as.character(.data[[giana_cluster_col]]) else NA_character_,
+    giana_group = if (!is.null(giana_group_col)) as.character(.data[[giana_group_col]]) else NA_character_
+  ) %>%
+  left_join(embed_df, by = "cell_id")
+
+if (!is.null(export_cells_main) && "cell_id" %in% colnames(export_cells_main)) {
+  export_cells_main2 <- export_cells_main %>%
+    mutate(cell_id = as.character(cell_id)) %>%
+    transmute(
+      cell_id = cell_id,
+      sample.main = if ("sample" %in% colnames(.)) as.character(sample) else NA_character_,
+      patient.main = if ("patient" %in% colnames(.)) as.character(patient) else NA_character_,
+      condition.main = if ("condition" %in% colnames(.)) as.character(condition) else NA_character_,
+      timepoint.main = if ("timepoint" %in% colnames(.)) as.character(timepoint) else NA_character_,
+      batch.main = if ("batch" %in% colnames(.)) as.character(batch) else NA_character_,
+      annot.main = if ("annot" %in% colnames(.)) as.character(annot) else NA_character_,
+      clone_id.main = if ("clone_id" %in% colnames(.)) as.character(clone_id) else NA_character_,
+      clone_size.main = if ("clone_size" %in% colnames(.)) suppressWarnings(as.numeric(clone_size)) else NA_real_,
+      has_tcr.main = if ("has_tcr" %in% colnames(.)) as.logical(has_tcr) else NA,
+      paired_tcr.main = if ("paired_tcr" %in% colnames(.)) as.logical(paired_tcr) else NA
+    )
+
+  export_cells <- export_cells %>%
+    left_join(export_cells_main2, by = "cell_id") %>%
+    mutate(
+      sample = coalesce(sample, sample.main),
+      patient = coalesce(patient, patient.main),
+      condition = coalesce(condition, condition.main),
+      timepoint = coalesce(timepoint, timepoint.main),
+      batch = coalesce(batch, batch.main),
+      annot = coalesce(annot, annot.main),
+      clone_id = coalesce(clone_id, clone_id.main),
+      clone_size = coalesce(clone_size, clone_size.main),
+      has_tcr = coalesce(has_tcr, has_tcr.main),
+      paired_tcr = coalesce(paired_tcr, paired_tcr.main)
+    ) %>%
+    select(-ends_with(".main"))
+}
+
+if (!is.null(gliph_export_tbl) && "cell_id" %in% colnames(gliph_export_tbl)) {
+  gliph_tbl2 <- gliph_export_tbl %>%
+    mutate(cell_id = as.character(cell_id)) %>%
+    transmute(
+      cell_id = cell_id,
+      gliph_cluster.gliph = if ("gliph_cluster" %in% colnames(.)) as.character(gliph_cluster) else NA_character_,
+      gliph_pattern.gliph = if ("gliph_pattern" %in% colnames(.)) as.character(gliph_pattern) else NA_character_,
+      gliph_group.gliph = if ("gliph_group" %in% colnames(.)) as.character(gliph_group) else NA_character_,
+      gliph_motif.gliph = if ("gliph_motif" %in% colnames(.)) as.character(gliph_motif) else NA_character_
+    )
+
+  export_cells <- export_cells %>%
+    left_join(gliph_tbl2, by = "cell_id") %>%
+    mutate(
+      gliph_cluster = coalesce(gliph_cluster, gliph_cluster.gliph),
+      gliph_pattern = coalesce(gliph_pattern, gliph_pattern.gliph, gliph_group.gliph, gliph_motif.gliph)
+    ) %>%
+    select(-gliph_cluster.gliph, -gliph_pattern.gliph, -gliph_group.gliph, -gliph_motif.gliph)
+}
+
+if (!is.null(tcrdist_export_tbl) && "cell_id" %in% colnames(tcrdist_export_tbl)) {
+  tcrdist_tbl2 <- tcrdist_export_tbl %>%
+    mutate(cell_id = as.character(cell_id)) %>%
+    transmute(
+      cell_id = cell_id,
+      tcrdist_cluster.tcrdist = if ("tcrdist_cluster" %in% colnames(.)) as.character(tcrdist_cluster) else NA_character_,
+      tcrdist_group.tcrdist = if ("tcrdist_group" %in% colnames(.)) as.character(tcrdist_group) else NA_character_,
+      metaclonotype.tcrdist = if ("metaclonotype" %in% colnames(.)) as.character(metaclonotype) else NA_character_
+    )
+
+  export_cells <- export_cells %>%
+    left_join(tcrdist_tbl2, by = "cell_id") %>%
+    mutate(
+      tcrdist_cluster = coalesce(tcrdist_cluster, tcrdist_cluster.tcrdist),
+      tcrdist_group = coalesce(tcrdist_group, tcrdist_group.tcrdist, metaclonotype.tcrdist)
+    ) %>%
+    select(-tcrdist_cluster.tcrdist, -tcrdist_group.tcrdist, -metaclonotype.tcrdist)
+}
+
+if (!is.null(giana_export_tbl) && "cell_id" %in% colnames(giana_export_tbl)) {
+  giana_tbl2 <- giana_export_tbl %>%
+    mutate(cell_id = as.character(cell_id)) %>%
+    transmute(
+      cell_id = cell_id,
+      giana_cluster.giana = if ("giana_cluster" %in% colnames(.)) as.character(giana_cluster) else NA_character_,
+      giana_group.giana = if ("giana_group" %in% colnames(.)) as.character(giana_group) else NA_character_
+    )
+
+  export_cells <- export_cells %>%
+    left_join(giana_tbl2, by = "cell_id") %>%
+    mutate(
+      giana_cluster = coalesce(giana_cluster, giana_cluster.giana),
+      giana_group = coalesce(giana_group, giana_group.giana)
+    ) %>%
+    select(-giana_cluster.giana, -giana_group.giana)
+}
+
+save_table_safe(export_cells, "consensus_export_cells.tsv")
+
+```
+
+# Method presence and Overlap
+```{r}
+#| label: method-presence
+export_cells <- export_cells %>%
+  mutate(
+    has_gliph = !is.na(gliph_cluster) | !is.na(gliph_pattern),
+    has_tcrdist = !is.na(tcrdist_cluster) | !is.na(tcrdist_group),
+    has_giana = !is.na(giana_cluster) | !is.na(giana_group),
+    n_methods = as.integer(has_gliph) + as.integer(has_tcrdist) + as.integer(has_giana),
+    method_signature = make_method_signature(gliph_cluster, tcrdist_cluster, giana_cluster)
+  )
+
+method_presence_summary <- tibble(
+  method = c("GLIPH2", "TCRdist3", "GIANA"),
+  n_cells = c(
+    sum(export_cells$has_gliph, na.rm = TRUE),
+    sum(export_cells$has_tcrdist, na.rm = TRUE),
+    sum(export_cells$has_giana, na.rm = TRUE)
+  ),
+  frac_cells = c(
+    mean(export_cells$has_gliph, na.rm = TRUE),
+    mean(export_cells$has_tcrdist, na.rm = TRUE),
+    mean(export_cells$has_giana, na.rm = TRUE)
+  )
+)
+save_table_safe(method_presence_summary, "method_presence_summary.tsv")
+
+pairwise_overlap_tbl <- tibble(
+  comparison = c("GLIPH2_vs_TCRdist3", "GLIPH2_vs_GIANA", "TCRdist3_vs_GIANA"),
+  n_overlap = c(
+    sum(export_cells$has_gliph & export_cells$has_tcrdist, na.rm = TRUE),
+    sum(export_cells$has_gliph & export_cells$has_giana, na.rm = TRUE),
+    sum(export_cells$has_tcrdist & export_cells$has_giana, na.rm = TRUE)
+  )
+)
+save_table_safe(pairwise_overlap_tbl, "pairwise_method_overlap.tsv")
+```
+
+# Build consensus labels
+```{r}
+#| label: build-consensus
+export_cells <- export_cells %>%
+  mutate(
+    gliph_use = ifelse(!is.na(gliph_cluster) & gliph_cluster != "", gliph_cluster,
+                       ifelse(!is.na(gliph_pattern) & gliph_pattern != "", paste0("PAT:", gliph_pattern), NA_character_)),
+    tcrdist_use = ifelse(!is.na(tcrdist_cluster) & tcrdist_cluster != "", tcrdist_cluster,
+                         ifelse(!is.na(tcrdist_group) & tcrdist_group != "", tcrdist_group, NA_character_)),
+    giana_use = ifelse(!is.na(giana_cluster) & giana_cluster != "", giana_cluster,
+                       ifelse(!is.na(giana_group) & giana_group != "", giana_group, NA_character_))
+  )
+
+consensus_base <- export_cells %>%
+  mutate(
+    n_methods_nonmissing = as.integer(!is.na(gliph_use)) + as.integer(!is.na(tcrdist_use)) + as.integer(!is.na(giana_use))
+  )
+
+if (isTRUE(params$use_majority_vote)) {
+  consensus_base <- consensus_base %>%
+    rowwise() %>%
+    mutate(
+      consensus_raw = {
+        vals <- c(gliph_use, tcrdist_use, giana_use)
+        vals <- vals[!is.na(vals) & vals != ""]
+        if (length(vals) < params$consensus_min_methods) {
+          if (isTRUE(params$assign_singleton_consensus) && length(vals) == 1) vals[1] else NA_character_
+        } else {
+          tab <- sort(table(vals), decreasing = TRUE)
+          names(tab)[1]
+        }
+      }
+    ) %>%
+    ungroup()
+} else {
+  consensus_base <- consensus_base %>%
+    mutate(
+      consensus_raw = ifelse(
+        n_methods_nonmissing >= params$consensus_min_methods,
+        method_signature,
+        ifelse(isTRUE(params$assign_singleton_consensus), coalesce(gliph_use, tcrdist_use, giana_use), NA_character_)
+      )
+    )
+}
+
+consensus_map <- consensus_base %>%
+  filter(!is.na(consensus_raw), consensus_raw != "") %>%
+  count(consensus_raw, name = "n_cells") %>%
+  arrange(desc(n_cells)) %>%
+  mutate(consensus_cluster = paste0(params$consensus_label_prefix, "_", row_number()))
+
+export_cells <- consensus_base %>%
+  left_join(consensus_map, by = "consensus_raw")
+
+save_table_safe(consensus_map, "consensus_cluster_map.tsv")
+```
+
+# Merge consensus back into Seurat
+```{r}
+#| label: merge-consensus-into-seurat
+seu_md <- seu@meta.data %>%
+  tibble::rownames_to_column("cell_id") %>%
+  left_join(
+    export_cells %>%
+      select(cell_id, consensus_raw, consensus_cluster, n_methods_nonmissing, method_signature),
+    by = "cell_id"
+  )
+
+rownames(seu_md) <- seu_md$cell_id
+seu_md$cell_id <- NULL
+seu@meta.data <- as.data.frame(seu_md)
+
+save_rds_safe(seu, "seurat_with_consensus_clonotype_clusters.rds")
+```
+
+# Summary Tables
+```{r}
+#| label: summary-tables
+summary_rollup <- tibble(
+  metric = c(
+    "Report label",
+    "Cells in Seurat",
+    "Cells with GLIPH2 annotation",
+    "Cells with TCRdist3 annotation",
+    "Cells with GIANA annotation",
+    "Cells with >=2 methods",
+    "Cells with consensus cluster",
+    "Unique consensus clusters",
+    "Unique annotations",
+    "Unique samples",
+    "Selected embedding"
+  ),
+  value = c(
+    params$report_label,
+    nrow(export_cells),
+    sum(export_cells$has_gliph, na.rm = TRUE),
+    sum(export_cells$has_tcrdist, na.rm = TRUE),
+    sum(export_cells$has_giana, na.rm = TRUE),
+    sum(export_cells$n_methods_nonmissing >= 2, na.rm = TRUE),
+    sum(!is.na(export_cells$consensus_cluster)),
+    safe_n_unique(export_cells$consensus_cluster),
+    safe_n_unique(export_cells$annot),
+    safe_n_unique(export_cells$sample),
+    reduction_to_use
+  )
+)
+save_table_safe(summary_rollup, "consensus_summary_rollup.tsv")
+
+consensus_cluster_summary <- export_cells %>%
+  filter(!is.na(consensus_cluster)) %>%
+  count(consensus_cluster, consensus_raw, n_methods_nonmissing, name = "n_cells") %>%
+  mutate(frac = n_cells / sum(n_cells)) %>%
+  arrange(desc(n_cells))
+save_table_safe(consensus_cluster_summary, "consensus_cluster_summary.tsv")
+
+annotation_consensus_summary <- export_cells %>%
+  filter(!is.na(annot)) %>%
+  group_by(annot) %>%
+  summarise(
+    n_cells = n(),
+    n_consensus = sum(!is.na(consensus_cluster)),
+    frac_consensus = n_consensus / n_cells,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(frac_consensus))
+save_table_safe(annotation_consensus_summary, "annotation_consensus_summary.tsv")
+
+sample_consensus_summary <- export_cells %>%
+  filter(!is.na(sample)) %>%
+  group_by(sample) %>%
+  summarise(
+    n_cells = n(),
+    n_consensus = sum(!is.na(consensus_cluster)),
+    frac_consensus = n_consensus / n_cells,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(frac_consensus))
+save_table_safe(sample_consensus_summary, "sample_consensus_summary.tsv")
+
+if (any(!is.na(export_cells$condition))) {
+  condition_consensus_summary <- export_cells %>%
+    filter(!is.na(condition)) %>%
+    group_by(condition) %>%
+    summarise(
+      n_cells = n(),
+      n_consensus = sum(!is.na(consensus_cluster)),
+      frac_consensus = n_consensus / n_cells,
+      .groups = "drop"
+    )
+  save_table_safe(condition_consensus_summary, "condition_consensus_summary.tsv")
+}
+
+if (any(!is.na(export_cells$patient))) {
+  patient_consensus_summary <- export_cells %>%
+    filter(!is.na(patient)) %>%
+    group_by(patient) %>%
+    summarise(
+      n_cells = n(),
+      n_consensus = sum(!is.na(consensus_cluster)),
+      frac_consensus = n_consensus / n_cells,
+      .groups = "drop"
+    )
+  save_table_safe(patient_consensus_summary, "patient_consensus_summary.tsv")
+}
+
+consensus_annotation_tbl <- export_cells %>%
+  filter(!is.na(consensus_cluster), !is.na(annot)) %>%
+  count(consensus_cluster, annot, name = "n_cells")
+save_table_safe(consensus_annotation_tbl, "consensus_cluster_annotation_composition.tsv")
+
+consensus_sample_tbl <- export_cells %>%
+  filter(!is.na(consensus_cluster), !is.na(sample)) %>%
+  count(consensus_cluster, sample, name = "n_cells")
+save_table_safe(consensus_sample_tbl, "consensus_cluster_sample_composition.tsv")
+```
+
+# Method Overlap matrix
+```{r}
+#| label: overlap-matrix
+
+print(table(export_cells$has_gliph, useNA = "ifany"))
+print(table(export_cells$has_tcrdist, useNA = "ifany"))
+print(table(export_cells$has_giana, useNA = "ifany"))
+
+print(colnames(export_cells))
+print(sum(!is.na(export_cells$giana_cluster)))
+print(sum(!is.na(export_cells$giana_group)))
+
+overlap_matrix <- matrix(
+  c(
+    sum(export_cells$has_gliph, na.rm = TRUE),
+    sum(export_cells$has_gliph & export_cells$has_tcrdist, na.rm = TRUE),
+    sum(export_cells$has_gliph & export_cells$has_giana, na.rm = TRUE),
+    sum(export_cells$has_tcrdist & export_cells$has_gliph, na.rm = TRUE),
+    sum(export_cells$has_tcrdist, na.rm = TRUE),
+    sum(export_cells$has_tcrdist & export_cells$has_giana, na.rm = TRUE),
+    sum(export_cells$has_giana & export_cells$has_gliph, na.rm = TRUE),
+    sum(export_cells$has_giana & export_cells$has_tcrdist, na.rm = TRUE),
+    sum(export_cells$has_giana, na.rm = TRUE)
+  ),
+  nrow = 3,
+  byrow = TRUE
+)
+rownames(overlap_matrix) <- c("GLIPH2", "TCRdist3", "GIANA")
+colnames(overlap_matrix) <- c("GLIPH2", "TCRdist3", "GIANA")
+save_table_safe(as.data.frame(overlap_matrix) %>% tibble::rownames_to_column("method"), "method_overlap_matrix.tsv")
+```
+
+# Report Overview
+```{r}
+#| label: overview
+kable(summary_rollup, caption = "High-level overview of consensus clonotype clustering.") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+# Method Presence Plots
+```{r}
+#| label: method-presence-plot
+if (isTRUE(params$show_method_presence_barplot)) {
+  p_presence <- method_presence_summary %>%
+    mutate(method = fct_reorder(method, frac_cells)) %>%
+    ggplot(aes(x = method, y = frac_cells)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "Method coverage across cells",
+      x = NULL,
+      y = "Fraction of cells annotated"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_presence
+  save_plot_safe(p_presence, glue("method_presence_barplot.{params$figure_format}"))
+}
+```
+
+# method-overlap-heatmap
+```{r}
+#| label: method-overlap-heatmap
+#| fig-width: 7
+#| fig-height: 6
+if (isTRUE(params$show_method_overlap_heatmap)) {
+
+  finite_vals <- as.numeric(overlap_matrix)
+  finite_vals <- finite_vals[is.finite(finite_vals)]
+
+  if (length(finite_vals) == 0) {
+    cat("No method-overlap heatmap was produced because the overlap matrix contained no finite values.\n")
+  } else {
+    min_val <- min(finite_vals, na.rm = TRUE)
+    max_val <- max(finite_vals, na.rm = TRUE)
+
+    if (max_val <= min_val) {
+      cat("Method-overlap heatmap was skipped because all overlap values were identical.\n\n")
+
+      print(
+        kableExtra::kbl(
+          as.data.frame(overlap_matrix) %>% tibble::rownames_to_column("method"),
+          caption = "Method overlap matrix."
+        ) %>%
+          kableExtra::kable_styling(
+            full_width = FALSE,
+            bootstrap_options = c("striped", "hover", "condensed")
+          )
+      )
+    } else {
+      mid_val <- (min_val + max_val) / 2
+      ht <- Heatmap(
+        overlap_matrix,
+        name = "Cells",
+        col = colorRamp2(
+          c(min_val, mid_val, max_val),
+          c("white", "gold", "firebrick")
+        ),
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        row_names_side = "left",
+        row_names_gp = grid::gpar(fontsize = 10),
+        column_names_gp = grid::gpar(fontsize = 10),
+        rect_gp = grid::gpar(col = "grey85"),
+        column_title = "Pairwise overlap between clustering methods",
+        heatmap_legend_param = list(title = "Cells")
+      )
+            
+
+      ComplexHeatmap::draw(ht)
+    }
+  }
+}
+```
+
+# Consensus UMAP and cluster sizes
+```{r}
+#| label: consensus-cluster-plots
+#| fig-width: 12
+#| fig-height: 9
+
+if (isTRUE(params$show_consensus_umap) && any(!is.na(export_cells$consensus_cluster))) {
+  p_consensus <- DimPlot(
+    seu,
+    reduction = reduction_to_use,
+    group.by = "consensus_cluster",
+    label = FALSE,
+    raster = isTRUE(params$raster_large_umap)
+  ) +
+    ggtitle("Embedding overlay: consensus clonotype clusters") +
+    theme_scratch_pub(params$base_size) +
+    theme(
+      legend.position = "none"
+    )
+
+  print(p_consensus)
+  save_plot_safe(
+    p_consensus,
+    glue("consensus_cluster_umap.{params$figure_format}"),
+    width = 10,
+    height = 8
+  )
+} else {
+  cat("No consensus UMAP was produced because no cells received a consensus cluster assignment.\n")
+}
+
+if (isTRUE(params$show_consensus_size_barplot) && nrow(consensus_cluster_summary) > 0) {
+  top_clusters_display <- params$top_n_clusters
+  if (is.null(top_clusters_display) || length(top_clusters_display) == 0 || is.na(top_clusters_display)) {
+    top_clusters_display <- 20
+  }
+  top_clusters_display <- as.integer(top_clusters_display)
+
+  top_clusters <- consensus_cluster_summary %>%
+    slice_head(n = top_clusters_display)
+
+  p_bar <- top_clusters %>%
+    mutate(consensus_cluster = fct_reorder(consensus_cluster, n_cells)) %>%
+    ggplot(aes(x = consensus_cluster, y = n_cells)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = scales::comma) +
+    labs(
+      title = "Top consensus clonotype clusters",
+      x = NULL,
+      y = "Cells"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_bar)
+  save_plot_safe(
+    p_bar,
+    glue("consensus_cluster_size_barplot.{params$figure_format}")
+  )
+} else {
+  cat("No consensus cluster-size barplot was produced because no consensus clusters were available.\n")
+}
+
+```
+
+## Method cluster count comparison
+```{r}
+#| label: method-cluster-count-plot
+if (isTRUE(params$show_method_cluster_count_barplot)) {
+  method_cluster_counts <- tibble(
+    method = c("GLIPH2", "TCRdist3", "GIANA", "Consensus"),
+    n_clusters = c(
+      safe_n_unique(export_cells$gliph_cluster),
+      safe_n_unique(export_cells$tcrdist_cluster),
+      safe_n_unique(export_cells$giana_cluster),
+      safe_n_unique(export_cells$consensus_cluster)
+    )
+  )
+  save_table_safe(method_cluster_counts, "method_cluster_counts.tsv")
+
+  p_counts <- method_cluster_counts %>%
+    mutate(method = fct_reorder(method, n_clusters)) %>%
+    ggplot(aes(x = method, y = n_clusters)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = comma) +
+    labs(
+      title = "Number of clusters detected by method",
+      x = NULL,
+      y = "Number of clusters"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_counts
+  save_plot_safe(p_counts, glue("method_cluster_count_barplot.{params$figure_format}"))
+}
+```
+
+# Consensus heatmaps
+```{r}
+#| label: consensus-annotation-heatmap
+if (isTRUE(params$show_consensus_annotation_heatmap) && nrow(consensus_annotation_tbl) > 0) {
+  top_clusters <- consensus_cluster_summary %>%
+    filter(n_cells >= params$min_cluster_size_plot) %>%
+    slice_head(n = params$top_n_clusters) %>%
+    pull(consensus_cluster)
+
+  mat_df <- consensus_annotation_tbl %>%
+    filter(consensus_cluster %in% top_clusters) %>%
+    pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+
+  rownames(mat_df) <- mat_df$consensus_cluster
+  mat_df$consensus_cluster <- NULL
+  mat <- as.matrix(mat_df)
+
+  max_mat <- max(mat, na.rm = TRUE)
+  if (!is.finite(max_mat) || max_mat <= 0) max_mat <- 1
+  
+  ht <- Heatmap(
+    mat,
+    name = "Cells",
+    col = circlize::colorRamp2(
+      c(0, max_mat / 2, max_mat),
+      c("white", "gold", "firebrick")
+    ),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    row_names_gp = grid::gpar(fontsize = 8),
+    column_names_gp = grid::gpar(fontsize = 9),
+    column_names_rot = 45,
+    rect_gp = grid::gpar(col = "grey85"),
+    column_title = "Annotation composition of consensus clusters",
+    heatmap_legend_param = list(title = "Cells")
+  )
+    
+  ComplexHeatmap::draw(ht)
+}
+
+```
+
+# consensus-sample-heatmap
+```{r}
+#| label: consensus-sample-heatmap
+if (isTRUE(params$show_consensus_sample_heatmap) && nrow(consensus_sample_tbl) > 0) {
+  top_clusters <- consensus_cluster_summary %>%
+    filter(n_cells >= params$min_cluster_size_plot) %>%
+    slice_head(n = params$top_n_clusters) %>%
+    pull(consensus_cluster)
+
+  mat_df <- consensus_sample_tbl %>%
+    filter(consensus_cluster %in% top_clusters) %>%
+    pivot_wider(names_from = sample, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+
+  rownames(mat_df) <- mat_df$consensus_cluster
+  mat_df$consensus_cluster <- NULL
+  mat <- as.matrix(mat_df)
+
+  max_mat <- max(mat, na.rm = TRUE)
+  if (!is.finite(max_mat) || max_mat <= 0) max_mat <- 1
+  
+  ht <- Heatmap(
+    mat,
+    name = "Cells",
+    col = circlize::colorRamp2(
+      c(0, max_mat / 2, max_mat),
+      c("white", "skyblue", "navy")
+    ),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    row_names_gp = grid::gpar(fontsize = 8),
+    column_names_gp = grid::gpar(fontsize = 8),
+    column_names_rot = 45,
+    rect_gp = grid::gpar(col = "grey85"),
+    column_title = "Sample composition of consensus clusters",
+    heatmap_legend_param = list(title = "Cells")
+  )
+    
+
+  ComplexHeatmap::draw(ht)
+}
+
+```
+
+```{r}
+#| label: fraction-plots
+plot_frac_by_group <- function(df, group_col, title_txt, filename) {
+  tmp <- df %>%
+    filter(!is.na(.data[[group_col]])) %>%
+    group_by(.data[[group_col]]) %>%
+    summarise(
+      n_cells = n(),
+      n_consensus = sum(!is.na(consensus_cluster)),
+      frac_consensus = n_consensus / n_cells,
+      .groups = "drop"
+    ) %>%
+    filter(n_cells >= params$min_cells_per_group)
+
+  if (nrow(tmp) == 0) return(NULL)
+
+  p <- tmp %>%
+    mutate(.group = fct_reorder(.data[[group_col]], frac_consensus)) %>%
+    ggplot(aes(x = .group, y = frac_consensus)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = title_txt,
+      x = NULL,
+      y = "Cells with consensus cluster"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p)
+  save_plot_safe(p, filename)
+  invisible(p)
+}
+
+if (isTRUE(params$show_fraction_by_annotation)) {
+  plot_frac_by_group(export_cells %>% rename(group_annot = annot), "group_annot",
+                     "Fraction of cells with consensus cluster by cell state",
+                     glue("consensus_fraction_by_annotation.{params$figure_format}"))
+}
+if (isTRUE(params$show_fraction_by_sample) && any(!is.na(export_cells$sample))) {
+  plot_frac_by_group(export_cells, "sample",
+                     "Fraction of cells with consensus cluster by sample",
+                     glue("consensus_fraction_by_sample.{params$figure_format}"))
+}
+if (isTRUE(params$show_fraction_by_condition) && any(!is.na(export_cells$condition))) {
+  plot_frac_by_group(export_cells, "condition",
+                     "Fraction of cells with consensus cluster by condition",
+                     glue("consensus_fraction_by_condition.{params$figure_format}"))
+}
+if (isTRUE(params$show_fraction_by_patient) && any(!is.na(export_cells$patient))) {
+  plot_frac_by_group(export_cells, "patient",
+                     "Fraction of cells with consensus cluster by patient",
+                     glue("consensus_fraction_by_patient.{params$figure_format}"))
+}
+```
+
+# Summary tables display
+```{r}
+#| label: summary-tables-display
+if (isTRUE(params$show_summary_tables)) {
+  kable(consensus_cluster_summary %>% slice_head(n = params$top_n_clusters),
+        caption = "Top consensus clonotype clusters by cell count.") %>%
+    kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+  kable(annotation_consensus_summary %>% slice_head(n = params$top_n_states_heatmap),
+        caption = "Top annotations ranked by consensus-clustered fraction.") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+  kable(method_presence_summary,
+        caption = "Method-level cell coverage summary.") %>%
+    kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+}
+```
+
+# Warnings
+```{r}
+#| label: warnings
+warn_tbl <- tibble(
+  warning = c(
+    "Only one method available",
+    "Few cells with consensus cluster",
+    "No condition metadata",
+    "No patient metadata",
+    "Consensus requires >=2 methods",
+    "Singleton consensus disabled"
+  ),
+  triggered = c(
+    sum(c(any(export_cells$has_gliph, na.rm = TRUE),
+          any(export_cells$has_tcrdist, na.rm = TRUE),
+          any(export_cells$has_giana, na.rm = TRUE))) < 2,
+    mean(!is.na(export_cells$consensus_cluster)) < 0.3,
+    all(is.na(export_cells$condition)),
+    all(is.na(export_cells$patient)),
+    params$consensus_min_methods > 1,
+    !isTRUE(params$assign_singleton_consensus)
+  ),
+  interpretation = c(
+    "Fewer than two clustering methods are available, so this module is acting as a method summary rather than a true consensus comparison.",
+    "Less than 30% of cells received a consensus cluster annotation under the current rules.",
+    "Condition-level summaries were skipped because condition metadata were unavailable.",
+    "Patient-level summaries were skipped because patient metadata were unavailable.",
+    "Consensus assignment requires support from at least the specified number of methods.",
+    "Cells supported by only one method are excluded from consensus assignment under current settings."
+  )
+) %>%
+  filter(triggered)
+
+if (nrow(warn_tbl) == 0) {
+  cat("No major automatic warnings were triggered under the current consensus clustering settings.")
+} else {
+  kable(warn_tbl %>% select(-triggered), caption = "Automatically generated consensus clustering warnings and notes.") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover", "condensed"))
+}
+```
+
+# session info
+```{r}
+#| label: session-info
+writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.consensus_clustering.txt"))
+sessionInfo()
+```

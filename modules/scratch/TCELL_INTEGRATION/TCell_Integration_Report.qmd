@@ -1,0 +1,2517 @@
+---
+title: "SCRATCH-TCR: T-Cell Integration Report"
+author: "Syed Shujaat Ali Zaidi"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+    df-print: paged
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  # ======================================================
+  # Inputs
+  # ======================================================
+  seurat_rds: "data/project_annotated_object.RDS"
+  contigs_file: "data/contigs_after_qc.tsv"
+  sample_sheet: ""
+  metadata_file: ""
+  outdir: "TCell_Integration_Report"
+
+  # Optional upstream artifacts
+  clonotypes_file: ""
+  vdj_qc_summary_file: ""
+  barcode_harmonization_required: true
+
+  # ======================================================
+  # General output controls
+  # ======================================================
+  data_dir: "data"
+  tables_dir: "tables"
+  figures_dir: "figures"
+  save_tables: true
+  save_figures: true
+  figure_format: "png"
+  figure_width: 10
+  figure_height: 7
+  figure_dpi: 300
+  base_size: 12
+
+  # ======================================================
+  # Metadata mapping in Seurat
+  # ======================================================
+  label_col: ""
+  sample_col: "orig.ident"
+  patient_col: ""
+  condition_col: ""
+  timepoint_col: ""
+  batch_col: ""
+
+  sample_candidates: !expr c("META_SAMPLE","orig.ident","sample","sample_id","Sample","SampleID")
+  patient_candidates: !expr c("META_PATIENT","patient_id","patient","Patient","subject","donor","case_id")
+  condition_candidates: !expr c("META_TIMECOND","condition","Condition","group","Group","status","timepoint","Timepoint")
+  timepoint_candidates: !expr c("META_TIMECOND","timepoint","Timepoint","visit","Visit","day","Day")
+  batch_candidates: !expr c("META_BATCH","batch","Batch","library","Library","run","Run","lane","Lane")
+
+  label_candidates: !expr c(
+    "predicted.celltype.l2","predicted.celltype.l1","azimuth_labels",
+    "celltypist","celltypist_label","majority_voting",
+    "scType","sctype","sctype_label","celltype","CellType","annot","Annotation")
+
+  # ======================================================
+  # Contig mapping
+  # ======================================================
+  contig_sample_col: "sample"
+  contig_barcode_col: "barcode"
+  contig_chain_col: "chain"
+  contig_cdr3_col: "cdr3"
+  contig_v_col: "v_gene"
+  contig_j_col: "j_gene"
+  contig_clone_col: "raw_clonotype_id"
+
+  contig_sample_candidates: !expr c("sample","sample_id","orig.ident")
+  contig_barcode_candidates: !expr c("barcode","cell_id","cell","CB")
+  contig_chain_candidates: !expr c("chain","locus")
+  contig_cdr3_candidates: !expr c("cdr3","cdr3_aa","CDR3aa","junction_aa")
+  contig_v_candidates: !expr c("v_gene","v_call","bestVGene")
+  contig_j_candidates: !expr c("j_gene","j_call","bestJGene")
+  contig_clone_candidates: !expr c("raw_clonotype_id","clonotype_id","clone_id")
+
+  # ======================================================
+  # Integration / scRepertoire controls
+  # ======================================================
+  cells_mode: "T-AB"           # T-AB / T-GD / both
+  filter_to_t_ab: true
+  combine_id: ""
+  clone_call_preference: "aa"  # aa / nt / strict / gene
+  keep_na_clonotypes: false
+
+  # ======================================================
+  # Barcode harmonization controls
+  # ======================================================
+  harmonize_apply_to: "tcr"    # tcr / seurat
+  harmonization_overlap_threshold: 0.80
+  minimum_final_overlap_fraction: 0.50
+  clean_duplicated_sample_prefix: true
+
+  # ======================================================
+  # T-cell subset controls
+  # ======================================================
+  subset_tcells: true
+  tcell_regex: "(?i)(^|[^A-Za-z])(t[ -]?cell|cd4|cd8|treg|trm|tem|naive t|memory t|exhausted t|cytotoxic t|gamma.?delta|gd t)([^A-Za-z]|$)"
+  use_ident_if_label_missing: true
+
+  # ======================================================
+  # UMAP / plotting controls
+  # ======================================================
+  reduction_use: "umap"
+  make_umap_if_missing: true
+  umap_dims_max: 30
+  umap_nfeatures: 3000
+  raster_large_umap: true
+  label_clusters: true
+
+  # ======================================================
+  # Clone summarization controls
+  # ======================================================
+  min_clone_size_plot: 2
+  top_n_clones_umap: 12
+  top_n_clone_table: 50
+  clone_bins_quantiles: !expr c(0, 0.2, 0.4, 0.6, 0.8, 1.0)
+  force_quantile_clone_bins: true
+
+  # ======================================================
+  # Report toggles
+  # ======================================================
+  show_barcode_harmonization: true
+  show_pairing_summary: true
+  show_clone_rank_plot: true
+  show_clone_state_heatmap: true
+  show_homeostasis: true
+  show_diversity: true
+  show_sample_panels: true
+  show_condition_panels: true
+  show_patient_panels: true
+  show_timepoint_panels: true
+  show_top_clone_umaps: true
+
+  report_label: "T-Cell Integration"
+---
+
+# ========================================================
+## Integrates post-QC VDJ contigs with an annotated Seurat object using scRepertoire and a robust fast-merge strategy.
+## Performs barcode cleaning, harmonization checks, and merge diagnostics to maximize reliable TCR↔GEX matching.
+## Adds per-cell TCR metadata to Seurat, including clonotype IDs, paired chains, and clone sizes.
+## Builds a T-cell-focused integrated object and generates high-quality embedding and clonotype visualizations.
+## Exports reusable RDS objects, diagnostic tables, and summary figures for downstream TCRi, CoNGA, and clustering modules.
+# ========================================================
+
+## setup
+```{r}
+#| label: setup
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
+  library(dplyr)
+  library(data.table)
+  library(stringr)
+  library(ggplot2)
+  library(patchwork)
+  library(tidyr)
+  library(purrr)
+  library(Matrix)
+  library(scales)
+  library(readr)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(forcats)
+  library(glue)
+  library(knitr)
+  library(kableExtra)
+  library(scRepertoire)
+})
+
+options(stringsAsFactors = FALSE)
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$data_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$tables_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$figures_dir), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
+
+# theme_scratch_pub <- function(base_size = 12) {
+#   theme_bw(base_size = base_size) +
+#     theme(
+#       plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+#       plot.subtitle = element_text(size = base_size, hjust = 0),
+#       axis.title = element_text(face = "bold"),
+#       axis.text = element_text(color = "black"),
+#       panel.grid.minor = element_blank(),
+#       panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+#       strip.background = element_rect(fill = "grey95", color = "grey80"),
+#       strip.text = element_text(face = "bold"),
+#       legend.title = element_text(face = "bold"),
+#       legend.key = element_blank(),
+#       plot.caption = element_text(size = base_size - 2, color = "grey40")
+#     )
+# }
+# theme_scratch_pub <- function(base_size = 12) {
+#   theme_bw(base_size = base_size) +
+#     theme(
+#       plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+#       plot.subtitle = element_text(size = base_size, hjust = 0),
+#       axis.title = element_text(face = "bold", size = base_size - 1),
+#       # Shrink Y-axis labels slightly
+#       axis.text.y = element_text(color = "black", size = base_size - 3), 
+#       # Rotate X-axis labels 45 degrees and shrink
+#       axis.text.x = element_text(color = "black", size = base_size - 3, angle = 45, hjust = 1), 
+#       panel.grid.minor = element_blank(),
+#       panel.grid.major = element_line(linewidth = 0.1, color = "grey90"),
+#       strip.background = element_rect(fill = "grey95", color = "grey80"),
+#       strip.text = element_text(face = "bold", size = base_size - 2),
+#       legend.title = element_text(face = "bold", size = base_size - 2),
+#       legend.text = element_text(size = base_size - 3),
+#       plot.caption = element_text(size = base_size - 4, color = "grey40")
+#     )
+# }
+
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+      plot.subtitle = element_text(size = base_size, hjust = 0),
+      axis.title = element_text(face = "bold", size = base_size - 1),
+      axis.text.y = element_text(color = "black", size = base_size - 3),
+      # Fix for Q2 & Q3: Smaller text and 45-degree rotation for X-axis
+      axis.text.x = element_text(color = "black", size = base_size - 3, angle = 45, hjust = 1),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.1, color = "grey90"),
+      strip.background = element_rect(fill = "grey95", color = "grey80"),
+      strip.text = element_text(face = "bold", size = base_size - 2),
+      legend.title = element_text(face = "bold", size = base_size - 2),
+      legend.text = element_text(size = base_size - 3),
+      legend.key = element_blank(),
+      plot.caption = element_text(size = base_size - 4, color = "grey40")
+    )
+}
+
+
+
+save_plot_safe <- function(plot_obj, filename,
+                           width = params$figure_width,
+                           height = params$figure_height,
+                           dpi = params$figure_dpi) {
+  if (!isTRUE(params$save_figures)) return(invisible(NULL))
+  ggsave(
+    filename = file.path(params$outdir, params$figures_dir, filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+save_table_safe <- function(df, filename) {
+  if (!isTRUE(params$save_tables)) return(invisible(NULL))
+  fwrite(df, file.path(params$outdir, params$tables_dir, filename), sep = "\t")
+}
+
+save_rds_safe <- function(obj, filename) {
+  saveRDS(obj, file.path(params$outdir, params$data_dir, filename))
+}
+
+safe_read_table <- function(path) {
+  if (is.null(path) || is.na(path) || path == "" || !file.exists(path)) return(NULL)
+  ext <- tolower(tools::file_ext(path))
+  if (ext %in% c("tsv", "tab", "txt")) {
+    fread(path, sep = "\t")
+  } else {
+    fread(path)
+  }
+}
+
+require_file <- function(path, msg = NULL) {
+  if (!file.exists(path)) stop(msg %||% paste("Missing required file:", path))
+  path
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+  NULL
+}
+
+has_col <- function(df, x) x %in% colnames(df)
+
+detect_label_col <- function(seu, preferred = "", candidates = character(), use_ident = TRUE) {
+  md <- seu@meta.data
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(md)) return(preferred)
+  hit <- intersect(candidates, colnames(md))
+  if (length(hit)) return(hit[1])
+  if (use_ident) {
+    seu$seurat_clusters <- as.character(Idents(seu))
+    return("seurat_clusters")
+  }
+  stop("Could not find a valid annotation column in Seurat metadata.")
+}
+
+choose_col <- function(df, primary = NULL, fallback = NULL) {
+  nm <- colnames(df)
+  if (!is.null(primary) && primary != "" && primary %in% nm) return(primary)
+  if (!is.null(fallback) && fallback != "" && fallback %in% nm) return(fallback)
+  NULL
+}
+
+clean_barcode <- function(x) sub("^([A-Za-z0-9-]+)_\\1_", "\\1_", x)
+
+combineTCR_safe <- function(contig_list, samples, ID = NULL, cells = "T-AB") {
+  fun <- get("combineTCR", asNamespace("scRepertoire"))
+  fml <- names(formals(fun))
+  args <- list()
+  if ("contig_list" %in% fml) args$contig_list <- contig_list else if ("contig.list" %in% fml) args$contig.list <- contig_list else args[[1]] <- contig_list
+  if ("samples" %in% fml) args$samples <- samples else args[[length(args)+1]] <- samples
+  if ("ID" %in% fml) args$ID <- ID else args[[length(args)+1]] <- ID
+  if ("cells" %in% fml) args$cells <- cells
+  do.call(fun, args)
+}
+
+dropNA_clonotypes <- function(combined_obj) {
+  detect_clone_col <- function(df) {
+    candidates <- c("CTaa", "CTnt", "CTstrict", "CTgene", "clonotype", "cloneType", "cloneCall")
+    hit <- intersect(candidates, colnames(df))
+    if (length(hit) == 0) return(NA_character_)
+    if ("CTaa" %in% hit) return("CTaa")
+    hit[1]
+  }
+  filter_one <- function(df) {
+    if (!is.data.frame(df) || nrow(df) == 0) return(df)
+    cc <- detect_clone_col(df)
+    if (is.na(cc)) return(df)
+    keep <- !is.na(df[[cc]]) & df[[cc]] != "" & df[[cc]] != "NA"
+    df[keep, , drop = FALSE]
+  }
+  if (is.list(combined_obj) && !is.data.frame(combined_obj)) {
+    out <- lapply(combined_obj, filter_one)
+    out <- out[vapply(out, nrow, integer(1)) > 0]
+    return(out)
+  }
+  filter_one(combined_obj)
+}
+
+safe_make_umap <- function(seu, reduction_name = "umap", dims = 1:30, nfeatures = 3000, seed = 1234) {
+  if ("RNA" %in% names(seu@assays)) DefaultAssay(seu) <- "RNA"
+  npcs <- min(max(dims), max(2, ncol(seu) - 1), 50)
+  nf <- min(nfeatures, nrow(seu))
+
+  if (!"pca" %in% Reductions(seu)) {
+    seu <- FindVariableFeatures(seu, nfeatures = nf, verbose = FALSE)
+    seu <- ScaleData(seu, verbose = FALSE)
+    seu <- RunPCA(seu, npcs = npcs, verbose = FALSE)
+  }
+
+  use_dims <- dims[dims <= npcs]
+  if (length(use_dims) < 2) use_dims <- 1:min(10, npcs)
+
+  seu <- FindNeighbors(seu, dims = use_dims, verbose = FALSE)
+  seu <- RunUMAP(seu, dims = use_dims, reduction.name = reduction_name, verbose = FALSE)
+  seu
+}
+
+score_harmonizer_candidates <- function(combined, seu, seu_sample_col = "orig.ident") {
+  md <- seu@meta.data
+  if (!seu_sample_col %in% colnames(md)) seu_sample_col <- "orig.ident"
+  if (!seu_sample_col %in% colnames(md)) stop("Seurat lacks sample column: ", seu_sample_col)
+
+  seu_barcodes <- colnames(seu)
+  all_tcr <- data.table::rbindlist(combined, idcol = "sample", fill = TRUE)
+  tcr_samples <- as.character(all_tcr$sample)
+  tcr_barcodes <- as.character(all_tcr$barcode)
+
+  add_minus1 <- function(x) ifelse(grepl("-\\d+$", x), x, paste0(x, "-1"))
+  remove_minus1 <- function(x) sub("-\\d+$", "", x)
+  prepend_us <- function(x, s) paste(s, x, sep = "_")
+  append_us <- function(x, s) paste(x, s, sep = "_")
+  prepend_dash <- function(x, s) paste(s, x, sep = "-")
+  append_dash <- function(x, s) paste(x, s, sep = "-")
+
+  candidates <- list(
+    list(name = "identity",        f = function(x, s) x),
+    list(name = "add_-1",          f = function(x, s) add_minus1(x)),
+    list(name = "remove_-1",       f = function(x, s) remove_minus1(x)),
+    list(name = "prepend_sample_", f = function(x, s) prepend_us(x, s)),
+    list(name = "append_sample_",  f = function(x, s) append_us(x, s)),
+    list(name = "prepend-sample",  f = function(x, s) prepend_dash(x, s)),
+    list(name = "append-sample",   f = function(x, s) append_dash(x, s))
+  )
+
+  score <- lapply(candidates, function(cn) {
+    xb <- cn$f(tcr_barcodes, tcr_samples)
+    inter <- length(intersect(xb, seu_barcodes))
+    data.frame(
+      transform = cn$name,
+      overlap = inter,
+      total = length(xb),
+      rate = ifelse(length(xb) > 0, inter / length(xb), NA_real_),
+      stringsAsFactors = FALSE
+    )
+  })
+  score <- do.call(rbind, score)
+  score <- score[order(-score$overlap, -score$rate), , drop = FALSE]
+  list(table = score, selected = score$transform[1])
+}
+
+harmonize_barcodes <- function(combined, seu, seu_sample_col = "orig.ident",
+                               apply_to = c("tcr", "seurat"), verbose = TRUE) {
+  apply_to <- match.arg(apply_to)
+  md <- seu@meta.data
+  seu_barcodes <- colnames(seu)
+
+  if (!seu_sample_col %in% colnames(md)) {
+    warning("'", seu_sample_col, "' not in Seurat metadata; falling back to 'orig.ident'.")
+    seu_sample_col <- "orig.ident"
+  }
+  if (!seu_sample_col %in% colnames(md)) stop("Seurat lacks a per-cell sample column.")
+
+  seu_samples_per_cell <- as.character(md[[seu_sample_col]])
+  all_tcr <- data.table::rbindlist(combined, idcol = "sample", fill = TRUE)
+  tcr_samples <- as.character(all_tcr$sample)
+  tcr_barcodes <- as.character(all_tcr$barcode)
+
+  add_minus1 <- function(x) ifelse(grepl("-\\d+$", x), x, paste0(x, "-1"))
+  remove_minus1 <- function(x) sub("-\\d+$", "", x)
+  prepend_us <- function(x, s) paste(s, x, sep = "_")
+  append_us <- function(x, s) paste(x, s, sep = "_")
+  prepend_dash <- function(x, s) paste(s, x, sep = "-")
+  append_dash <- function(x, s) paste(x, s, sep = "-")
+
+  cand <- list(
+    list(name = "identity",            side = "tcr",    f = function(x, s) x),
+    list(name = "add_-1",              side = "tcr",    f = function(x, s) add_minus1(x)),
+    list(name = "remove_-1",           side = "tcr",    f = function(x, s) remove_minus1(x)),
+    list(name = "prepend_sample_",     side = "tcr",    f = function(x, s) prepend_us(x, s)),
+    list(name = "append_sample_",      side = "tcr",    f = function(x, s) append_us(x, s)),
+    list(name = "prepend-sample",      side = "tcr",    f = function(x, s) prepend_dash(x, s)),
+    list(name = "append-sample",       side = "tcr",    f = function(x, s) append_dash(x, s)),
+    list(name = "seurat_add_-1",       side = "seurat", f = function(x, s) add_minus1(x)),
+    list(name = "seurat_remove_-1",    side = "seurat", f = function(x, s) remove_minus1(x)),
+    list(name = "seurat_prepend_",     side = "seurat", f = function(x, s) prepend_us(x, s)),
+    list(name = "seurat_append_",      side = "seurat", f = function(x, s) append_us(x, s)),
+    list(name = "seurat_prepend-",     side = "seurat", f = function(x, s) prepend_dash(x, s)),
+    list(name = "seurat_append-",      side = "seurat", f = function(x, s) append_dash(x, s))
+  )
+
+  score_tbl <- lapply(cand, function(cn) {
+    if (cn$side == "tcr") {
+      xb <- cn$f(tcr_barcodes, tcr_samples)
+      inter <- length(intersect(xb, seu_barcodes))
+      list(name = cn$name, side = "tcr", overlap = inter, total = length(xb))
+    } else {
+      if (apply_to != "seurat") return(NULL)
+      xb <- cn$f(seu_barcodes, seu_samples_per_cell)
+      inter <- length(intersect(tcr_barcodes, xb))
+      list(name = cn$name, side = "seurat", overlap = inter, total = length(xb))
+    }
+  })
+  score_tbl <- score_tbl[!sapply(score_tbl, is.null)]
+  score_tbl <- do.call(rbind, lapply(score_tbl, as.data.frame))
+  score_tbl$rate <- score_tbl$overlap / pmax(score_tbl$total, 1)
+
+  pool <- subset(score_tbl, side == apply_to)
+  best <- pool[which.max(pool$overlap), , drop = FALSE]
+
+  if (verbose) {
+    print(pool[order(-pool$overlap, -pool$rate), ], row.names = FALSE)
+  }
+
+  if (apply_to == "tcr") {
+    combined2 <- lapply(names(combined), function(sid) {
+      df <- combined[[sid]]
+      df$barcode <- switch(best$name,
+        "identity"        = df$barcode,
+        "add_-1"          = add_minus1(df$barcode),
+        "remove_-1"       = remove_minus1(df$barcode),
+        "prepend_sample_" = prepend_us(df$barcode, sid),
+        "append_sample_"  = append_us(df$barcode, sid),
+        "prepend-sample"  = prepend_dash(df$barcode, sid),
+        "append-sample"   = append_dash(df$barcode, sid),
+        df$barcode
+      )
+      df
+    })
+    names(combined2) <- names(combined)
+    return(list(combined = combined2, transformed = best$name, table = pool))
+  } else {
+    seu2 <- seu
+    new_names <- switch(best$name,
+      "seurat_add_-1"    = add_minus1(seu_barcodes),
+      "seurat_remove_-1" = remove_minus1(seu_barcodes),
+      "seurat_prepend_"  = prepend_us(seu_barcodes, seu_samples_per_cell),
+      "seurat_append_"   = append_us(seu_barcodes, seu_samples_per_cell),
+      "seurat_prepend-"  = prepend_dash(seu_barcodes, seu_samples_per_cell),
+      "seurat_append-"   = append_dash(seu_barcodes, seu_samples_per_cell),
+      seu_barcodes
+    )
+    colnames(seu2) <- new_names
+    return(list(seurat = seu2, transformed = best$name, table = pool))
+  }
+}
+
+subset_tcells_safe <- function(seu, label_col, regex, fallback_ident = TRUE) {
+  seu <- repair_seurat_for_subset(seu)
+
+  md <- seu@meta.data
+
+  if (!label_col %in% colnames(md)) {
+    if (fallback_ident) {
+      seu$seurat_clusters <- as.character(Idents(seu))
+      label_col <- "seurat_clusters"
+    } else {
+      stop("Label column not found: ", label_col)
+    }
+  }
+
+  labs <- as.character(md[[label_col]])
+  keep <- grepl(regex, labs, perl = TRUE)
+
+  if (sum(keep, na.rm = TRUE) == 0) {
+    warning("No T-cell subset matched the provided regex. Returning repaired original object.")
+    return(seu)
+  }
+
+  keep_cells <- rownames(md)[keep]
+  subset(seu, cells = keep_cells)
+}
+
+
+safe_percent <- function(x, denom) ifelse(denom > 0, x / denom, NA_real_)
+
+repair_seurat_for_subset <- function(seu) {
+  suppressPackageStartupMessages({
+    library(Seurat)
+    library(SeuratObject)
+    library(Matrix)
+  })
+
+  `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+  get_any_matrix <- function(obj, assay_name) {
+    out <- NULL
+
+    # Try Seurat v4/v5 standard accessors first
+    out <- tryCatch(Seurat::GetAssayData(obj, assay = assay_name, slot = "counts"), error = function(e) NULL)
+    if (!is.null(out) && nrow(out) > 0 && ncol(out) > 0) return(out)
+
+    out <- tryCatch(Seurat::GetAssayData(obj, assay = assay_name, slot = "data"), error = function(e) NULL)
+    if (!is.null(out) && nrow(out) > 0 && ncol(out) > 0) return(out)
+
+    # Try Seurat v5 layers explicitly
+    lyr_names <- tryCatch(SeuratObject::Layers(obj[[assay_name]]), error = function(e) NULL)
+    if (!is.null(lyr_names) && length(lyr_names) > 0) {
+      for (lyr in c("counts", "data", lyr_names)) {
+        out <- tryCatch(SeuratObject::LayerData(obj[[assay_name]], layer = lyr), error = function(e) NULL)
+        if (!is.null(out) && nrow(out) > 0 && ncol(out) > 0) return(out)
+      }
+    }
+
+    NULL
+  }
+
+  assay_names <- names(seu@assays)
+  if (length(assay_names) == 0) {
+    stop("No assays found in Seurat object.")
+  }
+
+  cat("repair_seurat_for_subset(): assays found ->", paste(assay_names, collapse = ", "), "\n")
+  cat("repair_seurat_for_subset(): default assay ->", DefaultAssay(seu), "\n")
+
+  mat <- NULL
+  chosen_assay <- NULL
+
+  assay_priority <- unique(c(DefaultAssay(seu), "RNA", assay_names))
+
+  for (aa in assay_priority) {
+    if (!aa %in% assay_names) next
+    candidate <- get_any_matrix(seu, aa)
+    if (!is.null(candidate)) {
+      mat <- candidate
+      chosen_assay <- aa
+      break
+    }
+  }
+
+  if (is.null(mat)) {
+    stop("Could not recover a usable assay matrix to rebuild Seurat object.")
+  }
+
+  cat("repair_seurat_for_subset(): using assay ->", chosen_assay, "\n")
+  cat("repair_seurat_for_subset(): matrix dim ->", nrow(mat), "x", ncol(mat), "\n")
+
+  # Ensure sparse matrix if possible
+  if (!inherits(mat, "dgCMatrix")) {
+    mat <- tryCatch(as(mat, "dgCMatrix"), error = function(e) Matrix::Matrix(as.matrix(mat), sparse = TRUE))
+  }
+
+  # Rebuild a minimal clean Seurat object
+  seu_new <- Seurat::CreateSeuratObject(
+    counts = mat,
+    assay = chosen_assay,
+    meta.data = seu@meta.data[colnames(mat), , drop = FALSE]
+  )
+
+  DefaultAssay(seu_new) <- chosen_assay
+
+  # Restore reductions only if cell order is compatible
+  red_names <- tryCatch(SeuratObject::Reductions(seu), error = function(e) character())
+  if (length(red_names) > 0) {
+    for (r in red_names) {
+      emb <- tryCatch(Seurat::Embeddings(seu, reduction = r), error = function(e) NULL)
+      if (is.null(emb)) next
+      common_cells <- intersect(colnames(seu_new), rownames(emb))
+      if (length(common_cells) < 2) next
+
+      emb2 <- emb[common_cells, , drop = FALSE]
+      seu_new <- subset(seu_new, cells = common_cells)
+
+      dr <- SeuratObject::CreateDimReducObject(
+        embeddings = emb2,
+        key = paste0(toupper(substr(r, 1, 1)), "_"),
+        assay = DefaultAssay(seu_new)
+      )
+      seu_new[[r]] <- dr
+    }
+  }
+
+  # Restore identities if possible
+  old_ids <- tryCatch(Idents(seu), error = function(e) NULL)
+  if (!is.null(old_ids)) {
+    old_ids <- as.character(old_ids)
+    names(old_ids) <- names(Idents(seu))
+    common_id_cells <- intersect(colnames(seu_new), names(old_ids))
+    if (length(common_id_cells) > 0) {
+      Idents(seu_new) <- factor(old_ids[colnames(seu_new)])
+    }
+  }
+
+  validObject(seu_new)
+  seu_new
+}
+
+```
+
+##loading inputs
+```{r}
+#| label: read-inputs
+require_file(params$seurat_rds, sprintf("Seurat RDS not found: %s", params$seurat_rds))
+require_file(params$contigs_file, sprintf("Filtered contigs file not found: %s", params$contigs_file))
+
+seu <- readRDS(params$seurat_rds)
+contigs_all_post <- safe_read_table(params$contigs_file) %>% as.data.frame()
+clonotypes_tbl <- safe_read_table(params$clonotypes_file)
+metadata_tbl <- safe_read_table(params$metadata_file)
+vdj_qc_summary_tbl <- safe_read_table(params$vdj_qc_summary_file)
+```
+
+## standardize-contigs
+```{r}
+#| label: standardize-contigs
+sample_col_ctg <- first_existing_col(contigs_all_post, params$contig_sample_col, params$contig_sample_candidates)
+barcode_col_ctg <- first_existing_col(contigs_all_post, params$contig_barcode_col, params$contig_barcode_candidates)
+chain_col_ctg <- first_existing_col(contigs_all_post, params$contig_chain_col, params$contig_chain_candidates)
+cdr3_col_ctg <- first_existing_col(contigs_all_post, params$contig_cdr3_col, params$contig_cdr3_candidates)
+v_col_ctg <- first_existing_col(contigs_all_post, params$contig_v_col, params$contig_v_candidates)
+j_col_ctg <- first_existing_col(contigs_all_post, params$contig_j_col, params$contig_j_candidates)
+clone_col_ctg <- first_existing_col(contigs_all_post, params$contig_clone_col, params$contig_clone_candidates)
+
+need_cols <- c(sample_col_ctg, barcode_col_ctg, chain_col_ctg, cdr3_col_ctg)
+if (any(is.null(need_cols))) stop("Could not resolve required contig columns.")
+
+contigs_all_post <- contigs_all_post %>%
+  mutate(
+    sample = as.character(.data[[sample_col_ctg]]),
+    barcode = as.character(.data[[barcode_col_ctg]]),
+    chain = as.character(.data[[chain_col_ctg]]),
+    cdr3 = as.character(.data[[cdr3_col_ctg]]),
+    v_gene = if (!is.null(v_col_ctg)) as.character(.data[[v_col_ctg]]) else NA_character_,
+    j_gene = if (!is.null(j_col_ctg)) as.character(.data[[j_col_ctg]]) else NA_character_,
+    raw_clonotype_id = if (!is.null(clone_col_ctg)) as.character(.data[[clone_col_ctg]]) else NA_character_
+  )
+head(contigs_all_post)
+
+```
+
+## SCrepertoire prepare
+```{r}
+#| label: prepare-screpertoire
+if (isTRUE(params$filter_to_t_ab) && any(contigs_all_post$chain %in% c("TRG", "TRD"))) {
+  contigs_all_post <- dplyr::filter(contigs_all_post, chain %in% c("TRA", "TRB"))
+}
+
+if (params$cells_mode == "T-GD") {
+  contigs_all_post <- dplyr::filter(contigs_all_post, chain %in% c("TRG", "TRD"))
+}
+if (params$cells_mode == "both") {
+  contigs_all_post <- dplyr::filter(contigs_all_post, chain %in% c("TRA", "TRB", "TRG", "TRD"))
+}
+
+contig_list <- split(contigs_all_post, contigs_all_post$sample)
+contig_list <- contig_list[vapply(contig_list, nrow, FUN.VALUE = integer(1)) > 0]
+stopifnot(length(contig_list) > 0)
+
+required_cols_screp <- c("barcode", "chain", "cdr3", "v_gene", "j_gene")
+bad <- names(contig_list)[!vapply(contig_list, function(df) all(required_cols_screp %in% names(df)), TRUE)]
+if (length(bad)) stop("Missing required columns for scRepertoire in: ", paste(bad, collapse = ", "))
+
+sample_vec <- names(contig_list)
+
+combined <- combineTCR_safe(
+  contig_list,
+  samples = sample_vec,
+  ID = if (params$combine_id == "") NULL else params$combine_id,
+  cells = params$cells_mode
+)
+
+if (!isTRUE(params$keep_na_clonotypes)) {
+  combined <- dropNA_clonotypes(combined)
+}
+
+save_rds_safe(combined, "scRepertoire_combined.rds")
+
+comb_cells <- vapply(combined, function(x) length(unique(as.character(x$barcode))), integer(1))
+comb_cells_tbl <- data.frame(sample = names(comb_cells), cells = comb_cells, stringsAsFactors = FALSE)
+save_table_safe(comb_cells_tbl, "scRepertoire_cells_per_sample.tsv")
+```
+
+## barcode-preclean
+```{r}
+#| label: barcode-preclean
+if (isTRUE(params$clean_duplicated_sample_prefix)) {
+  for (s in names(combined)) combined[[s]]$barcode <- clean_barcode(as.character(combined[[s]]$barcode))
+  contigs_all_post$barcode <- clean_barcode(as.character(contigs_all_post$barcode))
+}
+
+seu_md <- seu@meta.data
+
+sample_col_seu <- first_existing_col(seu_md, params$sample_col, params$sample_candidates)
+patient_col_seu <- first_existing_col(seu_md, params$patient_col, params$patient_candidates)
+condition_col_seu <- first_existing_col(seu_md, params$condition_col, params$condition_candidates)
+timepoint_col_seu <- first_existing_col(seu_md, params$timepoint_col, params$timepoint_candidates)
+batch_col_seu <- first_existing_col(seu_md, params$batch_col, params$batch_candidates)
+label_col_seu <- detect_label_col(
+  seu,
+  preferred = params$label_col,
+  candidates = params$label_candidates,
+  use_ident = params$use_ident_if_label_missing
+)
+
+if (!"META_SAMPLE" %in% colnames(seu@meta.data) && !is.null(sample_col_seu)) seu$META_SAMPLE <- as.character(seu@meta.data[[sample_col_seu]])
+if (!"META_PATIENT" %in% colnames(seu@meta.data) && !is.null(patient_col_seu)) seu$META_PATIENT <- as.character(seu@meta.data[[patient_col_seu]])
+if (!"META_TIMECOND" %in% colnames(seu@meta.data) && !is.null(condition_col_seu)) seu$META_TIMECOND <- as.character(seu@meta.data[[condition_col_seu]])
+if (!"META_BATCH" %in% colnames(seu@meta.data) && !is.null(batch_col_seu)) seu$META_BATCH <- as.character(seu@meta.data[[batch_col_seu]])
+```
+
+## Sample Matching Diagnostic
+
+```{r}
+#| label: sample-matching-diagnostic
+#| warning: false
+
+# VDJ samples (from filtered contigs)
+vdj_samples <- sort(unique(as.character(contigs_all_post$sample)))
+
+# GEX samples (from Seurat metadata)
+gex_samples <- if (!is.null(sample_col_seu)) {
+  sort(unique(as.character(seu@meta.data[[sample_col_seu]])))
+} else {
+  sort(unique(as.character(seu@meta.data[["orig.ident"]])))
+}
+
+matched_samples  <- intersect(vdj_samples, gex_samples)
+vdj_only_samples <- setdiff(vdj_samples, gex_samples)
+gex_only_samples <- setdiff(gex_samples, vdj_samples)
+
+# Format helper: collapse to comma-separated string, or "none"
+fmt <- function(x) if (length(x) == 0) "none" else paste(x, collapse = ", ")
+
+cat("=== Sample Matching Diagnostic ===\n\n")
+cat(sprintf("VDJ samples   (%d): %s\n", length(vdj_samples),  fmt(vdj_samples)))
+cat(sprintf("GEX samples   (%d): %s\n", length(gex_samples),  fmt(gex_samples)))
+cat("\n")
+cat(sprintf("Matched       (%d): %s\n", length(matched_samples),  fmt(matched_samples)))
+cat(sprintf("VDJ-only      (%d): %s\n", length(vdj_only_samples), fmt(vdj_only_samples)))
+cat(sprintf("GEX-only      (%d): %s\n", length(gex_only_samples), fmt(gex_only_samples)))
+cat("\n")
+
+if (length(matched_samples) == 0) {
+  stop("No VDJ samples match any GEX sample. Check that sample names are consistent between contigs_after_qc.tsv and the Seurat object.")
+}
+
+cat(sprintf(">>> Proceeding with %d matched sample(s): %s\n", length(matched_samples), fmt(matched_samples)))
+
+if (length(vdj_only_samples) > 0) {
+  cat(sprintf("\nWARNING: %d VDJ sample(s) have no matching GEX data and will be excluded: %s\n",
+              length(vdj_only_samples), fmt(vdj_only_samples)))
+}
+if (length(gex_only_samples) > 0) {
+  cat(sprintf("\nNOTE: %d GEX sample(s) have no VDJ data. TCR metrics will be NA for these cells: %s\n",
+              length(gex_only_samples), fmt(gex_only_samples)))
+}
+
+# Build a summary table for display
+sample_match_tbl <- data.frame(
+  sample = c(matched_samples, vdj_only_samples, gex_only_samples),
+  has_vdj = c(rep(TRUE,  length(matched_samples)),
+              rep(TRUE,  length(vdj_only_samples)),
+              rep(FALSE, length(gex_only_samples))),
+  has_gex = c(rep(TRUE,  length(matched_samples)),
+              rep(FALSE, length(vdj_only_samples)),
+              rep(TRUE,  length(gex_only_samples))),
+  status  = c(rep("Matched",  length(matched_samples)),
+              rep("VDJ only", length(vdj_only_samples)),
+              rep("GEX only", length(gex_only_samples))),
+  stringsAsFactors = FALSE
+)
+sample_match_tbl <- sample_match_tbl[order(sample_match_tbl$status, sample_match_tbl$sample), ]
+knitr::kable(sample_match_tbl, row.names = FALSE,
+             caption = "Sample presence in VDJ and GEX data")
+```
+
+## overlap-preharm
+```{r}
+#| label: overlap-preharm
+tcr_barcodes_pre <- unique(unlist(lapply(combined, `[[`, "barcode")))
+overlap_pre <- length(intersect(tcr_barcodes_pre, colnames(seu)))
+total_pre <- length(tcr_barcodes_pre)
+overlap_rate_pre <- ifelse(total_pre > 0, overlap_pre / total_pre, NA_real_)
+
+harmonizer_score <- score_harmonizer_candidates(
+  combined,
+  seu,
+  seu_sample_col = sample_col_seu %||% "orig.ident"
+)
+
+save_table_safe(harmonizer_score$table, "barcode_harmonizer_candidates.tsv")
+head(harmonizer_score$table)
+
+selected_transform <- harmonizer_score$selected
+writeLines(as.character(selected_transform), file.path(params$outdir, params$tables_dir, "barcode_harmonizer_selected.txt"))
+head(as.character(selected_transform))
+```
+
+## harmonization-apply
+```{r}
+#| label: harmonization-apply
+if (isTRUE(params$barcode_harmonization_required) &&
+    length(tcr_barcodes_pre) > 0 &&
+    overlap_rate_pre < params$harmonization_overlap_threshold) {
+
+  hz <- harmonize_barcodes(
+    combined,
+    seu,
+    seu_sample_col = sample_col_seu %||% "orig.ident",
+    apply_to = params$harmonize_apply_to,
+    verbose = FALSE
+  )
+
+  if (params$harmonize_apply_to == "tcr") {
+    combined <- hz$combined
+    selected_transform <- hz$transformed
+  } else {
+    seu <- hz$seurat
+    selected_transform <- hz$transformed
+  }
+
+  save_table_safe(hz$table, "barcode_harmonizer_candidates_applied.tsv")
+  writeLines(as.character(selected_transform), file.path(params$outdir, params$tables_dir, "barcode_harmonizer_applied.txt"))
+}
+```
+
+## overlap-postharm
+```{r}
+#| label: overlap-postharm
+tcr_barcodes <- unique(unlist(lapply(combined, `[[`, "barcode")))
+seu_cells <- colnames(seu)
+final_overlap <- length(intersect(tcr_barcodes, seu_cells))
+total_tcr <- length(tcr_barcodes)
+final_overlap_rate <- ifelse(total_tcr > 0, final_overlap / total_tcr, NA_real_)
+
+if (length(tcr_barcodes) > 0) {
+  stopifnot(final_overlap_rate >= params$minimum_final_overlap_fraction)
+}
+
+barcode_overlap_summary <- data.frame(
+  stage = c("pre_harmonization", "post_harmonization"),
+  tcr_unique_barcodes = c(total_pre, total_tcr),
+  overlap_with_seurat = c(overlap_pre, final_overlap),
+  overlap_rate = c(overlap_rate_pre, final_overlap_rate),
+  stringsAsFactors = FALSE
+)
+save_table_safe(barcode_overlap_summary, "barcode_overlap_summary.tsv")
+```
+
+## overlap-by-sample
+```{r}
+#| label: overlap-by-sample
+barcode_overlap_by_sample <- rbindlist(lapply(names(combined), function(sid) {
+  bcs <- unique(as.character(combined[[sid]]$barcode))
+  ov <- sum(bcs %in% seu_cells)
+  data.table(
+    sample = sid,
+    tcr_barcodes = length(bcs),
+    overlap = ov,
+    unmapped = length(bcs) - ov,
+    overlap_rate = ifelse(length(bcs) > 0, ov / length(bcs), NA_real_)
+  )
+}))
+save_table_safe(barcode_overlap_by_sample, "barcode_overlap_by_sample.tsv")
+```
+
+## meta-key-audit
+```{r}
+#| label: meta-key-audit
+md <- seu@meta.data
+
+meta_key_audit <- data.frame(
+  key = c("label", "sample", "patient", "condition", "timepoint", "batch"),
+  column = c(
+    label_col_seu,
+    sample_col_seu,
+    patient_col_seu,
+    condition_col_seu,
+    timepoint_col_seu,
+    batch_col_seu
+  ),
+  n_unique = c(
+    if (!is.null(label_col_seu)) length(unique(md[[label_col_seu]])) else NA_integer_,
+    if (!is.null(sample_col_seu)) length(unique(md[[sample_col_seu]])) else NA_integer_,
+    if (!is.null(patient_col_seu)) length(unique(md[[patient_col_seu]])) else NA_integer_,
+    if (!is.null(condition_col_seu)) length(unique(md[[condition_col_seu]])) else NA_integer_,
+    if (!is.null(timepoint_col_seu)) length(unique(md[[timepoint_col_seu]])) else NA_integer_,
+    if (!is.null(batch_col_seu)) length(unique(md[[batch_col_seu]])) else NA_integer_
+  ),
+  stringsAsFactors = FALSE
+)
+save_table_safe(meta_key_audit, "meta_key_choices.tsv")
+```
+
+## build-per-cell-tcr
+```{r}
+#| label: build-per-cell-tcr
+dt <- as.data.table(contigs_all_post)
+
+for (cc in c("sample", "barcode", "chain", "cdr3", "v_gene", "j_gene", "raw_clonotype_id")) {
+  if (cc %in% names(dt)) set(dt, j = cc, value = as.character(dt[[cc]]))
+}
+
+alpha_chains <- c("TRA")
+beta_chains <- c("TRB")
+
+alpha_by_cell <- dt[chain %in% alpha_chains & !is.na(cdr3),
+  .(cdr3a = cdr3[1L], trav = v_gene[1L], traj = j_gene[1L]),
+  by = .(sample, barcode)
+]
+beta_by_cell <- dt[chain %in% beta_chains & !is.na(cdr3),
+  .(cdr3b = cdr3[1L], trbv = v_gene[1L], trbj = j_gene[1L]),
+  by = .(sample, barcode)
+]
+
+per_cell <- merge(alpha_by_cell, beta_by_cell, by = c("sample", "barcode"), all = TRUE)
+
+per_cell[, CTaa := fifelse(
+  !is.na(cdr3a) & !is.na(cdr3b), paste0("A:", cdr3a, "|B:", cdr3b),
+  fifelse(!is.na(cdr3b), paste0("B:", cdr3b),
+    fifelse(!is.na(cdr3a), paste0("A:", cdr3a), NA_character_)
+  )
+)]
+
+clone_source <- dt[, .(clone_id_raw = raw_clonotype_id[1L]), by = .(sample, barcode)]
+per_cell <- merge(per_cell, clone_source, by = c("sample", "barcode"), all.x = TRUE)
+```
+
+## evaluate-merge-strategies
+```{r}
+#| label: evaluate-merge-strategies
+seu_md_dt <- as.data.table(seu@meta.data, keep.rownames = "cell_id")
+seu_md_dt[, cell_id := as.character(cell_id)]
+
+if (!"META_SAMPLE" %in% colnames(seu_md_dt)) {
+  if (!is.null(sample_col_seu)) {
+    seu_md_dt[, META_SAMPLE := as.character(get(sample_col_seu))]
+  } else {
+    seu_md_dt[, META_SAMPLE := NA_character_]
+  }
+}
+
+seu_k1 <- seu_md_dt[, .(cell_id, META_SAMPLE, key = cell_id)]
+seu_k1[, strategy := "cell_id==barcode"]
+tcr_k1 <- per_cell[, .(key = barcode, sample, barcode)]
+
+seu_k2 <- copy(seu_md_dt)
+seu_k2[, key := sub("^[^_]+_", "", cell_id)]
+seu_k2 <- seu_k2[, .(cell_id, META_SAMPLE, key)]
+seu_k2[, strategy := "strip_prefix_before_underscore"]
+tcr_k2 <- tcr_k1
+
+seu_k3 <- seu_md_dt[, .(cell_id, META_SAMPLE, key = cell_id)]
+seu_k3[, strategy := "cell_id==SAMPLE_BARCODE"]
+tcr_k3 <- copy(per_cell)[, key := paste(sample, barcode, sep = "_")]
+tcr_k3 <- tcr_k3[, .(key, sample, barcode)]
+
+seu_k4 <- seu_md_dt[, .(cell_id, META_SAMPLE, key = paste(META_SAMPLE, cell_id, sep = "_"))]
+seu_k4[, strategy := "META_SAMPLE+cell_id==sample+barcode"]
+tcr_k4 <- tcr_k3
+
+eval_strategy <- function(seu_tbl, tcr_tbl) {
+  s <- unique(seu_tbl$key)
+  t <- unique(tcr_tbl$key)
+  length(intersect(s, t))
+}
+
+counts <- data.table(
+  strategy = c(seu_k1$strategy[1], seu_k2$strategy[1], seu_k3$strategy[1], seu_k4$strategy[1]),
+  matches = c(
+    eval_strategy(seu_k1, tcr_k1),
+    eval_strategy(seu_k2, tcr_k2),
+    eval_strategy(seu_k3, tcr_k3),
+    eval_strategy(seu_k4, tcr_k4)
+  )
+)
+setorder(counts, -matches)
+best <- counts$strategy[1]
+
+idx3 <- which(counts$strategy == "cell_id==SAMPLE_BARCODE")
+if (length(idx3) && counts$matches[idx3] >= 0.98 * counts$matches[1] &&
+    best != "cell_id==SAMPLE_BARCODE") {
+  best <- "cell_id==SAMPLE_BARCODE"
+}
+
+pick <- function(s) switch(
+  s,
+  "cell_id==barcode"                    = list(seu = seu_k1, tcr = tcr_k1),
+  "strip_prefix_before_underscore"      = list(seu = seu_k2, tcr = tcr_k2),
+  "cell_id==SAMPLE_BARCODE"             = list(seu = seu_k3, tcr = tcr_k3),
+  "META_SAMPLE+cell_id==sample+barcode" = list(seu = seu_k4, tcr = tcr_k4)
+)
+
+pt <- pick(best)
+seu_tbl <- pt$seu
+tcr_tbl <- pt$tcr
+
+n_seu_keys <- length(unique(seu_md_dt$cell_id))
+n_tcr_keys <- nrow(unique(per_cell[, .(sample, barcode)]))
+best_matches <- eval_strategy(seu_tbl, tcr_tbl)
+theoretical_max_pct <- 100 * n_tcr_keys / n_seu_keys
+
+diag_tbl <- copy(counts)
+diag_tbl[, total_cells := n_seu_keys]
+diag_tbl[, total_vdj := n_tcr_keys]
+diag_tbl[, pct_cells_matched := round(100 * matches / total_cells, 2)]
+diag_tbl[, pct_tcr_matched := round(100 * matches / total_vdj, 2)]
+
+save_table_safe(diag_tbl, "tcr_merge_match_diagnostics.tsv")
+```
+
+## per-sample-coverage
+```{r}
+#| label: per-sample-coverage
+matched_keys <- intersect(unique(seu_tbl$key), unique(tcr_tbl$key))
+
+seu_sample_raw <- seu@meta.data$META_SAMPLE %||% seu@meta.data[[sample_col_seu]]
+seu_sample_base <- sub("\\.\\d+$", "", as.character(seu_sample_raw))
+seu_by_samp <- data.table(sample = seu_sample_base)[, .N, by = sample]
+setnames(seu_by_samp, "N", "gex_cells")
+
+tcr_by_samp <- unique(per_cell[, .(sample, barcode)])[, .N, by = sample]
+setnames(tcr_by_samp, "N", "tcr_cells")
+
+matched_by_samp <- tcr_tbl[key %in% matched_keys, .N, by = sample]
+setnames(matched_by_samp, "N", "matched_keys")
+
+per_sample_cov <- Reduce(function(x, y) merge(x, y, by = "sample", all = TRUE),
+                         list(seu_by_samp, tcr_by_samp, matched_by_samp))
+
+for (cc in c("gex_cells", "tcr_cells", "matched_keys")) {
+  if (!cc %in% names(per_sample_cov)) per_sample_cov[[cc]] <- 0L
+}
+per_sample_cov[is.na(gex_cells), gex_cells := 0L]
+per_sample_cov[is.na(tcr_cells), tcr_cells := 0L]
+per_sample_cov[is.na(matched_keys), matched_keys := 0L]
+
+per_sample_cov[, `:=`(
+  gex_cov_pct = ifelse(gex_cells > 0, round(100 * matched_keys / gex_cells, 2), 0),
+  tcr_cov_pct = ifelse(tcr_cells > 0, round(100 * matched_keys / tcr_cells, 2), 0)
+)]
+
+save_table_safe(per_sample_cov, "tcr_merge_per_sample_coverage.tsv")
+```
+
+## final-merge-to-seurat
+```{r}
+#| label: final-merge-to-seurat
+tcr_annot <- merge(
+  per_cell,
+  tcr_tbl[, .(key, sample, barcode)],
+  by = c("sample", "barcode"),
+  all.y = TRUE
+)
+
+bring <- c("CTaa", "cdr3a", "cdr3b", "trav", "traj", "trbv", "trbj", 
+           "clone_id_raw", "patient_id", "condition", "timepoint")
+
+for (col in bring) if (!col %in% names(tcr_annot)) tcr_annot[[col]] <- NA_character_
+
+seu_join <- merge(
+  seu_tbl[, .(cell_id, META_SAMPLE, key)],
+  tcr_annot[, c("key", bring), with = FALSE],
+  by = "key",
+  all.x = TRUE
+)
+
+setkey(seu_join, cell_id)
+md_dt <- as.data.table(seu@meta.data, keep.rownames = "cell_id")
+setkey(md_dt, cell_id)
+md_dt <- seu_join[md_dt]
+
+# Map metadata to internal keys
+if (has_col(md_dt, "patient_id")) md_dt[, META_PATIENT := coalesce(as.character(META_PATIENT), as.character(patient_id))]
+if (has_col(md_dt, "condition"))  md_dt[, META_TIMECOND := coalesce(as.character(META_TIMECOND), as.character(condition))]
+if (has_col(md_dt, "timepoint"))  md_dt[, META_TIMECOND := coalesce(as.character(META_TIMECOND), as.character(timepoint))]
+
+md_dt[, clone_id := CTaa]
+md_dt[, has_tcr := !is.na(clone_id)]
+md_dt[, clone_size := ifelse(is.na(clone_id), 0L, .N), by = clone_id]
+md_dt[, paired_tcr := !is.na(cdr3a) & !is.na(cdr3b)]
+
+# ROBUST BINNING: Always create clone_size_bin
+md_dt[, clone_size_bin := NA_character_]
+if (any(md_dt$clone_size > 0)) {
+  try({
+    qs <- unique(quantile(md_dt$clone_size[md_dt$clone_size > 0], probs = params$clone_bins_quantiles, na.rm = TRUE))
+    if (length(qs) >= 2) {
+      md_dt[clone_size > 0, clone_size_bin := as.character(cut(clone_size, breaks = qs, include.lowest = TRUE))]
+    } else {
+      md_dt[clone_size > 0, clone_size_bin := as.character(clone_size)]
+    }
+  }, silent = TRUE)
+}
+
+rn <- md_dt$cell_id
+md_dt$cell_id <- NULL
+seu@meta.data <- as.data.frame(md_dt)
+rownames(seu@meta.data) <- rn
+
+save_rds_safe(seu, "seurat_with_TCR_integrated.rds")
+
+```
+
+## screpertoire-merge
+```{r}
+#| label: screpertoire-merge-optional
+
+screp_combined_expression_ok <- FALSE
+seu_screp <- seu
+screp_error_msg <- NA_character_
+screp_note <- NA_character_
+
+message("--- Attempting optional scRepertoire::combineExpression integration ---")
+
+
+rebuild_clean_seurat_for_screp <- function(obj) {
+  suppressPackageStartupMessages({
+    library(Seurat)
+    library(SeuratObject)
+    library(Matrix)
+  })
+
+  `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+  get_any_matrix <- function(x, assay_name) {
+    out <- tryCatch(Seurat::GetAssayData(x, assay = assay_name, slot = "counts"), error = function(e) NULL)
+    if (!is.null(out) && nrow(out) > 0 && ncol(out) > 0) return(out)
+
+    out <- tryCatch(Seurat::GetAssayData(x, assay = assay_name, slot = "data"), error = function(e) NULL)
+    if (!is.null(out) && nrow(out) > 0 && ncol(out) > 0) return(out)
+
+    lyr_names <- tryCatch(SeuratObject::Layers(x[[assay_name]]), error = function(e) NULL)
+    if (!is.null(lyr_names) && length(lyr_names) > 0) {
+      for (lyr in c("counts", "data", lyr_names)) {
+        out <- tryCatch(SeuratObject::LayerData(x[[assay_name]], layer = lyr), error = function(e) NULL)
+        if (!is.null(out) && nrow(out) > 0 && ncol(out) > 0) return(out)
+      }
+    }
+
+    NULL
+  }
+
+  assay_names <- names(obj@assays)
+  assay_priority <- unique(c(DefaultAssay(obj), "RNA", assay_names))
+
+  mat <- NULL
+  chosen_assay <- NULL
+
+  for (aa in assay_priority) {
+    if (!aa %in% assay_names) next
+    candidate <- get_any_matrix(obj, aa)
+    if (!is.null(candidate)) {
+      mat <- candidate
+      chosen_assay <- aa
+      break
+    }
+  }
+
+  if (is.null(mat)) {
+    stop("Could not recover a usable assay matrix for scRepertoire repair.")
+  }
+
+  if (!inherits(mat, "dgCMatrix")) {
+    mat <- tryCatch(as(mat, "dgCMatrix"), error = function(e) Matrix::Matrix(as.matrix(mat), sparse = TRUE))
+  }
+
+  md <- obj@meta.data[colnames(mat), , drop = FALSE]
+
+  seu_new <- Seurat::CreateSeuratObject(
+    counts = mat,
+    assay = chosen_assay,
+    meta.data = md
+  )
+
+  DefaultAssay(seu_new) <- chosen_assay
+
+  old_ids <- tryCatch(Idents(obj), error = function(e) NULL)
+  if (!is.null(old_ids)) {
+    old_ids <- as.character(old_ids)
+    names(old_ids) <- names(Idents(obj))
+    ids_vec <- old_ids[colnames(seu_new)]
+    names(ids_vec) <- colnames(seu_new)
+    Idents(seu_new) <- factor(ids_vec)
+  }
+
+  validObject(seu_new)
+  seu_new
+}
+
+combineExpression_safe <- function(combined_obj, seu_obj, clone_call = "aa", add_label = FALSE) {
+  fun <- get("combineExpression", asNamespace("scRepertoire"))
+  fml <- names(formals(fun))
+
+  args <- list(
+    combined_obj,
+    seu_obj
+  )
+
+  if ("cloneCall" %in% fml)  args$cloneCall  <- clone_call
+  if ("proportion" %in% fml) args$proportion <- FALSE
+  if ("addLabel" %in% fml)   args$addLabel   <- add_label
+  if ("filterMode" %in% fml) args$filterMode <- "union"
+  if ("cloneSize" %in% fml) {
+    args$cloneSize <- c(Single = 1, Small = 5, Medium = 20, Large = 100, Hyperexpanded = 500)
+  }
+
+  do.call(fun, args)
+}
+
+tryCatch({
+
+  combined_harmonized <- lapply(names(combined), function(sid) {
+    df <- combined[[sid]]
+
+    if (best == "cell_id==SAMPLE_BARCODE") {
+      df$barcode <- paste(sid, df$barcode, sep = "_")
+    } else if (best == "META_SAMPLE+cell_id==sample+barcode") {
+      df$barcode <- df$barcode
+    } else if (best == "strip_prefix_before_underscore") {
+      df$barcode <- df$barcode
+    } else {
+      df$barcode <- df$barcode
+    }
+
+    df$barcode <- as.character(df$barcode)
+    df
+  })
+  names(combined_harmonized) <- names(combined)
+
+  # rebuild minimal valid Seurat object
+  seu_screp <- rebuild_clean_seurat_for_screp(seu_screp)
+
+  if (inherits(seu_screp[[DefaultAssay(seu_screp)]], "Assay5")) {
+    seu_screp <- JoinLayers(seu_screp)
+  }
+
+  # IMPORTANT: rename Seurat cells to exact barcode namespace expected by scRepertoire
+  all_tcr_barcodes <- unique(unlist(lapply(combined_harmonized, function(x) as.character(x$barcode))))
+  seurat_cells <- colnames(seu_screp)
+
+  make_target_names <- function(cells, sample_vec, strategy) {
+    if (strategy == "cell_id==SAMPLE_BARCODE") {
+      return(paste(sample_vec, cells, sep = "_"))
+    } else if (strategy == "META_SAMPLE+cell_id==sample+barcode") {
+      return(paste(sample_vec, cells, sep = "_"))
+    } else {
+      return(cells)
+    }
+  }
+
+  sample_for_cells <- NULL
+  if ("META_SAMPLE" %in% colnames(seu_screp@meta.data)) {
+    sample_for_cells <- as.character(seu_screp@meta.data$META_SAMPLE)
+  } else if (!is.null(sample_col_seu) && sample_col_seu %in% colnames(seu_screp@meta.data)) {
+    sample_for_cells <- as.character(seu_screp@meta.data[[sample_col_seu]])
+  } else {
+    sample_for_cells <- rep(NA_character_, ncol(seu_screp))
+  }
+
+  candidate_names <- make_target_names(seurat_cells, sample_for_cells, best)
+
+  overlap_now <- sum(candidate_names %in% all_tcr_barcodes)
+  overlap_identity <- sum(seurat_cells %in% all_tcr_barcodes)
+
+  if (overlap_now > overlap_identity) {
+    colnames(seu_screp) <- candidate_names
+  }
+
+  # keep only exact overlap cells to avoid scRepertoire metadata write-back issues
+  common_cells <- intersect(colnames(seu_screp), all_tcr_barcodes)
+  if (length(common_cells) == 0) {
+    stop("No overlapping cell names between Seurat object and combined_harmonized barcodes after harmonization.")
+  }
+
+  seu_screp <- subset(seu_screp, cells = common_cells)
+
+  # final identity repair after subset
+  ids_vec <- as.character(Idents(seu_screp))
+  names(ids_vec) <- colnames(seu_screp)
+  Idents(seu_screp) <- factor(ids_vec)
+
+  validObject(seu_screp)
+
+  seu_screp <- combineExpression_safe(
+    combined_harmonized,
+    seu_screp,
+    clone_call = switch(
+      params$clone_call_preference,
+      aa = "aa",
+      nt = "nt",
+      strict = "strict",
+      gene = "gene",
+      "aa"
+    ),
+    add_label = FALSE
+  )
+
+  added_cols <- intersect(
+    c("CTaa", "CTnt", "CTstrict", "CTgene", "strict", "aa", "nt", "gene"),
+    colnames(seu_screp@meta.data)
+  )
+
+  if (length(added_cols) > 0) {
+    screp_combined_expression_ok <- TRUE
+    screp_note <- paste("combineExpression succeeded; detected columns:", paste(added_cols, collapse = ", "))
+    message("SUCCESS: scRepertoire integration complete.")
+    save_rds_safe(seu_screp, "seurat_with_scRepertoire_combineExpression.rds")
+  } else {
+    screp_error_msg <- "combineExpression returned without error, but no expected scRepertoire clonotype columns were added to Seurat metadata."
+    screp_note <- "Optional scRepertoire path returned no usable metadata columns."
+    message("WARNING: scRepertoire ran but did not add expected metadata columns.")
+  }
+
+}, error = function(e) {
+  screp_error_msg <<- conditionMessage(e)
+  screp_note <<- "Optional scRepertoire path failed; validated fast-merge outputs remain available."
+  message("scRepertoire Error: ", screp_error_msg)
+})
+
+screp_diag_tbl <- tibble::tibble(
+  metric = c(
+    "scRepertoire combineExpression status",
+    "selected_merge_strategy",
+    "selected_barcode_transform",
+    "clone_call_preference",
+    "tcr_barcodes_post_harmonization",
+    "seurat_cells_before_subset",
+    "final_overlap",
+    "final_overlap_rate",
+    "scRepertoire_note",
+    "scRepertoire_error"
+  ),
+  value = c(
+    ifelse(screp_combined_expression_ok, "SUCCESS", "FAILED_OR_EMPTY"),
+    as.character(best),
+    as.character(selected_transform),
+    as.character(params$clone_call_preference),
+    as.character(length(tcr_barcodes)),
+    as.character(ncol(seu)),
+    as.character(final_overlap),
+    sprintf("%.4f", final_overlap_rate),
+    as.character(screp_note %||% ""),
+    as.character(screp_error_msg %||% "")
+  )
+)
+
+save_table_safe(screp_diag_tbl, "scRepertoire_combineExpression_diagnostics.tsv")
+
+if (isTRUE(screp_combined_expression_ok)) {
+  cat("scRepertoire::combineExpression completed successfully.\n")
+} else {
+  cat("scRepertoire::combineExpression did not produce usable output.\n")
+  if (!is.na(screp_error_msg) && nzchar(screp_error_msg)) {
+    cat("Reason:\n")
+    cat(screp_error_msg, "\n")
+  }
+  cat("The pipeline continued using the validated fast-merge TCR↔GEX integration outputs.\n")
+}
+```
+
+
+## subset-tcells
+```{r}
+#| label: subset-tcells
+
+
+seu_t <- repair_seurat_for_subset(seu)
+
+if (isTRUE(params$subset_tcells)) {
+  seu_t <- subset_tcells_safe(
+    seu_t,
+    label_col = label_col_seu,
+    regex = params$tcell_regex,
+    fallback_ident = params$use_ident_if_label_missing
+  )
+}
+
+reduction_to_use <- params$reduction_use
+if (!(reduction_to_use %in% names(seu_t@reductions)) && isTRUE(params$make_umap_if_missing)) {
+  seu_t <- safe_make_umap(
+    seu_t,
+    reduction_name = params$reduction_use,
+    dims = 1:params$umap_dims_max,
+    nfeatures = params$umap_nfeatures
+  )
+}
+if (!(reduction_to_use %in% names(seu_t@reductions))) {
+  reduction_to_use <- if ("umap" %in% names(seu_t@reductions)) "umap" else if ("tsne" %in% names(seu_t@reductions)) "tsne" else if ("pca" %in% names(seu_t@reductions)) "pca" else stop("No usable embedding found.")
+}
+
+```
+
+### tcell-clone-size
+```{r}
+#| label: tcell-clone-size
+if (!"clone_size" %in% colnames(seu_t@meta.data)) {
+  seu_t$clone_size <- 0L
+} else {
+  seu_t$clone_size[is.na(seu_t$clone_size)] <- 0L
+}
+
+save_rds_safe(seu_t, "seurat_tcells_with_TCR.rds")
+```
+
+## tcell-summaries
+```{r}
+#| label: tcell-summaries
+sample_col_export <- choose_col(seu_t@meta.data, "META_SAMPLE", sample_col_seu)
+patient_col_export <- choose_col(seu_t@meta.data, "META_PATIENT", patient_col_seu)
+condition_col_export <- choose_col(seu_t@meta.data, "META_TIMECOND", condition_col_seu)
+timepoint_col_export <- choose_col(seu_t@meta.data, "META_TIMECOND", timepoint_col_seu)
+
+umap_df <- as.data.frame(Embeddings(seu_t, reduction_to_use)) %>%
+  tibble::rownames_to_column("cell_id")
+
+export_cells <- seu_t@meta.data %>%
+  tibble::rownames_to_column("cell_id") %>%
+  dplyr::transmute(
+    cell_id,
+    sample = if (!is.null(sample_col_export)) .data[[sample_col_export]] else NA_character_,
+    patient = if (!is.null(patient_col_export)) .data[[patient_col_export]] else NA_character_,
+    condition = if (!is.null(condition_col_export)) .data[[condition_col_export]] else NA_character_,
+    annot = .data[[label_col_seu]],
+    CTaa = dplyr::coalesce(.data[["CTaa"]], NA_character_),
+    clone_id = dplyr::coalesce(.data[["clone_id"]], NA_character_),
+    clone_size = as.integer(.data[["clone_size"]]),
+    clone_size_bin = .data[["clone_size_bin"]],
+    paired_tcr = .data[["paired_tcr"]],
+    has_tcr = .data[["has_tcr"]]
+  ) %>%
+  left_join(umap_df, by = "cell_id")
+
+extra_cols <- intersect(c("cdr3a", "cdr3b", "trav", "trbv", "traj", "trbj"), colnames(seu_t@meta.data))
+if (length(extra_cols) > 0) {
+  export_cells <- export_cells %>%
+    left_join(
+      seu_t@meta.data %>%
+        tibble::rownames_to_column("cell_id") %>%
+        dplyr::select(dplyr::all_of(c("cell_id", extra_cols))),
+      by = "cell_id"
+    )
+}
+save_table_safe(export_cells, "tcr_export_cells_with_embedding.tsv")
+
+tcell_per_annotation <- export_cells %>%
+  count(annot, has_tcr, paired_tcr, name = "n_cells") %>%
+  group_by(annot) %>%
+  mutate(frac = n_cells / sum(n_cells)) %>%
+  ungroup()
+save_table_safe(tcell_per_annotation, "tcell_per_annotation_summary.tsv")
+
+top_clones_tbl <- export_cells %>%
+  filter(!is.na(clone_id), clone_id != "", clone_size >= params$min_clone_size_plot) %>%
+  count(sample, annot, clone_id, clone_size, name = "n_cells") %>%
+  arrange(desc(clone_size), desc(n_cells)) %>%
+  slice_head(n = params$top_n_clone_table)
+save_table_safe(top_clones_tbl, "tcell_top_clones.tsv")
+
+clone_rank_tbl <- export_cells %>%
+  filter(!is.na(clone_id), clone_id != "", clone_size >= params$min_clone_size_plot) %>%
+  count(sample, clone_id, name = "n_cells") %>%
+  group_by(sample) %>%
+  arrange(desc(n_cells), .by_group = TRUE) %>%
+  mutate(rank = row_number()) %>%
+  ungroup()
+save_table_safe(clone_rank_tbl, "tcell_clone_rank_abundance.tsv")
+
+clone_state_tbl <- export_cells %>%
+  filter(!is.na(clone_id), clone_id != "") %>%
+  count(clone_id, annot, name = "n_cells")
+save_table_safe(clone_state_tbl, "tcell_clone_state_occupancy.tsv")
+
+summary_rollup <- tibble(
+  metric = c(
+    "TCR barcodes pre-harmonization",
+    "Pre-harmonization overlap",
+    "Post-harmonization overlap",
+    "Final overlap rate",
+    "Selected merge strategy",
+    "T-cell subset cells",
+    "TCR-positive T cells",
+    "Paired TCR T cells"
+  ),
+  value = c(
+    total_pre,
+    overlap_pre,
+    final_overlap,
+    sprintf("%.2f%%", 100 * final_overlap_rate),
+    best,
+    ncol(seu_t),
+    sum(seu_t$has_tcr, na.rm = TRUE),
+    sum(seu_t$paired_tcr, na.rm = TRUE)
+  )
+)
+save_table_safe(summary_rollup, "tcell_summary_rollup.tsv")
+```
+
+## overview
+```{r}
+#| label: overview
+overview_tbl <- tibble(
+  Metric = c(
+    "Report label",
+    "Input Seurat cells",
+    "Input filtered contigs",
+    "Samples represented in VDJ",
+    "Annotation column used",
+    "Sample column used",
+    "Selected harmonization transform",
+    "Selected merge strategy",
+    "Final barcode overlap rate",
+    "T-cell subset cells",
+    "TCR-positive T cells",
+    "Paired TCR T cells"
+  ),
+  Value = c(
+    params$report_label,
+    comma(ncol(seu)),
+    comma(nrow(contigs_all_post)),
+    comma(length(unique(contigs_all_post$sample))),
+    label_col_seu,
+    sample_col_seu %||% "NA",
+    selected_transform,
+    best,
+    sprintf("%.2f%%", 100 * final_overlap_rate),
+    comma(ncol(seu_t)),
+    comma(sum(seu_t$has_tcr, na.rm = TRUE)),
+    comma(sum(seu_t$paired_tcr, na.rm = TRUE))
+  )
+)
+
+kable(overview_tbl, caption = "High-level overview of GEX–TCR integration.") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+## harmonization-figures
+```{r}
+#| label: harmonization-figures
+if (isTRUE(params$show_barcode_harmonization)) {
+  p_overlap <- ggplot(barcode_overlap_by_sample,
+                      aes(x = reorder(sample, overlap_rate), y = overlap_rate)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "TCR to Seurat Barcode Overlap by Sample",
+      subtitle = "Post-harmonization overlap rate.",
+      x = NULL,
+      y = "Overlap rate"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_map_stack <- barcode_overlap_by_sample %>%
+    dplyr::select(sample, overlap, unmapped) %>%
+    tidyr::pivot_longer(cols = c(overlap, unmapped), names_to = "status", values_to = "n") %>%
+    mutate(status = recode(
+      status,
+      overlap = "Mapped to Seurat",
+      unmapped = "Not found in Seurat"
+    )) %>%
+    ggplot(aes(x = reorder(sample, n), y = n, fill = status)) +
+    geom_col() +
+    coord_flip() +
+    scale_y_continuous(labels = comma) +
+    labs(
+      title = "Mapped vs Unmapped TCR Barcodes",
+      x = NULL,
+      y = "TCR barcodes",
+      fill = NULL
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_scatter <- ggplot(barcode_overlap_by_sample,
+                      aes(x = tcr_barcodes, y = overlap_rate)) +
+    geom_point(size = 2) +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "Overlap Rate vs TCR Barcode Count",
+      x = "Unique TCR barcodes per sample",
+      y = "Overlap rate"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  (p_overlap | p_map_stack) / p_scatter
+  save_plot_safe(p_overlap, glue("barcode_overlap_by_sample.{params$figure_format}"))
+  save_plot_safe(p_map_stack, glue("barcode_mapping_mapped_unmapped.{params$figure_format}"))
+  save_plot_safe(p_scatter, glue("barcode_overlap_vs_tcr_count.{params$figure_format}"))
+}
+```
+
+## umap-annotation
+```{r}
+#| label: umap-annotation
+
+
+# 1. Get the raw labels and handle NAs immediately
+raw_labels <- as.character(seu_t@meta.data[[label_col_seu]])
+raw_labels[is.na(raw_labels) | raw_labels == ""] <- "Unannotated"
+
+# 2. Create the unique levels (sorted)
+annot_levels <- sort(unique(raw_labels))
+
+# 3. Create a clean numeric mapping
+annot_map <- setNames(seq_along(annot_levels), annot_levels)
+
+# 4. Map the labels to numbers and assign to Seurat using AddMetaData (safer than $)
+plot_numbers <- annot_map[raw_labels]
+names(plot_numbers) <- rownames(seu_t@meta.data) # CRITICAL: Align barcodes
+
+seu_t <- AddMetaData(seu_t, metadata = plot_numbers, col.name = "plot_number")
+
+# 5. Build the legend text (e.g., "1: CD4 T cells")
+legend_labels <- paste0(seq_along(annot_levels), ": ", annot_levels)
+
+p_umap_annot <- DimPlot(
+  seu_t,
+  reduction = reduction_to_use,
+  group.by = "plot_number",
+  label = TRUE,
+  label.size = 6,
+  repel = TRUE,
+  raster = isTRUE(params$raster_large_umap)
+) +
+  ggtitle("T-cell embedding: Numbered Annotations") +
+  theme_scratch_pub(params$base_size) +
+  # Map the numbers back to the long strings in the legend
+  scale_color_discrete(labels = legend_labels) +
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 4)))
+
+p_umap_annot
+save_plot_safe(p_umap_annot, glue("umap_tcells_annotation_numbered.{params$figure_format}"), width = 12, height = 8)
+# p_umap_annot <- DimPlot(
+#   seu_t,
+#   reduction = reduction_to_use,
+#   group.by = label_col_seu,
+#   label = params$label_clusters,
+#   repel = TRUE,
+#   raster = isTRUE(params$raster_large_umap)
+# ) +
+#   ggtitle("T-cell embedding: annotation") +
+#   theme_scratch_pub(params$base_size)
+# 
+# p_umap_annot
+# save_plot_safe(p_umap_annot, glue("umap_tcells_annotation.{params$figure_format}"), width = 8, height = 6)
+```
+
+## umap-tcr-positive
+```{r}
+#| label: umap-tcr-positive
+p_umap_tcr <- DimPlot(
+  seu_t,
+  reduction = reduction_to_use,
+  group.by = "has_tcr",
+  raster = isTRUE(params$raster_large_umap)
+) +
+  ggtitle("T-cell embedding: TCR-positive vs TCR-negative") +
+  theme_scratch_pub(params$base_size)
+
+p_umap_tcr
+save_plot_safe(p_umap_tcr, glue("umap_tcells_has_tcr.{params$figure_format}"), width = 8, height = 6)
+```
+
+## umap-paired
+```{r}
+#| label: umap-paired
+p_umap_paired <- DimPlot(
+  seu_t,
+  reduction = reduction_to_use,
+  group.by = "paired_tcr",
+  raster = isTRUE(params$raster_large_umap)
+) +
+  ggtitle("T-cell embedding: paired TCR status") +
+  theme_scratch_pub(params$base_size)
+
+p_umap_paired
+save_plot_safe(p_umap_paired, glue("umap_tcells_paired_tcr.{params$figure_format}"), width = 8, height = 6)
+```
+
+## umap-clone-size
+```{r}
+#| label: umap-clone-size
+p_umap_clone <- FeaturePlot(
+  seu_t,
+  reduction = reduction_to_use,
+  features = "clone_size",
+  raster = isTRUE(params$raster_large_umap)
+) +
+  ggtitle("T-cell embedding: clone size") +
+  theme_scratch_pub(params$base_size)
+
+p_umap_clone
+save_plot_safe(p_umap_clone, glue("umap_tcells_clone_size.{params$figure_format}"), width = 8, height = 6)
+```
+
+## pairing-summary
+```{r}
+#| label: pairing-summary
+
+pairing_data <- export_cells %>%
+    mutate(pairing_group = case_when(
+      paired_tcr ~ "Paired",
+      has_tcr ~ "Unpaired",
+      TRUE ~ "No TCR"
+    )) %>%
+    count(annot, pairing_group, name = "n_cells")
+
+# Always print the table first so something shows up in the report
+kable(pairing_data, caption = "Pairing Status Table") %>% kable_styling()
+
+if (isTRUE(params$show_pairing_summary)) {
+  p_pairing <- pairing_data %>%
+    group_by(annot) %>%
+    mutate(frac = n_cells / sum(n_cells)) %>%
+    ggplot(aes(x = fct_reorder(annot, frac, .fun = max), y = frac, fill = pairing_group)) +
+    geom_col(position = "fill") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    theme_scratch_pub(params$base_size)
+  print(p_pairing)
+}
+
+# if (isTRUE(params$show_pairing_summary)) {
+#   p_pairing <- export_cells %>%
+#     mutate(pairing_group = case_when(
+#       paired_tcr ~ "Paired",
+#       has_tcr ~ "Unpaired",
+#       TRUE ~ "No TCR"
+#     )) %>%
+#     count(annot, pairing_group, name = "n_cells") %>%
+#     group_by(annot) %>%
+#     mutate(frac = n_cells / sum(n_cells)) %>%
+#     ungroup() %>%
+#     ggplot(aes(x = fct_reorder(annot, frac, .fun = max), y = frac, fill = pairing_group)) +
+#     geom_col(position = "fill") +
+#     coord_flip() +
+#     scale_y_continuous(labels = percent_format(accuracy = 1)) +
+#     labs(
+#       title = "Pairing Status Across T-cell States",
+#       x = NULL,
+#       y = "Fraction of cells",
+#       fill = "TCR status"
+#     ) +
+#     theme_scratch_pub(params$base_size)
+# 
+#   p_pairing
+#   save_plot_safe(p_pairing, glue("pairing_status_by_annotation.{params$figure_format}"), width = 10, height = 7)
+# }
+```
+
+## Clonal Homeostasis (Expansion)
+```{r}
+#| label: clonal-expansion-homeostasis
+#| fig-width: 10
+#| fig-height: 7
+
+homeo_df <- export_cells %>%
+  filter(!is.na(sample), sample != "", !is.na(clone_id), clone_id != "", !is.na(clone_size)) %>%
+  distinct(sample, clone_id, clone_size) %>%
+  mutate(
+    Expansion_Class = cut(
+      clone_size,
+      breaks = c(0, 1, 5, 20, 100, Inf),
+      labels = c("Rare (1)", "Small (2-5)", "Medium (6-20)", "Large (21-100)", "Hyperexpanded (>100)"),
+      right = TRUE
+    )
+  ) %>%
+  count(sample, Expansion_Class, name = "n_clones") %>%
+  tidyr::complete(sample, Expansion_Class, fill = list(n_clones = 0)) %>%
+  group_by(sample) %>%
+  mutate(fraction = n_clones / sum(n_clones)) %>%
+  ungroup()
+
+sample_order_df <- homeo_df %>%
+  select(sample, Expansion_Class, fraction) %>%
+  distinct() %>%
+  tidyr::pivot_wider(
+    names_from = Expansion_Class,
+    values_from = fraction,
+    values_fill = 0
+  ) %>%
+  distinct(sample, .keep_all = TRUE) %>%
+  arrange(
+    desc(`Hyperexpanded (>100)`),
+    desc(`Large (21-100)`),
+    desc(`Medium (6-20)`),
+    desc(`Small (2-5)`),
+    desc(`Rare (1)`)
+  )
+
+sample_levels <- unique(as.character(sample_order_df$sample))
+
+homeo_df <- homeo_df %>%
+  mutate(
+    sample = factor(as.character(sample), levels = sample_levels),
+    Expansion_Class = factor(
+      Expansion_Class,
+      levels = c("Rare (1)", "Small (2-5)", "Medium (6-20)", "Large (21-100)", "Hyperexpanded (>100)")
+    )
+  )
+
+p_homeo <- ggplot(homeo_df, aes(x = sample, y = fraction, fill = Expansion_Class)) +
+  geom_col(width = 0.8) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(
+    values = c(
+      "Rare (1)" = "#4575b4",
+      "Small (2-5)" = "#91bfdb",
+      "Medium (6-20)" = "#fee090",
+      "Large (21-100)" = "#fc8d59",
+      "Hyperexpanded (>100)" = "#d73027"
+    )
+  ) +
+  theme_scratch_pub(params$base_size) +
+  labs(
+    title = "Clonal Expansion Homeostasis",
+    y = "Relative Abundance",
+    x = "Sample",
+    fill = "Expansion_Class"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+print(p_homeo)
+
+save_plot_safe(
+  p_homeo,
+  glue("clonal_homeostasis_expansion.{params$figure_format}"),
+  width = 10,
+  height = 7
+)
+```
+
+
+## top-clone-overlays
+```{r}
+#| label: top-clone-overlays
+if (isTRUE(params$show_top_clone_umaps)) {
+  top_clone_ids <- export_cells %>%
+    filter(!is.na(clone_id), clone_id != "") %>%
+    count(clone_id, name = "n_cells") %>%
+    arrange(desc(n_cells)) %>%
+    slice_head(n = params$top_n_clones_umap) %>%
+    pull(clone_id)
+
+  if (length(top_clone_ids) > 0) {
+    seu_t$top_clone_label <- ifelse(seu_t$clone_id %in% top_clone_ids, seu_t$clone_id, "Other")
+    p_top_clones <- DimPlot(
+      seu_t,
+      reduction = reduction_to_use,
+      group.by = "top_clone_label",
+      raster = isTRUE(params$raster_large_umap)
+    ) +
+      ggtitle("Top expanded clonotypes on embedding") +
+      theme_scratch_pub(params$base_size)
+
+    p_top_clones
+    save_plot_safe(p_top_clones, glue("umap_top_clones.{params$figure_format}"), width = 10, height = 8)
+  }
+}
+```
+
+## clone-rank-abundance
+```{r}
+#| label: clone-rank-abundance
+if (isTRUE(params$show_clone_rank_plot) && nrow(clone_rank_tbl) > 0) {
+  p_clone_rank <- ggplot(clone_rank_tbl, aes(x = rank, y = n_cells, color = sample)) +
+    geom_line(linewidth = 0.9, alpha = 0.8) +
+    geom_point(size = 1.2, alpha = 0.9) +
+    scale_x_log10() +
+    scale_y_log10() +
+    labs(
+      title = "Clone Rank-Abundance Curve",
+      subtitle = glue("Only clones with at least {params$min_clone_size_plot} cells are shown."),
+      x = "Clone rank (log10)",
+      y = "Cells per clone (log10)",
+      color = "Sample"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_clone_rank
+  save_plot_safe(p_clone_rank, glue("clone_rank_abundance.{params$figure_format}"))
+}
+```
+
+## clone-state-heatmap
+```{r}
+#| label: clone-state-heatmap
+#| fig-width: 12
+#| fig-height: 8
+
+if (isTRUE(params$show_clone_state_heatmap) && exists("clone_state_tbl") && nrow(clone_state_tbl) > 0) {
+  
+  # 1. Identify the top 30 most expanded clones to keep the heatmap readable
+  top_state_clones <- clone_state_tbl %>%
+    group_by(clone_id) %>%
+    summarise(total = sum(n_cells), .groups = "drop") %>%
+    arrange(desc(total)) %>%
+    slice_head(n = 30) %>%
+    pull(clone_id)
+
+  # 2. Pivot data into a wide matrix format
+  clone_state_mat <- clone_state_tbl %>%
+    filter(clone_id %in% top_state_clones) %>%
+    tidyr::pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+
+  # 3. Set row names and convert to pure numeric matrix
+  rownames(clone_state_mat) <- clone_state_mat$clone_id
+  clone_state_mat$clone_id <- NULL
+  clone_state_mat <- as.matrix(clone_state_mat)
+
+  # 4. Define a clean color scale
+  col_fun <- colorRamp2(
+    c(0, max(clone_state_mat, na.rm = TRUE) / 2, max(clone_state_mat, na.rm = TRUE)), 
+    c("white", "gold", "firebrick")
+  )
+
+  # 5. Generate the Heatmap with optimized label sizes
+  ht_clone_state <- Heatmap(
+    clone_state_mat,
+    name = "Cells",
+    col = col_fun,
+    cluster_rows = TRUE, 
+    cluster_columns = TRUE,
+    show_row_dend = TRUE,
+    show_column_dend = TRUE,
+    
+    # Visual Polish for Long Labels
+    row_names_gp = gpar(fontsize = 7),       # Smaller font for Clone IDs
+    column_names_gp = gpar(fontsize = 7),    # Smaller font for ScType labels
+    column_names_rot = 45,                   # Rotate labels to prevent overlap
+    row_names_side = "left",
+    
+    column_title = "Clone Occupancy Across Annotated T-cell States",
+    column_title_gp = gpar(fontsize = 12, fontface = "bold"),
+    
+    heatmap_legend_param = list(
+      title = "Cell Count",
+      at = c(0, max(clone_state_mat)),
+      labels = c("0", "Max")
+    )
+  )
+
+  # 6. Render the plot
+  draw(ht_clone_state, heatmap_legend_side = "right")
+  
+} else {
+  cat("Clone-state heatmap skipped: insufficient data or disabled in params.")
+}
+# if (isTRUE(params$show_clone_state_heatmap) && nrow(clone_state_tbl) > 0) {
+#   top_state_clones <- clone_state_tbl %>%
+#     group_by(clone_id) %>%
+#     summarise(total = sum(n_cells), .groups = "drop") %>%
+#     arrange(desc(total)) %>%
+#     slice_head(n = 30) %>%
+#     pull(clone_id)
+# 
+#   clone_state_mat <- clone_state_tbl %>%
+#     filter(clone_id %in% top_state_clones) %>%
+#     tidyr::pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+#     as.data.frame()
+# 
+#   rownames(clone_state_mat) <- clone_state_mat$clone_id
+#   clone_state_mat$clone_id <- NULL
+#   clone_state_mat <- as.matrix(clone_state_mat)
+# 
+#   ht_clone_state <- Heatmap(
+#     clone_state_mat,
+#     name = "Cells",
+#     col = colorRamp2(
+#       c(0, max(clone_state_mat, na.rm = TRUE) / 2, max(clone_state_mat, na.rm = TRUE)),
+#       c("white", "gold", "firebrick")
+#     ),
+#     cluster_rows = TRUE,
+#     cluster_columns = TRUE,
+#     row_names_side = "left",
+#     column_title = "Clone occupancy across annotated T-cell states",
+#     heatmap_legend_param = list(title = "Cells")
+#   )
+# 
+#   draw(ht_clone_state)
+# }
+```
+
+## screpertoire-figures
+```{r}
+#| label: screpertoire-figures
+
+# Diagnostic check
+if (!exists("seu_screp")) {
+  message("!!! DIAGNOSTIC: seu_screp object does not exist. Check the merge step.")
+} else if (!"strict" %in% colnames(seu_screp@meta.data)) {
+  message("!!! DIAGNOSTIC: 'strict' column (clonotype) not found in metadata. scRepertoire plots may fail.")
+}
+
+if (isTRUE(params$show_homeostasis) && exists("export_cells")) {
+  cat("### Clonal Homeostasis\n")
+
+  clonal_group_levels <- c(
+    "Rare (0 < X <= 1e-04)",
+    "Small (1e-04 < X <= 0.001)",
+    "Medium (0.001 < X <= 0.01)",
+    "Large (0.01 < X <= 0.1)",
+    "Hyperexpanded (0.1 < X <= 1)"
+  )
+
+  homeo_rel_df <- export_cells %>%
+    filter(!is.na(sample), sample != "", !is.na(clone_id), clone_id != "") %>%
+    count(sample, clone_id, name = "n_cells") %>%
+    group_by(sample) %>%
+    mutate(clone_fraction = n_cells / sum(n_cells)) %>%
+    ungroup() %>%
+    mutate(
+      Clonal_Group = cut(
+        clone_fraction,
+        breaks = c(0, 1e-4, 1e-3, 1e-2, 1e-1, 1),
+        labels = clonal_group_levels,
+        include.lowest = TRUE,
+        right = TRUE
+      )
+    ) %>%
+    group_by(sample, Clonal_Group) %>%
+    summarise(relative_abundance = sum(clone_fraction, na.rm = TRUE), .groups = "drop")
+
+  sample_order_df2 <- homeo_rel_df %>%
+    select(sample, Clonal_Group, relative_abundance) %>%
+    distinct() %>%
+    tidyr::pivot_wider(
+      names_from = Clonal_Group,
+      values_from = relative_abundance,
+      values_fill = 0
+    ) %>%
+    distinct(sample, .keep_all = TRUE)
+
+  # make sure all ordering columns exist even if absent in this dataset
+  for (nm in clonal_group_levels) {
+    if (!nm %in% colnames(sample_order_df2)) {
+      sample_order_df2[[nm]] <- 0
+    }
+  }
+
+  sample_order_df2 <- sample_order_df2 %>%
+    arrange(
+      desc(.data[["Hyperexpanded (0.1 < X <= 1)"]]),
+      desc(.data[["Large (0.01 < X <= 0.1)"]]),
+      desc(.data[["Medium (0.001 < X <= 0.01)"]]),
+      desc(.data[["Small (1e-04 < X <= 0.001)"]]),
+      desc(.data[["Rare (0 < X <= 1e-04)"]])
+    )
+
+  sample_levels2 <- unique(as.character(sample_order_df2$sample))
+
+  homeo_rel_df <- homeo_rel_df %>%
+    mutate(
+      sample = factor(as.character(sample), levels = sample_levels2),
+      Clonal_Group = factor(Clonal_Group, levels = clonal_group_levels)
+    )
+
+  p_homeo_rel <- ggplot(homeo_rel_df, aes(x = sample, y = relative_abundance, fill = Clonal_Group)) +
+    geom_col(width = 0.8) +
+    theme_scratch_pub(params$base_size) +
+    labs(
+      title = "Clonal Homeostasis",
+      x = "Samples",
+      y = "Relative Abundance",
+      fill = "Clonal Group"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+    )
+
+  print(p_homeo_rel)
+
+  save_plot_safe(
+    p_homeo_rel,
+    glue("clonal_homeostasis.{params$figure_format}"),
+    width = 10,
+    height = 7
+  )
+}
+
+if (isTRUE(params$show_diversity) && exists("export_cells")) {
+  cat("### Clonal Diversity\n")
+
+  div_df <- export_cells %>%
+    filter(!is.na(sample), sample != "", !is.na(clone_id), clone_id != "") %>%
+    group_by(sample, clone_id) %>%
+    summarise(n = n(), .groups = "drop_last") %>%
+    summarise(
+      shannon = -sum((n / sum(n)) * log(n / sum(n))),
+      richness = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(shannon))
+
+  div_df <- div_df %>%
+    mutate(sample = factor(sample, levels = unique(as.character(sample))))
+
+  p_div <- ggplot(div_df, aes(x = sample, y = shannon)) +
+    geom_col(fill = "gray35", width = 0.8) +
+    theme_scratch_pub(params$base_size) +
+    labs(
+      title = "Clonal Diversity (Shannon Index)",
+      x = "Sample",
+      y = "Shannon Index"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+    )
+
+  print(p_div)
+
+  save_plot_safe(
+    p_div,
+    glue("clonal_diversity.{params$figure_format}"),
+    width = 9,
+    height = 6
+  )
+}
+
+  # p_div <- tryCatch({
+  #   scRepertoire::clonalDiversity(seu_screp, 
+  #                                 cloneCall = "strict", 
+  #                                 group.by = sample_col_seu %||% "orig.ident", 
+  #                                 n.boots = 20) + # Lower boots for speed
+  #     theme_scratch_pub(params$base_size) +
+  #     theme(axis.text.x = element_text(angle = 45, hjust = 1, fontsize = 8)) +
+  #     ggtitle("Clonal Diversity")
+  # }, error = function(e) {
+  #   message("Error in clonalDiversity: ", e$message)
+  #   return(NULL)
+  # })
+  # 
+  # if (!is.null(p_div)) {
+  #   print(p_div)
+  #   save_plot_safe(p_div, glue("clonal_diversity.{params$figure_format}"), width = 9, height = 6)
+  # }
+# }
+
+# if (isTRUE(params$show_homeostasis) && screp_combined_expression_ok) {
+#   p_homeo <- tryCatch({
+#     clonalHomeostasis(seu_screp, cloneCall = "strict", group.by = sample_col_seu %||% "orig.ident") +
+#       theme_scratch_pub(params$base_size) +
+#       ggtitle("Clonal homeostasis")
+#   }, error = function(e) NULL)
+# 
+#   if (!is.null(p_homeo)) {
+#     print(p_homeo)
+#     save_plot_safe(p_homeo, glue("clonal_homeostasis.{params$figure_format}"), width = 9, height = 6)
+#   }
+# }
+# 
+# if (isTRUE(params$show_diversity) && screp_combined_expression_ok) {
+#   p_div <- tryCatch({
+#     clonalDiversity(seu_screp, cloneCall = "strict", group.by = sample_col_seu %||% "orig.ident") +
+#       theme_scratch_pub(params$base_size) +
+#       ggtitle("Clonal diversity")
+#   }, error = function(e) NULL)
+# 
+#   if (!is.null(p_div)) {
+#     print(p_div)
+#     save_plot_safe(p_div, glue("clonal_diversity.{params$figure_format}"), width = 9, height = 6)
+#   }
+# }
+```
+
+## sample-condition-patient
+```{r}
+#| label: sample-condition-patient
+show_sample    <- isTRUE(params$show_sample_panels) && (!is.null(sample_col_seu) || "META_SAMPLE" %in% colnames(seu@meta.data))
+show_condition <- isTRUE(params$show_condition_panels) && (!is.null(condition_col_seu) || "META_TIMECOND" %in% colnames(seu@meta.data))
+show_patient   <- isTRUE(params$show_patient_panels) && (!is.null(patient_col_seu) || "META_PATIENT" %in% colnames(seu@meta.data))
+show_timepoint <- isTRUE(params$show_timepoint_panels) && (!is.null(timepoint_col_seu) || "META_TIMECOND" %in% colnames(seu@meta.data))
+```
+
+
+## sample-summary-plot
+```{r}
+#| results: asis
+
+if (show_sample) {
+  sample_summary <- export_cells %>%
+    filter(!is.na(sample)) %>%
+    group_by(sample) %>%
+    summarise(
+      n_cells = n(),
+      n_tcr = sum(has_tcr, na.rm = TRUE),
+      n_paired = sum(paired_tcr, na.rm = TRUE),
+      pct_tcr = safe_percent(n_tcr, n_cells),
+      .groups = "drop"
+    )
+
+  if (nrow(sample_summary) > 0) {
+    # FIX: Use knitr::knit_print() instead of print() to ensure HTML renders correctly
+    # and remove the print() call entirely if possible.
+    ktab <- kable(
+        sample_summary,
+        caption = "Sample-level TCR Stats"
+      ) %>%
+      kable_styling(
+        bootstrap_options = c("striped", "hover", "condensed"),
+        full_width = FALSE
+      )
+    
+    # This ensures the table renders as HTML in the final document
+    knitr::knit_print(ktab) 
+    
+    # Add a small break between table and plot
+    cat("\n\n")
+
+    p_sample <- sample_summary %>%
+      mutate(sample = fct_reorder(sample, pct_tcr)) %>%
+      ggplot(aes(x = sample, y = pct_tcr)) +
+      geom_col(fill = "steelblue") +
+      coord_flip() +
+      scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+      labs(
+        title = "TCR-positive fraction by sample",
+        x = NULL,
+        y = "Fraction"
+      ) +
+      theme_scratch_pub(params$base_size) +
+      theme(
+        # INCREASED: Changed from size=7 to base_size to make sample names legible
+        axis.text.y = element_text(size = params$base_size), 
+        axis.text.x = element_text(size = params$base_size),
+        axis.title.x = element_text(size = params$base_size + 2, face = "bold"),
+        plot.title = element_text(size = params$base_size + 4, face = "bold")
+      )
+
+    print(p_sample)
+    save_plot_safe(p_sample, glue("sample_tcr_positive_fraction.{params$figure_format}"))
+  } else {
+    message("sample_summary is empty. Check whether the sample column is missing or all NA.")
+  }
+}
+
+# #| label: sample-summary-plot
+# 
+# if (show_sample) {
+#   sample_summary <- export_cells %>%
+#     filter(!is.na(sample)) %>%
+#     group_by(sample) %>%
+#     summarise(
+#       n_cells = n(),
+#       n_tcr = sum(has_tcr, na.rm = TRUE),
+#       n_paired = sum(paired_tcr, na.rm = TRUE),
+#       pct_tcr = safe_percent(n_tcr, n_cells),
+#       .groups = "drop"
+#     )
+# 
+#   if (nrow(sample_summary) > 0) {
+#     # Print table so we see data
+#     # print(kable(sample_summary, caption = "Sample-level TCR Stats") %>% kable_styling())
+#     cat(kable(sample_summary, format = "html", caption = "Sample-level TCR Stats") %>% 
+#       kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F) %>%
+#       as.character())
+#     p_sample <- sample_summary %>%
+#       mutate(sample = fct_reorder(sample, pct_tcr)) %>%
+#       ggplot(aes(x = sample, y = pct_tcr)) +
+#       geom_col(fill = "steelblue") +
+#       coord_flip() +
+#       scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+#       labs(title = "TCR-positive fraction by sample", x = NULL, y = "Fraction") +
+#       theme_scratch_pub(params$base_size) +
+#       theme(axis.text.y = element_text(size = 7)) # Small font for many samples
+# 
+#     print(p_sample)
+#     save_plot_safe(p_sample, glue("sample_tcr_positive_fraction.{params$figure_format}"))
+#   } else {
+#     message("!!! DIAGNOSTIC: sample_summary is empty. Check if 'sample' column has NAs.")
+#   }
+# }
+
+# if (show_sample) {
+#   sample_summary <- export_cells %>%
+#     group_by(sample) %>%
+#     summarise(
+#       n_cells = n(),
+#       n_tcr = sum(has_tcr, na.rm = TRUE),
+#       n_paired = sum(paired_tcr, na.rm = TRUE),
+#       pct_tcr = safe_percent(n_tcr, n_cells),
+#       pct_paired = safe_percent(n_paired, n_cells),
+#       median_clone_size = median(clone_size, na.rm = TRUE),
+#       .groups = "drop"
+#     )
+# 
+#   save_table_safe(sample_summary, "sample_level_tcell_integration_summary.tsv")
+# 
+#   p_sample <- sample_summary %>%
+#     mutate(sample = fct_reorder(sample, pct_tcr)) %>%
+#     ggplot(aes(x = sample, y = pct_tcr)) +
+#     geom_col(fill = "steelblue") +
+#     coord_flip() +
+#     scale_y_continuous(labels = percent_format(accuracy = 1)) +
+#     labs(
+#       title = "TCR-positive fraction by sample",
+#       x = NULL,
+#       y = "TCR-positive cells"
+#     ) +
+#     theme_scratch_pub(params$base_size)
+# 
+#   p_sample
+#   save_plot_safe(p_sample, glue("sample_tcr_positive_fraction.{params$figure_format}"))
+# }
+```
+
+## condition-summary-plot
+```{r}
+#| label: condition-summary-plot
+if (show_condition) {
+  condition_summary <- export_cells %>%
+    group_by(condition) %>%
+    summarise(
+      n_cells = n(),
+      n_tcr = sum(has_tcr, na.rm = TRUE),
+      n_paired = sum(paired_tcr, na.rm = TRUE),
+      pct_tcr = safe_percent(n_tcr, n_cells),
+      pct_paired = safe_percent(n_paired, n_cells),
+      .groups = "drop"
+    )
+
+  save_table_safe(condition_summary, "condition_level_tcell_integration_summary.tsv")
+
+  p_condition <- condition_summary %>%
+    mutate(condition = fct_reorder(condition, pct_tcr)) %>%
+    ggplot(aes(x = condition, y = pct_tcr)) +
+    geom_col(fill = "purple4") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "TCR-positive fraction by condition",
+      x = NULL,
+      y = "TCR-positive cells"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_condition
+  save_plot_safe(p_condition, glue("condition_tcr_positive_fraction.{params$figure_format}"))
+}
+```
+
+## patient-summary-plot
+
+## patient-summary-plot
+```{r}
+#| label: patient-summary-plot
+
+# Ensure the patient column is defined from the params
+# If not already resolved in a 'resolve-columns' chunk:
+curr_patient_col <- params$patient_col %||% "patient_id"
+
+if (show_patient && curr_patient_col %in% colnames(export_cells)) {
+  
+  patient_summary <- export_cells %>%
+    # Use the parameter from the params object
+    group_by(across(all_of(curr_patient_col))) %>% 
+    summarise(
+      n_cells = n(),
+      n_tcr = sum(has_tcr, na.rm = TRUE),
+      n_paired = sum(paired_tcr, na.rm = TRUE),
+      pct_tcr = safe_percent(n_tcr, n_cells),
+      pct_paired = safe_percent(n_paired, n_cells),
+      .groups = "drop"
+    ) %>%
+    # Rename using the parameter
+    rename(patient = !!sym(curr_patient_col))
+
+  if (nrow(patient_summary) > 0) {
+    save_table_safe(patient_summary, "patient_level_tcell_integration_summary.tsv")
+
+    p_patient <- patient_summary %>%
+      mutate(patient = fct_reorder(patient, pct_tcr)) %>%
+      ggplot(aes(x = patient, y = pct_tcr)) +
+      geom_col(fill = "darkgreen") +
+      coord_flip() +
+      scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+      labs(
+        title = "TCR-positive fraction by patient",
+        subtitle = paste("Column used:", curr_patient_col),
+        x = NULL,
+        y = "TCR-positive fraction"
+      ) +
+      theme_scratch_pub(params$base_size) +
+      theme(
+        axis.text.y = element_text(size = params$base_size),
+        axis.text.x = element_text(size = params$base_size),
+        axis.title.x = element_text(size = params$base_size + 2, face = "bold"),
+        plot.title = element_text(size = params$base_size + 4, face = "bold")
+      )
+
+    # Explicitly print inside the if block
+    print(p_patient) 
+    
+    save_plot_safe(p_patient, glue("patient_tcr_positive_fraction.{params$figure_format}"))
+  }
+} else {
+  message("Skipping patient plot: column '", curr_patient_col, "' not found in data.")
+}
+```
+
+## warnings
+```{r}
+#| label: warnings
+warn_tbl <- tibble(
+  warning = c(
+    "Low final barcode overlap",
+    "Few T-cell matches after merge",
+    "Low paired TCR fraction",
+    "Annotation column auto-detected",
+    "Sample column missing",
+    "No scRepertoire combineExpression output"
+  ),
+  triggered = c(
+    isTRUE(final_overlap_rate < 0.6),
+    isTRUE(sum(seu_t$has_tcr, na.rm = TRUE) < 100),
+    isTRUE(mean(seu_t$paired_tcr, na.rm = TRUE) < 0.3),
+    isTRUE(params$label_col == ""),
+    isTRUE(is.null(sample_col_seu)),
+    isTRUE(!screp_combined_expression_ok)
+  ),
+  interpretation = c(
+    "Final TCR to GEX overlap is below 60%. Check barcode prefix/suffix conventions and sample naming.",
+    "Very few T cells retained matched TCR information. Inspect upstream VDJ QC and join strategy diagnostics.",
+    "Paired TCR fraction is low. This may reflect assay quality, chain filtering, or incomplete pairing.",
+    "Annotation column was auto-detected rather than explicitly specified.",
+    "No reliable sample column was detected in Seurat metadata. Some grouped summaries may be incomplete.",
+    "Optional scRepertoire combineExpression integration was not produced. The pipeline continued using the validated fast-merge TCR↔GEX integration outputs."
+  )
+) %>%
+  filter(triggered)
+
+if (nrow(warn_tbl) == 0) {
+  cat("No major automatic warnings were triggered under the current integration settings.")
+} else {
+  kable(
+    warn_tbl %>% select(-triggered),
+    caption = "Automatically generated integration warnings and notes."
+  ) %>%
+    kable_styling(
+      full_width = TRUE,
+      bootstrap_options = c("striped", "hover", "condensed")
+    )
+}
+
+# Show the actual scRepertoire error message if available
+if (!isTRUE(screp_combined_expression_ok) &&
+    exists("screp_error_msg") &&
+    !is.null(screp_error_msg) &&
+    !is.na(screp_error_msg) &&
+    nzchar(screp_error_msg)) {
+
+  cat("\n\n### scRepertoire combineExpression diagnostic message\n")
+  cat("`", screp_error_msg, "`\n", sep = "")
+}
+```
+
+## session-info
+```{r}
+#| label: session-info
+writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.tcell_integration.txt"))
+sessionInfo()
+```

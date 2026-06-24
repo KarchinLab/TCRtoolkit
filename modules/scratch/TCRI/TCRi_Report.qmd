@@ -1,0 +1,1758 @@
+---
+title: "SCRATCH-TCR: TCRi Report"
+author: "Syed Shujaat Ali Zaidi"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+    df-print: paged
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  # ======================================================
+  # Inputs
+  # ======================================================
+  seurat_rds: "data/seurat_tcells_with_TCR.rds"
+  tcri_scores_file: "data/tcri_scores.tsv"
+  tcr_export_cells_file: "data/tcr_export_cells_with_embedding.tsv"
+  outdir: "TCRi_Report"
+  
+  python_bin: ""
+
+  # Optional extra inputs
+  metadata_file: ""
+  previous_summary_file: ""
+
+  # ======================================================
+  # Output controls
+  # ======================================================
+  data_dir: "data"
+  tables_dir: "tables"
+  figures_dir: "figures"
+  save_tables: true
+  save_figures: true
+  save_updated_seurat: true
+  figure_format: "png"
+  figure_width: 10
+  figure_height: 7
+  figure_dpi: 300
+  base_size: 12
+
+  # ======================================================
+  # Core column mapping
+  # ======================================================
+  cell_id_col: "cell_id"
+  tcri_score_col: "tcri_score"
+  tcri_group_col: "tcri_group"
+  tcri_rank_col: ""
+  tcri_pvalue_col: ""
+  tcri_qvalue_col: ""
+
+  cell_id_candidates: !expr c("cell_id","barcode","cell","Cell","cellid")
+  tcri_score_candidates: !expr c("tcri_score","score","TCRi","tcri","invertibility_score")
+  tcri_group_candidates: !expr c("tcri_group","group","class","label","TCRi_group")
+  tcri_rank_candidates: !expr c("rank","tcri_rank","score_rank")
+  tcri_pvalue_candidates: !expr c("pvalue","p_value","pval","tcri_pvalue")
+  tcri_qvalue_candidates: !expr c("qvalue","q_value","fdr","padj","adj_p","tcri_qvalue")
+
+  # ======================================================
+  # Metadata in Seurat / export table
+  # ======================================================
+  assay_use: "RNA"
+  label_col: "predicted_labels"
+  sample_col: "META_SAMPLE"
+  patient_col: "META_PATIENT"
+  condition_col: "META_TIMECOND"
+  timepoint_col: "META_TIMEPOINT"
+  batch_col: "META_BATCH"
+  clone_id_col: "clone_id"
+  clone_size_col: "clone_size"
+  paired_tcr_col: "paired_tcr"
+  has_tcr_col: "has_tcr"
+
+  label_candidates: "predicted_labels;predicted.celltype.l2;predicted.celltype.l1;azimuth_labels;celltypist;celltypist_label;majority_voting;scType;sctype;sctype_label;celltype;CellType;annot;Annotation;seurat_clusters"
+  sample_candidates: "META_SAMPLE;Sample;SampleID;sample_id;orig.ident;sample;library;donor;patient"
+  patient_candidates: "META_PATIENT;patient_id;patient;Patient;subject;donor;case_id"
+  condition_candidates: "META_TIMECOND;condition;Condition;group;Group;status;timepoint;Timepoint"
+  timepoint_candidates: "META_TIMEPOINT;timepoint;Timepoint;visit;Visit;day;Day;META_TIMECOND"
+  batch_candidates: "META_BATCH;batch;Batch;library;Library;run;Run;lane;Lane"
+  clone_id_candidates: "clone_id;CTaa;clonotype;clone"
+  clone_size_candidates: "clone_size;CloneSize;clone_n"
+  paired_tcr_candidates: "paired_tcr;paired;is_paired"
+  has_tcr_candidates: "has_tcr;hasTCR;tcr_positive"
+  
+  
+  # ======================================================
+  # TCRi modeling
+  # ======================================================
+  subset_to_tcr_positive: true
+  subset_to_paired_tcr: true
+  min_cells_per_phenotype: 15
+  min_cells_total: 100
+  
+  phenotype_obs_name: "phenotype"
+  clonotype_obs_name: "clone_id"
+  covariate_obs_name: "condition"
+  
+
+  
+  global_scale: 10.0
+  local_scale: 5.0
+  prior_temperature: 1.0
+  guide_temperature: 1.0
+  use_enumeration: false
+
+  margin_scale: 0.0
+  margin_value: 2.0
+  adaptive_margin: false
+
+  # ======================================================
+  # Embedding controls
+  # ======================================================
+  reduction_use: "umap"
+  make_umap_if_missing: false
+  umap_dims_max: 30
+  umap_nfeatures: 3000
+  raster_large_umap: true
+  label_clusters: true
+
+  # ======================================================
+  # Analysis knobs
+  # Score grouping
+  # ======================================================
+  auto_create_tcri_group_if_missing: true
+  tcri_high_cutoff: 0.80
+  tcri_mid_cutoff: 0.50
+  use_quantile_cutoffs_if_score_not_bounded: true
+  high_quantile: 0.90
+  mid_quantile: 0.50
+
+  min_cells_per_group: 10
+  min_clone_size_for_assoc: 2
+  top_n_high_tcri_clones: 30
+  top_n_groups_for_ridge: 20
+  top_n_states_heatmap: 30
+  top_n_states_table: 30
+
+  # ======================================================
+  # Figure/report toggles
+  # ======================================================
+  show_feature_plot: true
+  show_group_umap: true
+  show_density_plot: true
+  show_violin_by_annotation: true
+  show_boxplots_by_sample: true
+  show_boxplots_by_condition: true
+  show_boxplots_by_patient: true
+  show_boxplots_by_timepoint: true
+  show_score_vs_clone_size: true
+  show_high_tcri_clone_heatmap: true
+  show_high_tcri_annotation_enrichment: true
+  show_summary_tables: true
+
+  report_label: "TCRi"
+  # ======================================================
+  # TCRi modeling (Optimized)
+  # ======================================================
+  n_latent: 16            # Increased for better resolution
+  n_hidden: 128           # Increased for more "brain power"
+  max_epochs: 100         # Essential for convergence
+  batch_size: 128         # Better for smaller/medium datasets
+  learning_rate: 0.001
+  reconstruction_loss_scale: 0.01
+  n_steps_kl_warmup: 1000
+---
+
+# =================================================================
+# * Integrates precomputed TCRi results into the TCR–GEX Seurat object and aligns scores to individual cells through robust cell ID matching.
+# * Generates standardized per-cell, per-annotation, and per-sample summaries of TCRi scores, groups, and clone-associated patterns.
+# * Supports flexible operation across datasets with optional auto-generation of TCRi groups when categorical labels are not provided.
+# * Produces publication-quality visualizations, including embedding overlays, score distributions, annotation-level comparisons, and clone size associations.
+# * Identifies high-TCRi clonotypes and summarizes their phenotypic occupancy and enrichment across annotated T-cell states.
+# * Exports an updated Seurat object plus downstream-ready tables and figures for subsequent modules such as CoNGA, clonotype clustering, and repertoire analysis.
+# =================================================================
+
+
+## setup
+```{r}
+#| label: setup
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(forcats)
+  library(scales)
+  library(glue)
+  library(knitr)
+  library(kableExtra)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(patchwork)
+  library(Matrix)
+  library(reticulate)
+})
+
+options(stringsAsFactors = FALSE)
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$data_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$tables_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$figures_dir), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
+
+# theme_scratch_pub <- function(base_size = 12) {
+#   theme_bw(base_size = base_size) +
+#     theme(
+#       plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+#       plot.subtitle = element_text(size = base_size, hjust = 0),
+#       axis.title = element_text(face = "bold"),
+#       axis.text = element_text(color = "black"),
+#       panel.grid.minor = element_blank(),
+#       panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+#       strip.background = element_rect(fill = "grey95", color = "grey80"),
+#       strip.text = element_text(face = "bold"),
+#       legend.title = element_text(face = "bold"),
+#       legend.key = element_blank(),
+#       plot.caption = element_text(size = base_size - 2, color = "grey40")
+#     )
+# }
+
+# theme_scratch_pub <- function(base_size = 12) {
+#   theme_bw(base_size = base_size) +
+#     theme(
+#       plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+#       plot.subtitle = element_text(size = base_size, hjust = 0),
+#       axis.title = element_text(face = "bold", size = base_size - 1),
+#       # Shrink Y-axis labels slightly
+#       axis.text.y = element_text(color = "black", size = base_size - 3), 
+#       # Rotate X-axis labels 45 degrees and shrink
+#       axis.text.x = element_text(color = "black", size = base_size - 3, angle = 45, hjust = 1), 
+#       panel.grid.minor = element_blank(),
+#       panel.grid.major = element_line(linewidth = 0.1, color = "grey90"),
+#       strip.background = element_rect(fill = "grey95", color = "grey80"),
+#       strip.text = element_text(face = "bold", size = base_size - 2),
+#       legend.title = element_text(face = "bold", size = base_size - 2),
+#       legend.text = element_text(size = base_size - 3),
+#       plot.caption = element_text(size = base_size - 4, color = "grey40")
+#     )
+# }
+
+
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+      plot.subtitle = element_text(size = base_size, hjust = 0),
+      axis.title = element_text(face = "bold", size = base_size - 1),
+      axis.text.y = element_text(color = "black", size = base_size - 3),
+      # Fix for Q2 & Q3: Smaller text and 45-degree rotation for X-axis
+      axis.text.x = element_text(color = "black", size = base_size - 3, angle = 45, hjust = 1),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.1, color = "grey90"),
+      strip.background = element_rect(fill = "grey95", color = "grey80"),
+      strip.text = element_text(face = "bold", size = base_size - 2),
+      legend.title = element_text(face = "bold", size = base_size - 2),
+      legend.text = element_text(size = base_size - 3),
+      legend.key = element_blank(),
+      plot.caption = element_text(size = base_size - 4, color = "grey40")
+    )
+}
+
+save_plot_safe <- function(plot_obj, filename,
+                           width = params$figure_width,
+                           height = params$figure_height,
+                           dpi = params$figure_dpi) {
+  if (!isTRUE(params$save_figures)) return(invisible(NULL))
+  ggsave(
+    filename = file.path(params$outdir, params$figures_dir, filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+save_table_safe <- function(df, filename) {
+  if (!isTRUE(params$save_tables)) return(invisible(NULL))
+  fwrite(df, file.path(params$outdir, params$tables_dir, filename), sep = "\t")
+}
+
+save_rds_safe <- function(obj, filename) {
+  if (!isTRUE(params$save_updated_seurat)) return(invisible(NULL))
+  saveRDS(obj, file.path(params$outdir, params$data_dir, filename))
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+  NULL
+}
+
+safe_percent <- function(x, denom) ifelse(denom > 0, x / denom, NA_real_)
+
+safe_make_umap <- function(seu, reduction_name = "umap", dims = 1:30, nfeatures = 3000) {
+  if ("RNA" %in% names(seu@assays)) DefaultAssay(seu) <- "RNA"
+  npcs <- min(max(dims), max(2, ncol(seu) - 1), 50)
+  nf <- min(nfeatures, nrow(seu))
+
+  if (!"pca" %in% Reductions(seu)) {
+    seu <- FindVariableFeatures(seu, nfeatures = nf, verbose = FALSE)
+    seu <- ScaleData(seu, verbose = FALSE)
+    seu <- RunPCA(seu, npcs = npcs, verbose = FALSE)
+  }
+
+  use_dims <- dims[dims <= npcs]
+  if (length(use_dims) < 2) use_dims <- 1:min(10, npcs)
+
+  seu <- FindNeighbors(seu, dims = use_dims, verbose = FALSE)
+  seu <- RunUMAP(seu, dims = use_dims, reduction.name = reduction_name, verbose = FALSE)
+  seu
+}
+
+get_expr_mat <- function(seu, assay = "RNA", layer = "data") {
+  DefaultAssay(seu) <- assay
+  out <- tryCatch(
+    SeuratObject::LayerData(seu, assay = assay, layer = layer),
+    error = function(e) NULL
+  )
+  if (is.null(out)) {
+    out <- tryCatch(
+      Seurat::GetAssayData(seu, assay = assay, slot = "data"),
+      error = function(e) NULL
+    )
+  }
+  if (is.null(out)) stop("Could not retrieve expression matrix from assay/layer.")
+  out
+}
+
+make_tcri_group <- function(score_vec,
+                            high_cutoff = 0.80,
+                            mid_cutoff = 0.50,
+                            use_quantile = TRUE,
+                            high_quantile = 0.90,
+                            mid_quantile = 0.50) {
+  x <- suppressWarnings(as.numeric(score_vec))
+  out <- rep(NA_character_, length(x))
+
+  finite_x <- x[is.finite(x)]
+  if (length(finite_x) == 0) return(out)
+
+  bounded_01 <- min(finite_x, na.rm = TRUE) >= 0 && max(finite_x, na.rm = TRUE) <= 1
+
+  if (bounded_01 || !use_quantile) {
+    hi <- high_cutoff
+    mid <- mid_cutoff
+  } else {
+    hi <- as.numeric(quantile(finite_x, probs = high_quantile, na.rm = TRUE))
+    mid <- as.numeric(quantile(finite_x, probs = mid_quantile, na.rm = TRUE))
+  }
+
+  dplyr::case_when(
+    is.na(x) ~ NA_character_,
+    x >= hi ~ "High",
+    x >= mid ~ "Intermediate",
+    TRUE ~ "Low"
+  )
+}
+
+compute_group_enrichment <- function(df, group_col, label_col, min_cells = 5) {
+  df %>%
+    filter(!is.na(.data[[group_col]]), !is.na(.data[[label_col]])) %>%
+    count(.data[[group_col]], .data[[label_col]], name = "n") %>%
+    group_by(.data[[group_col]]) %>%
+    mutate(group_total = sum(n), frac_in_group = n / group_total) %>%
+    ungroup() %>%
+    group_by(.data[[label_col]]) %>%
+    mutate(label_total = sum(n), frac_in_label = n / label_total) %>%
+    ungroup() %>%
+    filter(n >= min_cells)
+}
+
+sanitize_param_string <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NULL)
+  trimws(gsub("\\u00A0", " ", as.character(x)))
+}
+
+normalize_colnames <- function(df) {
+  colnames(df) <- trimws(gsub("\\u00A0", " ", colnames(df)))
+  df
+}
+
+split_candidate_string <- function(x) {
+  if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(character())
+  x <- gsub('"', "", as.character(x))
+  x <- trimws(unlist(strsplit(x, ";", fixed = TRUE)))
+  x[nzchar(x)]
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  df <- normalize_colnames(df)
+  preferred <- sanitize_param_string(preferred)
+
+  if (length(candidates) == 1 && is.character(candidates)) {
+    candidates <- split_candidate_string(candidates)
+  }
+  candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
+
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+
+  NULL
+}
+
+choose_col <- function(df, primary = NULL, fallback = NULL) {
+  nm <- colnames(df)
+  if (!is.null(primary) && primary != "" && primary %in% nm) return(primary)
+  if (!is.null(fallback) && fallback != "" && fallback %in% nm) return(fallback)
+  NULL
+}
+
+safe_percent <- function(x, denom) ifelse(denom > 0, x / denom, NA_real_)
+
+# sanitize_param_string <- function(x) {
+#   if (is.null(x) || length(x) == 0) return(NULL)
+#   trimws(gsub("\\u00A0", " ", as.character(x)))
+# }
+# 
+# normalize_colnames <- function(df) {
+#   colnames(df) <- trimws(gsub("\\u00A0", " ", colnames(df)))
+#   df
+# }
+# 
+# split_candidate_string <- function(x) {
+#   if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(character())
+#   x <- gsub('"', "", as.character(x))
+#   x <- trimws(unlist(strsplit(x, ";", fixed = TRUE)))
+#   x[nzchar(x)]
+# }
+# 
+# first_existing_col <- function(df, preferred, candidates = character()) {
+#   df <- normalize_colnames(df)
+#   preferred <- sanitize_param_string(preferred)
+# 
+#   if (length(candidates) == 1 && is.character(candidates)) {
+#     candidates <- split_candidate_string(candidates)
+#   }
+#   candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
+# 
+#   if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+# 
+#   hits <- intersect(candidates, colnames(df))
+#   if (length(hits) > 0) return(hits[[1]])
+# 
+#   NULL
+# }
+# 
+# choose_col <- function(df, primary = NULL, fallback = NULL) {
+#   nm <- colnames(df)
+#   if (!is.null(primary) && primary != "" && primary %in% nm) return(primary)
+#   if (!is.null(fallback) && fallback != "" && fallback %in% nm) return(fallback)
+#   NULL
+# }
+
+```
+
+## load-and-resolve
+```{r}
+#| label: load-and-resolve
+stopifnot(file.exists(params$seurat_rds))
+seu <- readRDS(params$seurat_rds)
+md <- normalize_colnames(seu@meta.data)
+seu@meta.data <- md
+
+label_col <- first_existing_col(md, params$label_col, params$label_candidates)
+clone_id_col <- first_existing_col(md, params$clone_id_col, params$clone_id_candidates)
+clone_size_col <- first_existing_col(md, params$clone_size_col, params$clone_size_candidates)
+paired_tcr_col <- first_existing_col(md, params$paired_tcr_col, params$paired_tcr_candidates)
+has_tcr_col <- first_existing_col(md, params$has_tcr_col, params$has_tcr_candidates)
+sample_col <- first_existing_col(md, params$sample_col, params$sample_candidates)
+patient_col <- first_existing_col(md, params$patient_col, params$patient_candidates)
+condition_col <- first_existing_col(md, params$condition_col, params$condition_candidates)
+timepoint_col <- first_existing_col(md, params$timepoint_col, params$timepoint_candidates)
+batch_col <- first_existing_col(md, params$batch_col, params$batch_candidates)
+
+if (is.null(label_col)) stop("Could not resolve annotation label column.")
+if (is.null(clone_id_col)) stop("Could not resolve clone_id column.")
+if (is.null(clone_size_col)) stop("Could not resolve clone_size column.")
+if (is.null(has_tcr_col)) stop("Could not resolve has_tcr column.")
+if (is.null(paired_tcr_col)) stop("Could not resolve paired_tcr column.")
+if (is.null(sample_col)) stop("Could not resolve sample column.")
+if (is.null(patient_col)) stop("Could not resolve patient column.")
+if (is.null(condition_col)) stop("Could not resolve condition column.")
+if (is.null(timepoint_col)) stop("Could not resolve timepoint column.")
+
+if (!"META_SAMPLE" %in% colnames(seu@meta.data) && !is.null(sample_col)) {
+  seu$META_SAMPLE <- as.character(seu@meta.data[[sample_col]])
+}
+if (!"META_PATIENT" %in% colnames(seu@meta.data) && !is.null(patient_col)) {
+  seu$META_PATIENT <- as.character(seu@meta.data[[patient_col]])
+}
+if (!"META_TIMECOND" %in% colnames(seu@meta.data) && !is.null(condition_col)) {
+  seu$META_TIMECOND <- as.character(seu@meta.data[[condition_col]])
+}
+if (!"META_TIMEPOINT" %in% colnames(seu@meta.data) && !is.null(timepoint_col)) {
+  seu$META_TIMEPOINT <- as.character(seu@meta.data[[timepoint_col]])
+}
+if (!"META_BATCH" %in% colnames(seu@meta.data) && !is.null(batch_col)) {
+  seu$META_BATCH <- as.character(seu@meta.data[[batch_col]])
+}
+
+print(list(
+  resolved_label_col = label_col,
+  resolved_clone_id_col = clone_id_col,
+  resolved_clone_size_col = clone_size_col,
+  resolved_sample_col = sample_col,
+  resolved_patient_col = patient_col,
+  resolved_condition_col = condition_col,
+  resolved_timepoint_col = timepoint_col,
+  resolved_batch_col = batch_col
+))
+# #| label: load-and-resolve
+# stopifnot(file.exists(params$seurat_rds))
+# seu <- readRDS(params$seurat_rds)
+# md <- normalize_colnames(seu@meta.data)
+# seu@meta.data <- md
+# 
+# label_col <- first_existing_col(md, params$label_col, params$label_candidates)
+# clone_id_col <- first_existing_col(md, params$clone_id_col, params$clone_id_candidates)
+# clone_size_col <- first_existing_col(md, params$clone_size_col, params$clone_size_candidates)
+# paired_tcr_col <- first_existing_col(md, params$paired_tcr_col, params$paired_tcr_candidates)
+# has_tcr_col <- first_existing_col(md, params$has_tcr_col, params$has_tcr_candidates)
+# sample_col <- first_existing_col(md, params$sample_col, params$sample_candidates)
+# patient_col <- first_existing_col(md, params$patient_col, params$patient_candidates)
+# condition_col <- first_existing_col(md, params$condition_col, params$condition_candidates)
+# timepoint_col <- first_existing_col(md, params$timepoint_col, params$timepoint_candidates)
+# batch_col <- first_existing_col(md, params$batch_col, params$batch_candidates)
+# 
+# if (is.null(label_col)) stop("Could not resolve annotation label column.")
+# if (is.null(clone_id_col)) stop("Could not resolve clone_id column.")
+# if (is.null(has_tcr_col)) stop("Could not resolve has_tcr column.")
+# if (is.null(paired_tcr_col)) stop("Could not resolve paired_tcr column.")
+# if (is.null(sample_col)) stop("Could not resolve sample column.")
+# if (is.null(patient_col)) stop("Could not resolve patient column.")
+# if (is.null(condition_col)) stop("Could not resolve condition column.")
+# if (is.null(timepoint_col)) stop("Could not resolve timepoint column.")
+# 
+# if (!"META_SAMPLE" %in% colnames(seu@meta.data) && !is.null(sample_col)) {
+#   seu$META_SAMPLE <- as.character(seu@meta.data[[sample_col]])
+# }
+# if (!"META_PATIENT" %in% colnames(seu@meta.data) && !is.null(patient_col)) {
+#   seu$META_PATIENT <- as.character(seu@meta.data[[patient_col]])
+# }
+# if (!"META_TIMECOND" %in% colnames(seu@meta.data) && !is.null(condition_col)) {
+#   seu$META_TIMECOND <- as.character(seu@meta.data[[condition_col]])
+# }
+# if (!"META_TIMEPOINT" %in% colnames(seu@meta.data) && !is.null(timepoint_col)) {
+#   seu$META_TIMEPOINT <- as.character(seu@meta.data[[timepoint_col]])
+# }
+# if (!"META_BATCH" %in% colnames(seu@meta.data) && !is.null(batch_col)) {
+#   seu$META_BATCH <- as.character(seu@meta.data[[batch_col]])
+# }
+# 
+# print(list(
+#   resolved_label_col = label_col,
+#   resolved_clone_id_col = clone_id_col,
+#   resolved_sample_col = sample_col,
+#   resolved_patient_col = patient_col,
+#   resolved_condition_col = condition_col,
+#   resolved_timepoint_col = timepoint_col,
+#   resolved_batch_col = batch_col
+# ))
+```
+
+## subset-and-embeddin
+```{r}
+#| label: subset-and-embedding
+if (isTRUE(params$subset_to_tcr_positive)) {
+  keep <- !is.na(seu@meta.data[[has_tcr_col]]) & as.logical(seu@meta.data[[has_tcr_col]])
+  seu <- subset(seu, cells = rownames(seu@meta.data)[keep])
+}
+
+if (isTRUE(params$subset_to_paired_tcr)) {
+  keep <- !is.na(seu@meta.data[[paired_tcr_col]]) & as.logical(seu@meta.data[[paired_tcr_col]])
+  seu <- subset(seu, cells = rownames(seu@meta.data)[keep])
+}
+
+if (ncol(seu) < params$min_cells_total) {
+  stop("Too few cells after subsetting for TCRi. Found: ", ncol(seu))
+}
+
+reduction_to_use <- params$reduction_use
+if (!(reduction_to_use %in% names(seu@reductions)) && isTRUE(params$make_umap_if_missing)) {
+  seu <- safe_make_umap(
+    seu,
+    reduction_name = params$reduction_use,
+    dims = 1:params$umap_dims_max,
+    nfeatures = params$umap_nfeatures
+  )
+}
+if (!(reduction_to_use %in% names(seu@reductions))) {
+  reduction_to_use <- if ("umap" %in% names(seu@reductions)) "umap" else if ("tsne" %in% names(seu@reductions)) "tsne" else if ("pca" %in% names(seu@reductions)) "pca" else stop("No usable embedding found.")
+}
+```
+
+## prepare-tcri-inputs
+```{r}
+#| label: prepare-tcri-inputs
+assay_use <- sanitize_param_string(params$assay_use)
+layer_use <- sanitize_param_string(params$layer_use)
+
+if (is.null(assay_use) || assay_use == "") {
+  stop("params$assay_use is missing or empty.")
+}
+if (is.null(layer_use) || layer_use == "") {
+  layer_use <- "data"
+}
+
+message(sprintf("1. Extracting '%s' layer from '%s' assay...", layer_use, assay_use))
+
+available_assays <- Seurat::Assays(seu)
+if (!assay_use %in% available_assays) {
+  stop(sprintf(
+    "Assay '%s' not found in Seurat object. Available assays: %s",
+    assay_use, paste(available_assays, collapse = ", ")
+  ))
+}
+
+if (inherits(seu[[assay_use]], "Assay5")) {
+  message("Detected Seurat v5 Assay. Joining layers...")
+  seu <- tryCatch({
+    SeuratObject::JoinLayers(seu, assay = assay_use)
+  }, error = function(e) {
+    message("JoinLayers skipped: ", conditionMessage(e))
+    seu
+  })
+}
+
+avail_layers <- tryCatch(
+  SeuratObject::Layers(seu[[assay_use]]),
+  error = function(e) character(0)
+)
+
+avail_layers <- as.character(avail_layers)
+avail_layers <- avail_layers[!is.na(avail_layers) & nzchar(avail_layers)]
+
+message("Available layers detected: ", if (length(avail_layers) > 0) paste(avail_layers, collapse = ", ") else "<none detected>")
+
+if (length(avail_layers) > 0 && !(layer_use %in% avail_layers) && ("counts" %in% avail_layers)) {
+  message(sprintf(
+    "Layer '%s' is missing! Found 'counts' layer. Running LogNormalize on the fly...",
+    layer_use
+  ))
+  seu <- Seurat::NormalizeData(
+    seu,
+    assay = assay_use,
+    normalization.method = "LogNormalize",
+    scale.factor = 10000
+  )
+
+  avail_layers <- tryCatch(
+    SeuratObject::Layers(seu[[assay_use]]),
+    error = function(e) character(0)
+  )
+  avail_layers <- as.character(avail_layers)
+  avail_layers <- avail_layers[!is.na(avail_layers) & nzchar(avail_layers)]
+}
+
+expr <- tryCatch({
+  Seurat::GetAssayData(seu, assay = assay_use, layer = layer_use)
+}, error = function(e) {
+  tryCatch({
+    Seurat::GetAssayData(seu, assay = assay_use, slot = layer_use)
+  }, error = function(e2) NULL)
+})
+
+if (is.null(expr) || ncol(expr) == 0) {
+  avail_layers_txt <- if (length(avail_layers) > 0) paste(avail_layers, collapse = ", ") else "<none detected>"
+  stop(sprintf(
+    "Matrix extraction failed! The layer/slot '%s' is empty or missing in assay '%s'. Available layers are: %s",
+    layer_use, assay_use, avail_layers_txt
+  ))
+}
+
+if (is.null(colnames(expr)) && ncol(expr) == ncol(seu)) colnames(expr) <- colnames(seu)
+if (is.null(rownames(expr)) && nrow(expr) == nrow(seu)) rownames(expr) <- rownames(seu)
+
+expr <- suppressWarnings(as(expr, "dgCMatrix"))
+
+message(sprintf("Extraction successful: %d genes across %d cells.", nrow(expr), ncol(expr)))
+
+message("2. Building Metadata with Python-Safe Hardening...")
+md <- normalize_colnames(seu@meta.data)
+
+sample_col_export    <- choose_col(md, "META_SAMPLE", sample_col)
+patient_col_export   <- choose_col(md, "META_PATIENT", patient_col)
+condition_col_export <- choose_col(md, "META_TIMECOND", condition_col)
+timepoint_col_export <- choose_col(md, "META_TIMEPOINT", timepoint_col)
+batch_col_export     <- choose_col(md, "META_BATCH", batch_col)
+
+harden_meta <- function(col_name, default_val) {
+  if (!is.null(col_name) && col_name %in% colnames(md)) {
+    val <- as.character(md[[col_name]])
+    val[is.na(val) | trimws(val) == "" | val == "NA" | val == "<NA>"] <- "Unknown"
+    return(val)
+  } else {
+    return(rep(default_val, nrow(md)))
+  }
+}
+
+obs_df <- data.frame(cell_id = rownames(md), stringsAsFactors = FALSE)
+
+obs_df$phenotype  <- harden_meta(label_col, "Unknown")
+obs_df$clone_id   <- harden_meta(clone_id_col, "None")
+obs_df$clone_size <- if (!is.null(clone_size_col) && clone_size_col %in% colnames(md)) {
+  suppressWarnings(as.numeric(md[[clone_size_col]]))
+} else {
+  rep(0, nrow(md))
+}
+
+obs_df$sample     <- harden_meta(sample_col_export, "Sample1")
+obs_df$patient    <- harden_meta(patient_col_export, "Patient1")
+obs_df$condition  <- harden_meta(condition_col_export, "Condition1")
+obs_df$timepoint  <- harden_meta(timepoint_col_export, "T1")
+obs_df$batch      <- harden_meta(batch_col_export, "Batch1")
+
+safe_extract_log <- function(col) {
+  if (!is.null(col) && col %in% colnames(md)) {
+    as.logical(md[[col]])
+  } else {
+    rep(FALSE, nrow(md))
+  }
+}
+
+obs_df$paired_tcr <- safe_extract_log(paired_tcr_col)
+obs_df$has_tcr    <- safe_extract_log(has_tcr_col)
+
+obs_df <- obs_df[obs_df$phenotype != "Unknown" & obs_df$clone_id != "None", , drop = FALSE]
+
+message("3. Synchronizing Matrix and Metadata...")
+valid_cells <- as.character(intersect(colnames(expr), obs_df$cell_id))
+
+if (length(valid_cells) == 0) {
+  stop("Zero cells matched between the expression matrix and the TCR metadata.")
+}
+
+expr <- expr[, valid_cells, drop = FALSE]
+obs_df <- obs_df[obs_df$cell_id %in% valid_cells, , drop = FALSE]
+
+pheno_counts <- table(obs_df$phenotype)
+keep_pheno <- names(pheno_counts)[pheno_counts >= params$min_cells_per_phenotype]
+obs_df <- obs_df[obs_df$phenotype %in% keep_pheno, , drop = FALSE]
+
+final_cells <- as.character(obs_df$cell_id)
+expr <- expr[, final_cells, drop = FALSE]
+
+if (ncol(expr) < params$min_cells_total) {
+  stop("Too few cells remain after phenotype/clonotype filtering for TCRi.")
+}
+
+message("4. Exporting files...")
+var_df <- data.frame(gene = rownames(expr), row.names = rownames(expr), stringsAsFactors = FALSE)
+
+mm_file   <- file.path(params$outdir, params$data_dir, "tcri_expr.mtx")
+obs_file  <- file.path(params$outdir, params$data_dir, "tcri_obs.tsv")
+var_file  <- file.path(params$outdir, params$data_dir, "tcri_var.tsv")
+
+Matrix::writeMM(expr, mm_file)
+write.table(obs_df, obs_file, sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(var_df, var_file, sep = "\t", quote = FALSE, row.names = FALSE)
+
+message("TCRi Inputs successfully prepared. Missing metadata columns were filled with placeholders.")
+print(colSums(!is.na(obs_df[, c("sample", "patient", "condition", "timepoint", "batch")])))
+
+# #| label: prepare-tcri-inputs
+# assay_use <- params$assay_use
+# layer_use <- params$layer_use
+# 
+# message(sprintf("1. Extracting '%s' layer from '%s' assay...", layer_use, assay_use))
+# 
+# # Safely check if assay exists
+# if (!assay_use %in% Seurat::Assays(seu)) {
+#   stop(sprintf("Assay '%s' not found in Seurat object. Available assays: %s", 
+#                assay_use, paste(Seurat::Assays(seu), collapse = ", ")))
+# }
+# 
+# # If this is a Seurat v5 object with split layers, join them first
+# if (inherits(seu[[assay_use]], "Assay5")) {
+#   message("Detected Seurat v5 Assay. Joining layers...")
+#   seu <- tryCatch({
+#     SeuratObject::JoinLayers(seu, assay = assay_use)
+#   }, error = function(e) seu)
+# }
+# 
+# # --- AUTO-NORMALIZATION FAILSAFE ---
+# avail_layers <- SeuratObject::Layers(seu[[assay_use]])
+# if (!layer_use %in% avail_layers && "counts" %in% avail_layers) {
+#   message(sprintf("Layer '%s' is missing! Found 'counts' layer. Running LogNormalize on the fly...", layer_use))
+#   seu <- Seurat::NormalizeData(seu, assay = assay_use, normalization.method = "LogNormalize", scale.factor = 10000)
+# }
+# 
+# # Robust Extraction
+# expr <- tryCatch({
+#   Seurat::GetAssayData(seu, assay = assay_use, layer = layer_use) # v5 argument
+# }, error = function(e) {
+#   tryCatch({
+#     Seurat::GetAssayData(seu, assay = assay_use, slot = layer_use) # v4 argument
+#   }, error = function(e2) NULL)
+# })
+# 
+# # Safety Net
+# if (is.null(expr) || ncol(expr) == 0) {
+#   avail_layers <- paste(SeuratObject::Layers(seu[[assay_use]]), collapse = ", ")
+#   stop(sprintf("Matrix extraction failed! The layer/slot '%s' is empty or missing in assay '%s'. Available layers are: %s", 
+#                layer_use, assay_use, avail_layers))
+# }
+# 
+# # Attach dimnames only if sizes match perfectly
+# if (is.null(colnames(expr)) && ncol(expr) == ncol(seu)) colnames(expr) <- colnames(seu)
+# if (is.null(rownames(expr)) && nrow(expr) == nrow(seu)) rownames(expr) <- rownames(seu)
+# 
+# # Force to pure sparse matrix
+# expr <- suppressWarnings(as(expr, "dgCMatrix"))
+# 
+# message(sprintf("Extraction successful: %d genes across %d cells.", nrow(expr), ncol(expr)))
+# 
+# message("2. Building Metadata with Python-Safe Hardening...")
+# md <- seu@meta.data
+# 
+# # HELPER FUNCTION: Prevents Python 'ValueError' by ensuring columns are not all NA
+# # If column is missing, uses default_val. If column has NAs, replaces with "Unknown".
+# harden_meta <- function(col_name, default_val) {
+#   if (!is.null(col_name) && col_name %in% colnames(md)) {
+#     val <- as.character(md[[col_name]])
+#     val[is.na(val) | val == "" | val == "NA"] <- "Unknown"
+#     return(val)
+#   } else {
+#     return(rep(default_val, nrow(md)))
+#   }
+# }
+# 
+# obs_df <- data.frame(cell_id = rownames(md), stringsAsFactors = FALSE)
+# 
+# # Core identifiers (Must be valid)
+# obs_df$phenotype  <- harden_meta(label_col, "Unknown")
+# obs_df$clone_id   <- harden_meta(clone_id_col, "None")
+# obs_df$clone_size <- if(!is.null(clone_size_col) && clone_size_col %in% colnames(md)) suppressWarnings(as.numeric(md[[clone_size_col]])) else 0
+# 
+# # Covariates and Batch Keys (The focus of the fix)
+# obs_df$sample     <- harden_meta(sample_col, "Sample1")
+# obs_df$patient    <- harden_meta(patient_col, "Patient1")
+# obs_df$condition  <- harden_meta(condition_col, "Condition1")
+# obs_df$timepoint  <- harden_meta(timepoint_col, "T1")
+# obs_df$batch      <- harden_meta(batch_col, "Batch1")
+# 
+# # Boolean flags
+# safe_extract_log <- function(col) if (!is.null(col) && col %in% colnames(md)) as.logical(md[[col]]) else FALSE
+# obs_df$paired_tcr <- safe_extract_log(paired_tcr_col)
+# obs_df$has_tcr    <- safe_extract_log(has_tcr_col)
+# 
+# # Filter for valid cells (Must have phenotype and clone_id)
+# obs_df <- obs_df[obs_df$phenotype != "Unknown" & obs_df$clone_id != "None", ]
+# 
+# message("3. Synchronizing Matrix and Metadata...")
+# valid_cells <- as.character(intersect(colnames(expr), obs_df$cell_id))
+# 
+# if (length(valid_cells) == 0) {
+#   stop("Zero cells matched between the expression matrix and the TCR metadata.")
+# }
+# 
+# expr <- expr[, valid_cells, drop = FALSE]
+# obs_df <- obs_df[obs_df$cell_id %in% valid_cells, ]
+# 
+# # Filter rare phenotypes
+# pheno_counts <- table(obs_df$phenotype)
+# keep_pheno <- names(pheno_counts)[pheno_counts >= params$min_cells_per_phenotype]
+# obs_df <- obs_df[obs_df$phenotype %in% keep_pheno, ]
+# 
+# # Final strict subset
+# final_cells <- as.character(obs_df$cell_id)
+# expr <- expr[, final_cells, drop = FALSE]
+# 
+# if (ncol(expr) < params$min_cells_total) {
+#   stop("Too few cells remain after phenotype/clonotype filtering for TCRi.")
+# }
+# 
+# message("4. Exporting files...")
+# var_df <- data.frame(gene = rownames(expr), row.names = rownames(expr), stringsAsFactors = FALSE)
+# 
+# mm_file   <- file.path(params$outdir, params$data_dir, "tcri_expr.mtx")
+# obs_file  <- file.path(params$outdir, params$data_dir, "tcri_obs.tsv")
+# var_file  <- file.path(params$outdir, params$data_dir, "tcri_var.tsv")
+# 
+# Matrix::writeMM(expr, mm_file)
+# write.table(obs_df, obs_file, sep = "\t", quote = FALSE, row.names = FALSE)
+# write.table(var_df, var_file, sep = "\t", quote = FALSE, row.names = FALSE)
+# 
+# message("TCRi Inputs successfully prepared. Missing metadata columns were filled with placeholders.")
+
+```
+
+# run-tcri
+```{r}
+#| label: run-tcri
+
+python_bin <- params$python_bin
+if (is.null(python_bin) || python_bin == "") {
+  stop("params$python_bin must point to the working Python executable for TCRi.")
+}
+
+scores_file <- file.path(params$outdir, params$tables_dir, "tcri_scores.tsv")
+adata_file  <- file.path(params$outdir, params$data_dir, "tcri_model_output.h5ad")
+py_script   <- file.path(params$outdir, params$data_dir, "run_tcri.py")
+log_file    <- file.path(params$outdir, params$tables_dir, "tcri_python_stdout_stderr.log")
+
+cat("Using python_bin:", python_bin, "\n")
+
+py_lines <- c(
+  "import os",
+  "os.environ['TQDM_DISABLE'] = '1'",
+  "os.environ['PYTHONWARNINGS'] = 'ignore'",
+  "import scipy.io",
+  "import pandas as pd",
+  "import anndata as ad",
+  "import numpy as np",
+  "import inspect",
+  "import tcri",
+  "from tcri.model import TCRIModel",
+  "import tcri.preprocessing as pp",
+  "print('tcri module path:', getattr(tcri, '__file__', 'NA'))",
+  "print('tcri attrs sample:', [x for x in dir(tcri) if 'TCRI' in x or x in ['pp','pl','tl']])",
+  "",
+  sprintf("mm_file = r'''%s'''", mm_file),
+  sprintf("obs_file = r'''%s'''", obs_file),
+  sprintf("var_file = r'''%s'''", var_file),
+  sprintf("scores_file = r'''%s'''", scores_file),
+  sprintf("adata_file = r'''%s'''", adata_file),
+  "",
+  "X = scipy.io.mmread(mm_file).T.tocsr()",
+  "obs = pd.read_csv(obs_file, sep='\\t')",
+  "var = pd.read_csv(var_file, sep='\\t')",
+  "",
+  "obs = obs.set_index('cell_id')",
+  "var = var.set_index('gene')",
+  "",
+  "adata = ad.AnnData(X=X, obs=obs, var=var)",
+  "adata.obs_names = obs.index.astype(str)",
+  "adata.var_names = var.index.astype(str)",
+  "",
+  "print('adata.obs non-null counts:')",
+  "print(adata.obs.notna().sum())",
+  "print('timepoint unique values:')",
+  "print(adata.obs['timepoint'].dropna().astype(str).unique() if 'timepoint' in adata.obs.columns else 'MISSING')",
+  "print('batch unique values:')",
+  "print(adata.obs['batch'].dropna().astype(str).unique() if 'batch' in adata.obs.columns else 'MISSING')",
+  "",
+  "print('TCRIModel.setup_anndata signature:', inspect.signature(TCRIModel.setup_anndata))",
+  "setup_sig = inspect.signature(TCRIModel.setup_anndata)",
+  "setup_kwargs = {}",
+  "",
+  "def has_real_values(series):",
+  "    s = series.dropna().astype(str).str.strip()",
+  "    s = s[~s.isin(['', 'nan', 'NA', '<NA>', 'None'])]",
+  "    return len(s) > 0",
+  "",
+  "if 'phenotype_key' in setup_sig.parameters and 'phenotype' in adata.obs.columns:",
+  "    if has_real_values(adata.obs['phenotype']):",
+  "        setup_kwargs['phenotype_key'] = 'phenotype'",
+  "",
+  "if 'labels_key' in setup_sig.parameters and 'phenotype' in adata.obs.columns:",
+  "    if has_real_values(adata.obs['phenotype']):",
+  "        setup_kwargs['labels_key'] = 'phenotype'",
+  "",
+  "if 'clonotype_key' in setup_sig.parameters and 'clone_id' in adata.obs.columns:",
+  "    if has_real_values(adata.obs['clone_id']):",
+  "        setup_kwargs['clonotype_key'] = 'clone_id'",
+  "",
+  "if 'clone_key' in setup_sig.parameters and 'clone_id' in adata.obs.columns:",
+  "    if has_real_values(adata.obs['clone_id']):",
+  "        setup_kwargs['clone_key'] = 'clone_id'",
+  "",
+  "if 'tcr_key' in setup_sig.parameters and 'clone_id' in adata.obs.columns:",
+  "    if has_real_values(adata.obs['clone_id']):",
+  "        setup_kwargs['tcr_key'] = 'clone_id'",
+  "",
+  "if 'batch_key' in setup_sig.parameters and 'batch' in adata.obs.columns:",
+  "    if has_real_values(adata.obs['batch']):",
+  "        setup_kwargs['batch_key'] = 'batch'",
+  "",
+  "if 'covariate_key' in setup_sig.parameters and 'timepoint' in adata.obs.columns:",
+  "    if has_real_values(adata.obs['timepoint']):",
+  "        setup_kwargs['covariate_key'] = 'timepoint'",
+  "",
+  "# use adata.X directly for this installed TCRI version",
+  "if 'layer' in setup_sig.parameters:",
+  "    setup_kwargs['layer'] = None",
+  "",
+  "print('setup_kwargs:', setup_kwargs)",
+  "TCRIModel.setup_anndata(adata, **setup_kwargs)",
+  "print('setup_anndata completed')",
+  "",
+  sprintf(
+    "model = TCRIModel(adata, n_latent=%d, n_hidden=%d, global_scale=%s, local_scale=%s, prior_temperature=%s, guide_temperature=%s, use_enumeration=%s, device=None)",
+    as.integer(params$n_latent),
+    as.integer(params$n_hidden),
+    as.character(params$global_scale),
+    as.character(params$local_scale),
+    as.character(params$prior_temperature),
+    as.character(params$guide_temperature),
+    ifelse(isTRUE(params$use_enumeration), "True", "False")
+  ),
+  "",
+  "print('Preparing model.train() arguments...')",
+  sprintf("max_epochs = %d", as.integer(params$max_epochs)),
+  sprintf("batch_size = %d", as.integer(params$batch_size)),
+  sprintf("lr = %s", as.character(params$learning_rate)),
+  sprintf("margin_scale = %s", as.character(params$margin_scale)),
+  sprintf("margin_value = %s", as.character(params$margin_value)),
+  sprintf("adaptive_margin = %s", ifelse(isTRUE(params$adaptive_margin), "True", "False")),
+  sprintf("reconstruction_loss_scale = %s", as.character(params$reconstruction_loss_scale)),
+  sprintf("n_steps_kl_warmup = %d", as.integer(params$n_steps_kl_warmup)),
+  "",
+  "train_sig = inspect.signature(model.train)",
+  "train_kwargs = {'max_epochs': max_epochs, 'batch_size': batch_size}",
+  "",
+  "plan_vals = {'lr': lr, 'margin_scale': margin_scale, 'margin_value': margin_value,",
+  "             'adaptive_margin': adaptive_margin, 'reconstruction_loss_scale': reconstruction_loss_scale,",
+  "             'n_steps_kl_warmup': n_steps_kl_warmup}",
+  "",
+  "if 'plan_kwargs' in train_sig.parameters:",
+  "    train_kwargs['plan_kwargs'] = plan_vals",
+  "else:",
+  "    for p in plan_vals:",
+  "        if p in train_sig.parameters:",
+  "            train_kwargs[p] = plan_vals[p]",
+  "",
+  "print('TCRIModel.train signature:', train_sig)",
+  "print('Final train_kwargs:', train_kwargs)",
+  "model.train(**train_kwargs)",
+  "print('model.train completed')",
+  "",
+  "# compatibility for installed TCRI preprocessing helpers",
+  "if 'clone_id' in adata.obs.columns and 'trb_unique' not in adata.obs.columns:",
+  "    adata.obs['trb_unique'] = adata.obs['clone_id'].astype(str)",
+  "",
+  sprintf(
+    "pp.register_model(adata, model, phenotype_prob_slot='X_tcri_phenotypes', phenotype_assignment_obs='tcri_predicted_phenotype', latent_slot='X_tcri', batch_size=%d)",
+    as.integer(params$batch_size)
+  ),
+  "",
+  "scores = pd.DataFrame(index=adata.obs.index)",
+  "scores['cell_id'] = scores.index.astype(str)",
+  "",
+  "if 'X_tcri_phenotypes' in adata.obsm.keys():",
+  "    probs = np.asarray(adata.obsm['X_tcri_phenotypes'])",
+  "    scores['tcri_score'] = probs.max(axis=1)",
+  "else:",
+  "    scores['tcri_score'] = np.nan",
+  "",
+  "if 'tcri_predicted_phenotype' in adata.obs.columns:",
+  "    scores['tcri_predicted_phenotype'] = adata.obs['tcri_predicted_phenotype'].astype(str)",
+  "else:",
+  "    scores['tcri_predicted_phenotype'] = np.nan",
+  "",
+  "if 'X_tcri' in adata.obsm.keys():",
+  "    latent = np.asarray(adata.obsm['X_tcri'])",
+  "    scores['tcri_latent_norm'] = np.sqrt((latent ** 2).sum(axis=1))",
+  "else:",
+  "    scores['tcri_latent_norm'] = np.nan",
+  "",
+  "scores.to_csv(scores_file, sep='\\t', index=False)",
+  "",
+  sprintf("save_h5ad = %s", ifelse(isTRUE(params$save_h5ad), "True", "False")),
+  "if save_h5ad:",
+  "    adata.write_h5ad(adata_file)"
+)
+
+writeLines(py_lines, py_script)
+
+res <- system2(
+  python_bin,
+  args = c(py_script),
+  stdout = TRUE,
+  stderr = TRUE
+)
+
+status <- attr(res, "status")
+if (is.null(status)) status <- 0L
+
+writeLines(res, log_file)
+
+if (status != 0L) {
+  stop(
+    paste0(
+      "TCRi Python script failed with exit status ", status, ".\n",
+      "See log: ", log_file, "\n\n",
+      paste(res, collapse = "\n")
+    )
+  )
+} else {
+  cat("TCRi Python run completed successfully. Detailed logs were saved to:\n")
+  cat(log_file, "\n")
+}
+
+# res <- system2(
+#   python_bin,
+#   args = c(py_script),
+#   stdout = TRUE,
+#   stderr = TRUE
+# )
+# 
+# status <- attr(res, "status")
+# if (is.null(status)) status <- 0L
+# 
+# writeLines(res, log_file)
+# cat(paste(res, collapse = "\n"), "\n")
+# 
+# if (status != 0L) {
+#   stop(
+#     paste0(
+#       "TCRi Python script failed with exit status ", status, ".\n",
+#       "See log: ", log_file, "\n\n",
+#       paste(res, collapse = "\n")
+#     )
+#   )
+# }
+
+if (!file.exists(scores_file)) {
+  stop(
+    paste0(
+      "TCRi Python script exited without creating scores_file.\n",
+      "Expected: ", scores_file, "\n",
+      "See log: ", log_file, "\n\n",
+      paste(res, collapse = "\n")
+    )
+  )
+}
+```
+
+# merge-back-into-seurat
+```{r}
+#| label: merge-back-into-seurat
+tcri_scores <- fread(scores_file) %>% as.data.frame()
+
+tcri_scores <- tcri_scores %>%
+  mutate(
+    cell_id = as.character(cell_id),
+    tcri_score = suppressWarnings(as.numeric(tcri_score)),
+    tcri_predicted_phenotype = as.character(tcri_predicted_phenotype),
+    tcri_latent_norm = suppressWarnings(as.numeric(tcri_latent_norm)),
+    tcri_group = make_tcri_group(
+      tcri_score,
+      high_cutoff = params$tcri_high_cutoff,
+      mid_cutoff = params$tcri_mid_cutoff,
+      use_quantile = params$use_quantile_cutoffs_if_score_not_bounded,
+      high_quantile = params$high_quantile,
+      mid_quantile = params$mid_quantile
+    )
+  )
+
+md_dt <- as.data.table(seu@meta.data, keep.rownames = "cell_id")
+setkey(md_dt, cell_id)
+
+tcri_dt <- as.data.table(tcri_scores)
+setkey(tcri_dt, cell_id)
+
+md_dt <- tcri_dt[md_dt]
+
+rn <- md_dt$cell_id
+md_dt$cell_id <- NULL
+seu@meta.data <- as.data.frame(md_dt)
+rownames(seu@meta.data) <- rn
+
+save_rds_safe(seu, "seurat_tcells_with_TCRi.rds")
+save_table_safe(tcri_scores, "tcri_scores.tsv")
+```
+
+
+## build-export
+```{r}
+#| label: build-export
+embed_df <- as.data.frame(Embeddings(seu, reduction_to_use)) %>%
+  tibble::rownames_to_column("cell_id")
+
+sample_col_export    <- choose_col(seu@meta.data, "META_SAMPLE", sample_col)
+patient_col_export   <- choose_col(seu@meta.data, "META_PATIENT", patient_col)
+condition_col_export <- choose_col(seu@meta.data, "META_TIMECOND", condition_col)
+timepoint_col_export <- choose_col(seu@meta.data, "META_TIMEPOINT", timepoint_col)
+batch_col_export     <- choose_col(seu@meta.data, "META_BATCH", batch_col)
+
+export_cells <- seu@meta.data %>%
+  tibble::rownames_to_column("cell_id") %>%
+  transmute(
+    cell_id,
+    sample = if (!is.null(sample_col_export)) as.character(.data[[sample_col_export]]) else NA_character_,
+    patient = if (!is.null(patient_col_export)) as.character(.data[[patient_col_export]]) else NA_character_,
+    condition = if (!is.null(condition_col_export)) as.character(.data[[condition_col_export]]) else NA_character_,
+    timepoint = if (!is.null(timepoint_col_export)) as.character(.data[[timepoint_col_export]]) else NA_character_,
+    batch = if (!is.null(batch_col_export)) as.character(.data[[batch_col_export]]) else NA_character_,
+    annot = as.character(.data[[label_col]]),
+    clone_id = as.character(.data[[clone_id_col]]),
+    clone_size = suppressWarnings(as.numeric(.data[[clone_size_col]])),
+    has_tcr = as.logical(.data[[has_tcr_col]]),
+    paired_tcr = as.logical(.data[[paired_tcr_col]]),
+    tcri_score = suppressWarnings(as.numeric(.data[["tcri_score"]])),
+    tcri_group = as.character(.data[["tcri_group"]]),
+    tcri_predicted_phenotype = as.character(.data[["tcri_predicted_phenotype"]]),
+    tcri_latent_norm = suppressWarnings(as.numeric(.data[["tcri_latent_norm"]]))
+  ) %>%
+  left_join(embed_df, by = "cell_id")
+
+print(colSums(!is.na(export_cells[, c("sample", "patient", "condition", "timepoint", "batch")])))
+save_table_safe(export_cells, "tcri_export_cells.tsv")
+
+
+# #| label: build-export
+# embed_df <- as.data.frame(Embeddings(seu, reduction_to_use)) %>%
+#   tibble::rownames_to_column("cell_id")
+# 
+# sample_col_export    <- choose_col(seu@meta.data, "META_SAMPLE", sample_col)
+# patient_col_export   <- choose_col(seu@meta.data, "META_PATIENT", patient_col)
+# condition_col_export <- choose_col(seu@meta.data, "META_TIMECOND", condition_col)
+# timepoint_col_export <- choose_col(seu@meta.data, "META_TIMEPOINT", timepoint_col)
+# batch_col_export     <- choose_col(seu@meta.data, "META_BATCH", batch_col)
+# 
+# export_cells <- seu@meta.data %>%
+#   tibble::rownames_to_column("cell_id") %>%
+#   transmute(
+#     cell_id,
+#     sample = if (!is.null(sample_col_export)) as.character(.data[[sample_col_export]]) else NA_character_,
+#     patient = if (!is.null(patient_col_export)) as.character(.data[[patient_col_export]]) else NA_character_,
+#     condition = if (!is.null(condition_col_export)) as.character(.data[[condition_col_export]]) else NA_character_,
+#     timepoint = if (!is.null(timepoint_col_export)) as.character(.data[[timepoint_col_export]]) else NA_character_,
+#     batch = if (!is.null(batch_col_export)) as.character(.data[[batch_col_export]]) else NA_character_,
+#     annot = as.character(.data[[label_col]]),
+#     clone_id = as.character(.data[[clone_id_col]]),
+#     clone_size = suppressWarnings(as.numeric(.data[[clone_size_col]])),
+#     has_tcr = as.logical(.data[[has_tcr_col]]),
+#     paired_tcr = as.logical(.data[[paired_tcr_col]]),
+#     tcri_score = suppressWarnings(as.numeric(.data[["tcri_score"]])),
+#     tcri_group = as.character(.data[["tcri_group"]]),
+#     tcri_predicted_phenotype = as.character(.data[["tcri_predicted_phenotype"]]),
+#     tcri_latent_norm = suppressWarnings(as.numeric(.data[["tcri_latent_norm"]]))
+#   ) %>%
+#   left_join(embed_df, by = "cell_id")
+# 
+# print(colSums(!is.na(export_cells[, c("sample", "patient", "condition", "timepoint")])))
+# save_table_safe(export_cells, "tcri_export_cells.tsv")
+
+```
+
+
+## summary tables
+```{r}
+#| label: summary-tables
+summary_rollup <- tibble(
+  metric = c(
+    "Report label",
+    "Cells modeled",
+    "Cells with TCRi score",
+    "Fraction with TCRi score",
+    "TCR-positive cells",
+    "Paired TCR cells",
+    "Unique annotations",
+    "Unique clones",
+    "Selected embedding"
+  ),
+  value = c(
+    params$report_label,
+    nrow(export_cells),
+    sum(!is.na(export_cells$tcri_score)),
+    sprintf("%.2f%%", 100 * mean(!is.na(export_cells$tcri_score))),
+    sum(export_cells$has_tcr, na.rm = TRUE),
+    sum(export_cells$paired_tcr, na.rm = TRUE),
+    length(unique(na.omit(export_cells$annot))),
+    length(unique(na.omit(export_cells$clone_id))),
+    reduction_to_use
+  )
+)
+save_table_safe(summary_rollup, "tcri_summary_rollup.tsv")
+
+tcri_group_summary <- export_cells %>%
+  filter(!is.na(tcri_group)) %>%
+  count(tcri_group, name = "n_cells") %>%
+  mutate(frac = n_cells / sum(n_cells))
+save_table_safe(tcri_group_summary, "tcri_group_summary.tsv")
+
+annotation_tcri_summary <- export_cells %>%
+  filter(!is.na(tcri_score), !is.na(annot)) %>%
+  group_by(annot) %>%
+  summarise(
+    n_cells = n(),
+    mean_tcri = mean(tcri_score, na.rm = TRUE),
+    median_tcri = median(tcri_score, na.rm = TRUE),
+    sd_tcri = sd(tcri_score, na.rm = TRUE),
+    n_high = sum(tcri_group == "High", na.rm = TRUE),
+    frac_high = n_high / n_cells,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_tcri))
+save_table_safe(annotation_tcri_summary, "annotation_tcri_summary.tsv")
+
+sample_tcri_summary <- export_cells %>%
+  filter(!is.na(tcri_score), !is.na(sample)) %>%
+  group_by(sample) %>%
+  summarise(
+    n_cells = n(),
+    mean_tcri = mean(tcri_score, na.rm = TRUE),
+    median_tcri = median(tcri_score, na.rm = TRUE),
+    n_high = sum(tcri_group == "High", na.rm = TRUE),
+    frac_high = n_high / n_cells,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_tcri))
+save_table_safe(sample_tcri_summary, "sample_tcri_summary.tsv")
+
+if (any(!is.na(export_cells$condition))) {
+  condition_tcri_summary <- export_cells %>%
+    filter(!is.na(tcri_score), !is.na(condition)) %>%
+    group_by(condition) %>%
+    summarise(
+      n_cells = n(),
+      mean_tcri = mean(tcri_score, na.rm = TRUE),
+      median_tcri = median(tcri_score, na.rm = TRUE),
+      n_high = sum(tcri_group == "High", na.rm = TRUE),
+      frac_high = n_high / n_cells,
+      .groups = "drop"
+    )
+  save_table_safe(condition_tcri_summary, "condition_tcri_summary.tsv")
+}
+
+if (any(!is.na(export_cells$patient))) {
+  patient_tcri_summary <- export_cells %>%
+    filter(!is.na(tcri_score), !is.na(patient)) %>%
+    group_by(patient) %>%
+    summarise(
+      n_cells = n(),
+      mean_tcri = mean(tcri_score, na.rm = TRUE),
+      median_tcri = median(tcri_score, na.rm = TRUE),
+      n_high = sum(tcri_group == "High", na.rm = TRUE),
+      frac_high = n_high / n_cells,
+      .groups = "drop"
+    )
+  save_table_safe(patient_tcri_summary, "patient_tcri_summary.tsv")
+}
+
+if (any(!is.na(export_cells$timepoint))) {
+  timepoint_tcri_summary <- export_cells %>%
+    filter(!is.na(tcri_score), !is.na(timepoint)) %>%
+    group_by(timepoint) %>%
+    summarise(
+      n_cells = n(),
+      mean_tcri = mean(tcri_score, na.rm = TRUE),
+      median_tcri = median(tcri_score, na.rm = TRUE),
+      n_high = sum(tcri_group == "High", na.rm = TRUE),
+      frac_high = n_high / n_cells,
+      .groups = "drop"
+    )
+  save_table_safe(timepoint_tcri_summary, "timepoint_tcri_summary.tsv")
+}
+
+high_tcri_clone_summary <- export_cells %>%
+  filter(!is.na(clone_id), clone_id != "", !is.na(tcri_group), clone_size >= params$min_clone_size_for_assoc) %>%
+  group_by(clone_id, clone_size) %>%
+  summarise(
+    n_cells = n(),
+    n_high = sum(tcri_group == "High", na.rm = TRUE),
+    frac_high = n_high / n_cells,
+    mean_tcri = mean(tcri_score, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(frac_high), desc(mean_tcri), desc(clone_size)) %>%
+  slice_head(n = params$top_n_high_tcri_clones)
+save_table_safe(high_tcri_clone_summary, "high_tcri_clone_summary.tsv")
+
+group_annotation_enrichment <- compute_group_enrichment(
+  export_cells,
+  group_col = "tcri_group",
+  label_col = "annot",
+  min_cells = params$min_cells_per_group
+)
+save_table_safe(group_annotation_enrichment, "tcri_group_annotation_enrichment.tsv")
+```
+
+## overview
+```{r}
+#| label: overview
+kable(summary_rollup, caption = "High-level overview of TCRi analysis.") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+# TCRi score distributions
+```{r}
+#| label: density-plot
+if (isTRUE(params$show_density_plot)) {
+  p_density <- export_cells %>%
+    filter(!is.na(tcri_score)) %>%
+    ggplot(aes(x = tcri_score)) +
+    geom_density(fill = "steelblue", alpha = 0.5, linewidth = 0.8) +
+    labs(
+      title = "Distribution of TCRi scores",
+      subtitle = "Per-cell TCRi score defined as max predicted phenotype probability.",
+      x = "TCRi score",
+      y = "Density"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_density
+  save_plot_safe(p_density, glue("tcri_score_density.{params$figure_format}"))
+}
+```
+
+## tcri-feature-plot
+```{r}
+#| label: feature-plot
+if (isTRUE(params$show_feature_plot)) {
+  p_feature <- FeaturePlot(
+    seu,
+    reduction = reduction_to_use,
+    features = "tcri_score",
+    raster = isTRUE(params$raster_large_umap)
+  ) +
+    ggtitle("Embedding overlay: TCRi score") +
+    theme_scratch_pub(params$base_size)
+
+  p_feature
+  save_plot_safe(p_feature, glue("tcri_feature_plot.{params$figure_format}"), width = 8, height = 6)
+}
+```
+
+# tcri-group-umap
+```{r}
+#| label: group-umap
+if (isTRUE(params$show_group_umap)) {
+  p_group <- DimPlot(
+    seu,
+    reduction = reduction_to_use,
+    group.by = "tcri_group",
+    label = FALSE,
+    raster = isTRUE(params$raster_large_umap)
+  ) +
+    ggtitle("Embedding overlay: TCRi group") +
+    theme_scratch_pub(params$base_size)
+
+  p_group
+  save_plot_safe(p_group, glue("tcri_group_umap.{params$figure_format}"), width = 8, height = 6)
+}
+```
+
+# TCRi by annotation
+```{r}
+#| label: violin-by-annotation
+if (isTRUE(params$show_violin_by_annotation)) {
+  annot_order <- annotation_tcri_summary %>%
+    arrange(desc(mean_tcri)) %>%
+    pull(annot)
+
+  p_violin_annot <- export_cells %>%
+    filter(!is.na(tcri_score), !is.na(annot)) %>%
+    mutate(annot = factor(annot, levels = annot_order)) %>%
+    ggplot(aes(x = annot, y = tcri_score, fill = annot)) +
+    geom_violin(scale = "width", trim = TRUE, alpha = 0.8) +
+    geom_boxplot(width = 0.12, outlier.size = 0.2, fill = "white") +
+    coord_flip() +
+    guides(fill = "none") +
+    labs(
+      title = "TCRi score by annotation",
+      subtitle = "Violin + boxplot summary across annotated T-cell states.",
+      x = NULL,
+      y = "TCRi score"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_violin_annot
+  save_plot_safe(p_violin_annot, glue("tcri_violin_by_annotation.{params$figure_format}"), width = 10, height = 8)
+}
+
+```
+
+# boxplots-by-group TCRi by sample / condition / patient / timepoint
+```{r}
+#| label: boxplots-by-group
+plot_box_by_group <- function(df, group_col, title_txt, filename) {
+  min_cells_use <- if (!is.null(params$min_cells_per_group) && length(params$min_cells_per_group) == 1) {
+    params$min_cells_per_group
+  } else {
+    10
+  }
+
+  tmp <- df %>%
+    filter(!is.na(tcri_score), !is.na(.data[[group_col]])) %>%
+    group_by(.data[[group_col]]) %>%
+    mutate(group_n = n()) %>%
+    ungroup() %>%
+    filter(group_n >= min_cells_use)
+
+  if (nrow(tmp) == 0) return(NULL)
+
+  group_summary <- tmp %>%
+    group_by(.data[[group_col]]) %>%
+    summarise(mean_tcri = mean(tcri_score, na.rm = TRUE), .groups = "drop")
+
+  group_levels <- group_summary %>%
+    arrange(desc(mean_tcri)) %>%
+    pull(.data[[group_col]])
+
+  p <- tmp %>%
+    mutate(.group = factor(.data[[group_col]], levels = group_levels)) %>%
+    ggplot(aes(x = .group, y = tcri_score, fill = .group)) +
+    geom_boxplot(outlier.size = 0.3, alpha = 0.85) +
+    coord_flip() +
+    guides(fill = "none") +
+    labs(
+      title = title_txt,
+      x = NULL,
+      y = "TCRi score"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p)
+  save_plot_safe(p, filename)
+  invisible(p)
+}
+
+
+if (isTRUE(params$show_boxplots_by_sample) && any(!is.na(export_cells$sample))) {
+  plot_box_by_group(export_cells, "sample", "TCRi score by sample", glue("tcri_boxplot_by_sample.{params$figure_format}"))
+}
+if (isTRUE(params$show_boxplots_by_condition) && any(!is.na(export_cells$condition))) {
+  plot_box_by_group(export_cells, "condition", "TCRi score by condition", glue("tcri_boxplot_by_condition.{params$figure_format}"))
+}
+if (isTRUE(params$show_boxplots_by_patient) && any(!is.na(export_cells$patient))) {
+  plot_box_by_group(export_cells, "patient", "TCRi score by patient", glue("tcri_boxplot_by_patient.{params$figure_format}"))
+}
+if (isTRUE(params$show_boxplots_by_timepoint) && any(!is.na(export_cells$timepoint))) {
+  plot_box_by_group(export_cells, "timepoint", "TCRi score by timepoint", glue("tcri_boxplot_by_timepoint.{params$figure_format}"))
+}
+```
+
+## TCRi and clone size
+```{r}
+#| label: score-vs-clone-size
+if (isTRUE(params$show_score_vs_clone_size)) {
+  p_clone_assoc <- export_cells %>%
+    filter(!is.na(tcri_score), !is.na(clone_size), clone_size > 0) %>%
+    ggplot(aes(x = clone_size, y = tcri_score)) +
+    geom_point(alpha = 0.35, size = 1.1) +
+    scale_x_log10() +
+    geom_smooth(method = "lm", se = TRUE, color = "firebrick") +
+    labs(
+      title = "Association between clone size and TCRi score",
+      subtitle = "Clone size shown on log10 scale.",
+      x = "Clone size (log10 scale)",
+      y = "TCRi score"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_clone_assoc
+  save_plot_safe(p_clone_assoc, glue("tcri_vs_clone_size.{params$figure_format}"))
+}
+```
+
+# High-TCRi clone summaries
+```{r}
+#| label: high-tcri-clone-heatmap
+
+if (isTRUE(params$show_high_tcri_clone_heatmap) && nrow(high_tcri_clone_summary) > 0) {
+
+  top_clone_ids <- high_tcri_clone_summary$clone_id
+
+  mat_df <- export_cells %>%
+    filter(clone_id %in% top_clone_ids, !is.na(annot), annot != "") %>%
+    count(clone_id, annot, name = "n_cells") %>%
+    tidyr::pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+    as.data.frame()
+
+  if (nrow(mat_df) > 0 && ncol(mat_df) > 1) {
+    rownames(mat_df) <- mat_df$clone_id
+    mat_df$clone_id <- NULL
+    mat <- as.matrix(mat_df)
+
+    # keep row order consistent with high_tcri_clone_summary where possible
+    row_order_keep <- intersect(top_clone_ids, rownames(mat))
+    mat <- mat[row_order_keep, , drop = FALSE]
+
+    max_mat <- max(mat, na.rm = TRUE)
+    if (!is.finite(max_mat) || max_mat <= 0) max_mat <- 1
+
+    ht <- ComplexHeatmap::Heatmap(
+      mat,
+      name = "Cells",
+      col = circlize::colorRamp2(
+        c(0, max_mat / 2, max_mat),
+        c("white", "gold", "firebrick")
+      ),
+      cluster_rows = TRUE,
+      cluster_columns = TRUE,
+      row_names_side = "left",
+      row_names_gp = grid::gpar(fontsize = 6),
+      column_names_gp = grid::gpar(fontsize = 9),
+      column_names_rot = 45,
+      column_title = "Annotation occupancy of top high-TCRi clonotypes",
+      heatmap_legend_param = list(title = "Cells"),
+      width = grid::unit(max(5, ncol(mat) * 0.8), "in"),
+      height = grid::unit(max(5, nrow(mat) * 0.18), "in")
+    )
+
+    ComplexHeatmap::draw(
+      ht,
+      heatmap_legend_side = "right"
+    )
+  } else {
+    cat("High-TCRi clone heatmap skipped: insufficient clone-by-annotation matrix after filtering.")
+  }
+}
+
+# if (isTRUE(params$show_high_tcri_clone_heatmap) && nrow(high_tcri_clone_summary) > 0) {
+#   top_clone_ids <- high_tcri_clone_summary$clone_id
+# 
+#   mat_df <- export_cells %>%
+#     filter(clone_id %in% top_clone_ids, !is.na(annot)) %>%
+#     count(clone_id, annot, name = "n_cells") %>%
+#     tidyr::pivot_wider(names_from = annot, values_from = n_cells, values_fill = 0) %>%
+#     as.data.frame()
+# 
+#   rownames(mat_df) <- mat_df$clone_id
+#   mat_df$clone_id <- NULL
+#   mat <- as.matrix(mat_df)
+# 
+#   ht <- Heatmap(
+#     mat,
+#     name = "Cells",
+#     col = colorRamp2(
+#       c(0, max(mat, na.rm = TRUE) / 2, max(mat, na.rm = TRUE)),
+#       c("white", "gold", "firebrick")
+#     ),
+#     cluster_rows = TRUE,
+#     cluster_columns = TRUE,
+#     row_names_side = "left",
+#     column_title = "Annotation occupancy of top high-TCRi clonotypes",
+#     heatmap_legend_param = list(title = "Cells")
+#   )
+# 
+#   draw(ht)
+# }
+```
+
+## TCRi group enrichment across annotations
+```{r}
+#| label: annotation-enrichment
+if (isTRUE(params$show_annotation_enrichment) && nrow(group_annotation_enrichment) > 0) {
+  enrich_plot_df <- group_annotation_enrichment %>%
+    filter(!is.na(tcri_group), !is.na(annot)) %>%
+    mutate(annot = fct_reorder(annot, frac_in_group, .fun = max))
+
+  p_enrich <- ggplot(enrich_plot_df, aes(x = annot, y = frac_in_group, fill = tcri_group)) +
+    geom_col(position = "dodge") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "Annotation enrichment across TCRi groups",
+      subtitle = "Fraction of each TCRi group represented by each annotation.",
+      x = NULL,
+      y = "Fraction within TCRi group",
+      fill = "TCRi group"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_enrich
+  save_plot_safe(p_enrich, glue("tcri_group_annotation_enrichment.{params$figure_format}"), width = 10, height = 8)
+}
+```
+
+# Summary tables
+```{r}
+#| label: summary-tables-display
+kable(tcri_group_summary, caption = "TCRi group composition.") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+kable(annotation_tcri_summary %>% slice_head(n = params$top_n_states_table),
+      caption = "Top annotations ranked by mean TCRi score.") %>%
+  kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+if (nrow(high_tcri_clone_summary) > 0) {
+  kable(high_tcri_clone_summary,
+        caption = "Top clonotypes enriched for high TCRi scores.") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+}
+```
+
+# warnings
+```{r}
+#| label: warnings
+condition_missing <- is.null(condition_col_export) || all(is.na(export_cells$condition))
+patient_missing   <- is.null(patient_col_export)   || all(is.na(export_cells$patient))
+timepoint_missing <- is.null(timepoint_col_export) || all(is.na(export_cells$timepoint))
+
+warn_tbl <- tibble(
+  warning = c(
+    "Few cells with TCRi scores",
+    "Low paired TCR fraction among modeled cells",
+    "Few phenotype classes after filtering",
+    "Condition metadata unresolved or empty after export",
+    "Patient metadata unresolved or empty after export",
+    "Timepoint metadata unresolved or empty after export"
+  ),
+  triggered = c(
+    mean(!is.na(export_cells$tcri_score)) < 0.5,
+    mean(export_cells$paired_tcr, na.rm = TRUE) < 0.3,
+    length(unique(na.omit(export_cells$annot))) < 3,
+    condition_missing,
+    patient_missing,
+    timepoint_missing
+  ),
+  interpretation = c(
+    "Less than half the modeled cells received a TCRi score. Verify Python TCRi execution and cell alignment.",
+    "Among modeled cells, paired TCR fraction is low. Interpretation should consider incomplete receptor pairing.",
+    "Very few phenotype classes remained after filtering. Lower min_cells_per_phenotype if biologically appropriate.",
+    "Condition-level summaries were skipped because condition metadata were not resolved or retained correctly in the exported TCRi table.",
+    "Patient-level summaries were skipped because patient metadata were not resolved or retained correctly in the exported TCRi table.",
+    "Timepoint-level summaries were skipped because timepoint metadata were not resolved or retained correctly in the exported TCRi table."
+  )
+) %>%
+  filter(triggered)
+
+if (nrow(warn_tbl) == 0) {
+  cat("No major automatic warnings were triggered under the current TCRi settings.")
+} else {
+  print(
+    kable(
+      warn_tbl %>% select(-triggered),
+      caption = "Automatically generated TCRi warnings and notes."
+    ) %>%
+      kable_styling(
+        full_width = TRUE,
+        bootstrap_options = c("striped", "hover", "condensed")
+      )
+  )
+}
+
+```
+
+# session-info
+```{r}
+#| label: session-info
+
+dir.create(file.path(params$outdir, params$data_dir), recursive = TRUE, showWarnings = FALSE)
+saveRDS(seu, file.path(params$outdir, params$data_dir, "seurat_with_TCRi.rds"))
+
+
+writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.tcri.txt"))
+sessionInfo()
+```

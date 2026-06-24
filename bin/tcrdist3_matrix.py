@@ -185,19 +185,38 @@ if __name__ == "__main__":
 
     df = pd.read_table(args.sample_tsv, delimiter = '\t')
 
-    df = df[['sequence', 'junction_aa', 'v_call', 'duplicate_count']]
+    # Normalise SC-derived CDR3b/TRBV/TRBJ/counts columns to AIRR names
+    df = df.rename(columns={
+        'CDR3b': 'junction_aa',
+        'TRBV':  'v_call',
+        'TRBJ':  'j_call',
+        'counts': 'duplicate_count',
+    })
+    if 'sequence' not in df.columns:
+        df['sequence'] = df['junction_aa']
+
+    df = df[['sequence', 'junction_aa', 'v_call', 'j_call', 'duplicate_count']]
 
     df = df.rename(columns={'sequence': 'cdr3_b_nucseq',
                         'junction_aa': 'cdr3_b_aa',
                         'v_call': 'v_b_gene',
+                        'j_call': 'j_b_gene',
                         'duplicate_count': 'count'
                         })
 
     df = df[df['cdr3_b_aa'].notna()]
     df = df[df['v_b_gene'].notna()]
+    df = df[df['j_b_gene'].notna()]
 
-    # If allele information is not specified (as indicated by *00), replace with *01
-    df['v_b_gene'] = df['v_b_gene'].apply(lambda x: x.replace('*00', '*01'))
+    def _fix_allele(gene):
+        if not isinstance(gene, str):
+            return gene
+        if '*' not in gene:
+            return gene + '*01'
+        return gene.replace('*00', '*01')
+
+    df['v_b_gene'] = df['v_b_gene'].apply(_fix_allele)
+    df['j_b_gene'] = df['j_b_gene'].apply(_fix_allele)
 
     # --- 2. Calculate distance matrix ---
     # Levenshtein distance matrix

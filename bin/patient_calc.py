@@ -45,7 +45,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-i", "--input",
         required=True,
-        help="Concatenated TSV with sample, junction_aa, duplicate_count"
+        help="Concatenated TSV with sample, CDR3b, counts"
     )
     parser.add_argument(
         "-p", "--patient",
@@ -60,20 +60,20 @@ if __name__ == "__main__":
     df = pd.read_csv(
         args.input,
         sep="\t",
-        usecols=["sample", "junction_aa", "duplicate_count"]
+        usecols=["sample", "CDR3b", "counts"]
     )
 
-    df = df.dropna(subset=["sample", "junction_aa"])
+    df = df.dropna(subset=["sample", "CDR3b"])
 
-    df["duplicate_count"] = pd.to_numeric(
-        df["duplicate_count"], errors="coerce"
+    df["counts"] = pd.to_numeric(
+        df["counts"], errors="coerce"
     ).fillna(0)
 
     # -------------------------
     # Pre-aggregate (critical optimization)
     # -------------------------
     df = (
-        df.groupby(["sample", "junction_aa"], as_index=False)["duplicate_count"]
+        df.groupby(["sample", "CDR3b"], as_index=False)["counts"]
         .sum()
     )
 
@@ -87,8 +87,8 @@ if __name__ == "__main__":
     # -------------------------
     pivot = df.pivot(
         index="sample",
-        columns="junction_aa",
-        values="duplicate_count"
+        columns="CDR3b",
+        values="counts"
     ).fillna(0)
 
     # Ensure consistent ordering
