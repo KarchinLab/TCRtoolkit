@@ -37,3 +37,5 @@ With the update to [Nextflow strict syntax](https://docs.seqera.io/nextflow/stri
 nextflow run KarchinLab/TCRtoolkit \
     -params-file params.yml
 ```
+[!IMPORTANT]
+If having an error similar to `qemu: uncaught target signal 11 (Segmentation fault) - core dumped` (observed on Mac OS Tahoe i.e. `26.5.1`), rebuild the Docker container locally, using the provided Dockerfile, and use that in the params, e.g. `--container <my image>`. It features arch selectors to pick the right `quarto` installation.
