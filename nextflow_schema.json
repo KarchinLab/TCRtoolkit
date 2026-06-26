@@ -111,6 +111,10 @@
         "compare_stats_template": {
           "type": "string",
           "description": "Path to compare notebook template."
+        },
+        "template_qc": {
+          "type": "string",
+          "description": "Path to QC notebook template."
         }
       }
     },

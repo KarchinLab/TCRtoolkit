@@ -16,6 +16,7 @@ include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 include { ANNOTATE }            from '../subworkflows/local/annotate'
+include { REPORT }              from '../subworkflows/local/report'
 
 include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
 
@@ -105,6 +106,29 @@ workflow TCRTOOLKIT {
             ANNOTATE.out.cdr3_pgen
         )
     }
+
+    // Notebooks - works on channel tuples [report name, [report files]]
+
+    // QC report requires sample-level aggregate outputs.
+    if (levels.contains('sample')) {
+        def sample_stats_agg = SAMPLE.out.sample_csv
+            .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
+
+        def ch_reports = sample_stats_agg
+            .combine(ANNOTATE.out.concat_cdr3_sorted)
+            .map { sample_stats_csv, concat_cdr3_sorted ->
+                tuple(
+                    file(params.template_qc),
+                    [sample_stats_csv,
+                    concat_cdr3_sorted]
+                )
+            }
+
+        REPORT( ch_reports )
+    } else {
+        println("\u001B[33m[WARN]\u001B[0m QC report skipped because workflow_level does not include 'sample'.")
+    }
+
 }
 
 /*
