@@ -107,27 +107,27 @@ workflow TCRTOOLKIT {
         )
     }
 
-    // Notebooks - works on channel tuples [report name, [report files]]
+    // Report - works on channel of tuples [report name, [report files]]
+    ch_reports = channel.empty()
 
     // QC report requires sample-level aggregate outputs.
-    if (levels.contains('sample')) {
-        def sample_stats_agg = SAMPLE.out.sample_csv
-            .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
+    ch_qc_report = SAMPLE.out.sample_csv
+        .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
+        .combine(ANNOTATE.out.concat_cdr3_sorted)
+        .map { sample_stats_csv, concat_cdr3_sorted ->
+            tuple(
+                file(params.template_qc),
+                [sample_stats_csv,
+                concat_cdr3_sorted]
+            )
+        }
+    ch_reports = ch_reports.mix(ch_qc_report)
 
-        def ch_reports = sample_stats_agg
-            .combine(ANNOTATE.out.concat_cdr3_sorted)
-            .map { sample_stats_csv, concat_cdr3_sorted ->
-                tuple(
-                    file(params.template_qc),
-                    [sample_stats_csv,
-                    concat_cdr3_sorted]
-                )
-            }
+    // Another report
+    // ch_reports = ch_reports.mix( ... )
 
-        REPORT( ch_reports )
-    } else {
-        println("\u001B[33m[WARN]\u001B[0m QC report skipped because workflow_level does not include 'sample'.")
-    }
+    REPORT( ch_reports )
+
 
 }
 
