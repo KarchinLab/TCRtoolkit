@@ -48,7 +48,6 @@ Thank you for using TCRtoolkit! This report is generated from the data provided.
 # ---------------------------------------------------------
 workflow_cmd = '<command used to run the pipeline>'
 project_name='<project_name>'
-project_dir='<path/to/project_dir>'
 sample_table='<path/to/sample_table.csv>'
 
 timepoint_col = 'timepoint'
@@ -66,9 +65,8 @@ subject_col = 'subject_id'
 # ---------------------------------------------------------
 
 # Define files 
-project_dir=f"{project_dir}/{project_name}"
-sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
-concat_file = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
+sample_stats_csv = "sample_stats.csv"
+concat_file = "concatenated_cdr3_sorted.tsv"
 
 
 ```
