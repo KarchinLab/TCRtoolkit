@@ -20,7 +20,6 @@ nextflow_process {
             process {
                 """
                 input[0] = [
-                    "test_notebook",
                     file("${projectDir}/tests/fixtures/test.qmd"),
                     "${projectDir}/tests/fixtures"
                 ]
