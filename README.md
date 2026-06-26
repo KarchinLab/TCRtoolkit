@@ -39,3 +39,59 @@ nextflow run KarchinLab/TCRtoolkit \
 ```
 [!IMPORTANT]
 If having an error similar to `qemu: uncaught target signal 11 (Segmentation fault) - core dumped` (observed on Mac OS Tahoe i.e. `26.5.1`), rebuild the Docker container locally, using the provided Dockerfile, and use that in the params, e.g. `--container <my image>`. It features arch selectors to pick the right `quarto` installation.
+
+## Input Formats
+ 
+`TCRtoolkit` accepts three input formats, specified via `--input_format`:
+ 
+| Format | Description |
+|---|---|
+| `adaptive` | Adaptive Biotechnologies output files |
+| `cellranger` | 10x Genomics CellRanger 'airr_rearrangement.tsv' output files (single-cell pseudo-bulk) |
+| `airr` | AIRR-compliant tab-separated files |
+ 
+## Workflow Levels
+ 
+The pipeline supports multiple levels of analysis, controlled by `--workflow_level`:
+ 
+| Level | Description |
+|---|---|
+| `sample` | Per-sample QC and repertoire statistics |
+| `patient` | Patient-level clonotype aggregation and comparison |
+| `compare` | Cross-cohort repertoire comparison and overlap |
+ 
+Levels can be combined: `--workflow_level sample,patient,compare`
+ 
+## HTML Reports
+ 
+After the pipeline finishes, `TCRtoolkit` generates interactive HTML reports using [Quarto](https://quarto.org/). Four main report notebooks are rendered automatically:
+ 
+| Notebook | Description |
+|---|---|
+| `template_qc.qmd` | Quality control metrics and filtering summary |
+| `template_discovery_brief.qmd` | Repertoire discovery most relevant information  |
+| `template_details_part1.qmd` | Detailed repertoire analysis, part 1 |
+| `template_details_part2.qmd` | Detailed repertoire analysis, part 2  |
+ 
+### Conditional Report Sections
+ 
+Certain sub-reports are automatically appended based on input and workflow options:
+ 
+- `--input_format cellranger` → includes single-cell phenotype report
+- `--input_format adaptive` → includes bulk phenotype report
+- `--workflow_level sample,patient,compare` (Patient workflow enabled) → includes patient-level clonotype analysis
+- `--use_gliph2` → additionally includes GLIPH2 clustering report
+
+## Key Parameters
+ 
+| Parameter | Default | Description |
+|---|---|---|
+| `--samplesheet` | — | Path or URL to sample sheet CSV |
+| `--outdir` | `out` | Output directory |
+| `--input_format` | `airr` | Input format: `airr`, `adaptive`, or `cellranger` |
+| `--workflow_level` | `sample,compare` | Analysis level(s): `sample`, `patient`, `compare` |
+| `--use_gliph2` | `false` | Enable GLIPH2 CDR3 motif clustering |
+| `--sobject_gex` | — | Path to TSV file containing cell-barcode phenotypes for pseudo-bulk phenotyping |
+| `--max_memory` | `768.GB` | Maximum memory allocation |
+| `--max_cpus` | `192` | Maximum CPU allocation |
+ 
