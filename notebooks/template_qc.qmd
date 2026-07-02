@@ -187,8 +187,7 @@ For $q=0$, this simplifies to $R$ (Total unique clonotypes). For $q=1$, the limi
 # --- 1. CALCULATION FUNCTION ---
 def calculate_diversity_metrics(df):
     results = []
-    # Check if 'counts' exists, if not try 'clone_count' or similar
-    count_col = 'counts' if 'counts' in df.columns else df.columns[0] # Fallback
+    count_col = 'duplicate_count' if 'duplicate_count' in df.columns else df.columns[0] # Fallback
 
     grouped = df.groupby('sample')
     for sample, data in grouped:
@@ -1016,14 +1015,14 @@ Where $|A \cap B|$ is the count of unique clonotypes shared by both samples, and
 # --- 1. CALCULATION FUNCTION (Only Jaccard) ---
 def calculate_overlaps(df):
     samples = sorted(df['sample'].unique())
-    clones = sorted(df['CDR3b'].unique())
+    clones = sorted(df['junction_aa'].unique())
 
     sample_map = {s: i for i, s in enumerate(samples)}
     clone_map = {c: i for i, c in enumerate(clones)}
 
     row_idx = df['sample'].map(sample_map).values
-    col_idx = df['CDR3b'].map(clone_map).values
-    values = df['counts'].values
+    col_idx = df['junction_aa'].map(clone_map).values
+    values = df['duplicate_count'].values
 
     n_samples = len(samples)
     n_clones = len(clones)
@@ -1836,7 +1835,7 @@ In an ideal experiment, **we would sequence until we reach saturation** (the poi
 #| fig-height: 5
 
 # --- 1. Merge the missing counts data ---
-total_counts = concat_df.groupby('sample')['counts'].sum().to_frame(name='total_counts')
+total_counts = concat_df.groupby('sample')['duplicate_count'].sum().to_frame(name='total_counts')
 bias_plot_df = plot_df.merge(total_counts, on='sample', how='inner')
 
 # --- 2. Setup Grouping Options ---
@@ -1976,8 +1975,8 @@ You **cannot fairly compare the diversity of a sample with 1 million reads to on
 # ---------------------------------------------------------
 
 qc_stats = concat_df.groupby('sample').agg(
-    sequencing_depth=('counts', 'sum'),
-    clonotype_richness=('CDR3b', 'nunique')
+    sequencing_depth=('duplicate_count', 'sum'),
+    clonotype_richness=('junction_aa', 'nunique')
 ).reset_index()
 
 # We extract just the metadata columns we need from  'df'
@@ -1998,7 +1997,7 @@ def get_rarefaction_curve(sample_df, sample, steps=50):
     """
     # Flat array where each element is a clone ID, repeated by its count
     # Use integer IDs for memory efficiency instead of strings
-    counts = sample_df['counts'].values
+    counts = sample_df['duplicate_count'].values
     n_reads = counts.sum()
 
     if n_reads == 0:
@@ -2132,9 +2131,9 @@ Metrics that measure **dominance** or **inequality** focus on the most abundant 
 # --- 1. PCA Calculation Function (Unchanged) ---
 def analyze_v_usage(df):
     """
-    Expects df with columns: ['sample', 'TRBV', 'counts']
+    Expects df with columns: ['sample', 'v_call', 'duplicate_count']
     """
-    matrix = df.groupby(['sample', 'TRBV'])['counts'].sum().unstack(fill_value=0)
+    matrix = df.groupby(['sample', 'v_call'])['duplicate_count'].sum().unstack(fill_value=0)
     freq_matrix = matrix.div(matrix.sum(axis=1), axis=0)
     
     scaler = StandardScaler()
@@ -2253,10 +2252,10 @@ This aggregates everything. We calculate Z-scores for every metric. If a sample 
 # CDR3 Length Distribution & Distances
 def analyze_cdr3_lengths(df):
     """
-    Expects df with columns: ['sample', 'CDR3b']
+    Expects df with columns: ['sample', 'junction_aa']
     """
     # Calculate lengths
-    df['cdr3_len'] = df['CDR3b'].apply(len)
+    df['cdr3_len'] = df['junction_aa'].apply(len)
 
     # 1. Basic Stats per sample
     stats = df.groupby('sample')['cdr3_len'].agg(
