@@ -53,7 +53,7 @@ sample_table='<path/to/sample_table.csv>'
 timepoint_col = 'timepoint'
 timepoint_order_col = 'timepoint_order'
 alias_col = 'alias'
-subject_col = 'subject_id'
+subject_col = 'patient'
 
 ```
 

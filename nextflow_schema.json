@@ -80,6 +80,11 @@
           "default": "copy",
           "enum": ["copy", "move", "link", "symlink"],
           "description": "Method used by `publishDir` to save outputs."
+        },
+        "container": {
+          "type": "string",
+          "description": "Docker/Singularity container image to use for pipeline processes.",
+          "fa_icon": "fas fa-box"
         }
       }
     },
@@ -128,7 +133,27 @@
         "samplechart_x_col": { "type": "string", "default": "timepoint" },
         "samplechart_color_col": { "type": "string", "default": "origin" },
         "vgene_subject_col": { "type": "string", "default": "patient" },
-        "vgene_x_cols": { "type": "string", "default": "origin,timepoint" }
+        "vgene_x_cols": { "type": "string", "default": "origin,timepoint" },
+        "subject_col": {
+          "type": "string",
+          "default": "patient",
+          "description": "Samplesheet column identifying the subject/patient."
+        },
+        "timepoint_col": {
+          "type": "string",
+          "default": "timepoint",
+          "description": "Samplesheet column identifying the timepoint."
+        },
+        "timepoint_order_col": {
+          "type": "string",
+          "default": "timepoint_order",
+          "description": "Samplesheet column giving the sort order of timepoints."
+        },
+        "alias_col": {
+          "type": "string",
+          "default": "alias",
+          "description": "Samplesheet column giving a display alias for each sample."
+        }
       }
     },
 
