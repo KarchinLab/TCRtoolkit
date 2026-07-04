@@ -28,7 +28,7 @@ nextflow_process {
                 def lines = path(samplesheet_utf8.get(0)).readLines()
                 assert lines.size() == 5  // Header + 4 data rows
                 // The output has UTF-8 BOM, so strip it for comparison
-                assert lines[0].replaceAll("^\uFEFF", "") == "sample,alias,patient,timepoint,origin,file"
+                assert lines[0].replaceAll("^\uFEFF", "") == "sample,patient,timepoint,origin,file"
                 assert lines[1].startsWith("Patient01_Base,Patient01,Base,tumor,")
             }
         }
@@ -79,7 +79,7 @@ nextflow_process {
             with(process.out) {
                 def lines = path(samplesheet_utf8.get(0)).readLines()
                 assert lines.size() == 1  // Only header
-                assert lines[0].replaceAll("^\uFEFF", "") == "sample,alias,patient,timepoint,origin,file"
+                assert lines[0].replaceAll("^\uFEFF", "") == "sample,patient,timepoint,origin,file"
             }
         }
     }
