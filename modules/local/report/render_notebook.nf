@@ -9,7 +9,7 @@ process RENDER_NOTEBOOK {
     val workflow_cmd
 
     output:
-    path "${notebook.getBaseName()}.html"
+    path "${notebook.getBaseName()}.html", emit: report_html
 
     script:
     """

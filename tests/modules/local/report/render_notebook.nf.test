@@ -31,12 +31,10 @@ nextflow_process {
 
         then {
             assert process.success
-            with(process.out) {
-                assert size() == 1
-                def html_file = get(0)
-                def html_path = path(html_file)
-                assert html_path.exists()
-                assert html_path.getFileName().toString().endsWith('.html')
+            with(process.out.report_html) {
+                def html_file = path(get(0))
+                assert html_file.exists()
+                assert html_file.getFileName().toString().endsWith('.html')
             }
         }
     }
