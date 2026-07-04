@@ -5,8 +5,8 @@ nextflow_process {
     process "RENDER_NOTEBOOK"
 
     test("Should render basic notebook") {
-        // note that on Mac M series, jupyter may fail in container
-        // so the test notebook uses knitr engine instead
+        // Note: this fixture uses the Jupyter `python3` engine (see tests/fixtures/test.qmd)
+        // If Jupyter kernels are not available in the container, this test will fail.
 
         tag "basic"
         tag "notebook"
@@ -21,7 +21,7 @@ nextflow_process {
                 """
                 input[0] = [
                     file("${projectDir}/tests/fixtures/test.qmd"),
-                    "${projectDir}/tests/fixtures"
+                    file("${projectDir}/tests/fixtures")
                 ]
                 input[1] = "TCRtoolkit"
                 input[2] = "nextflow run main.nf"
@@ -31,7 +31,13 @@ nextflow_process {
 
         then {
             assert process.success
-            assert process.out.size() == 1
+            with(process.out) {
+                assert size() == 1
+                def html_file = get(0)
+                def html_path = path(html_file)
+                assert html_path.exists()
+                assert html_path.getFileName().toString().endsWith('.html')
+            }
         }
     }
 

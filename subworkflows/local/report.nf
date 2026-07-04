@@ -13,13 +13,12 @@ include { RENDER_NOTEBOOK } from '../../modules/local/report/render_notebook'
 */
 
 // Single-channel listener: receives tuples of
-// (report_name, notebook_path, sample_stats_csv, concat_cdr3_sorted, data_dir)
+// (notebook_template, files_to_stage)
 // and renders each notebook to HTML.
 workflow REPORT {
 
     take:
-    ch_reports // channel of tuples: tuple(val report_name, path notebook, path sample_stats_csv, path concat_cdr3_sorted, val data_dir)
-
+    ch_reports // channel of tuples: tuple(path notebook_template, path files_to_stage)
     main:
     RENDER_NOTEBOOK(
         ch_reports,
@@ -28,7 +27,5 @@ workflow REPORT {
     )
 
     emit:
-
-    RENDER_NOTEBOOK.out
-
+        rendered_html = RENDER_NOTEBOOK.out
 }
