@@ -16,6 +16,7 @@ include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 include { ANNOTATE }            from '../subworkflows/local/annotate'
+include { REPORT }              from '../subworkflows/local/report'
 
 include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
 
@@ -105,6 +106,29 @@ workflow TCRTOOLKIT {
             ANNOTATE.out.cdr3_pgen
         )
     }
+
+    // Report - works on channel of tuples [report name, [report files]]
+    ch_reports = channel.empty()
+
+    // QC report requires sample-level aggregate outputs.
+    ch_qc_report = SAMPLE.out.sample_csv
+        .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
+        .combine(ANNOTATE.out.concat_cdr3_sorted)
+        .map { sample_stats_csv, concat_cdr3_sorted ->
+            tuple(
+                file(params.template_qc),
+                [sample_stats_csv,
+                concat_cdr3_sorted]
+            )
+        }
+    ch_reports = ch_reports.mix(ch_qc_report)
+
+    // Another report
+    // ch_reports = ch_reports.mix( ... )
+
+    REPORT( ch_reports )
+
+
 }
 
 /*

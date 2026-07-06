@@ -7,6 +7,9 @@ on:
       - 'main'
   workflow_dispatch:
 
+env:
+  DEFAULT_CONTAINER: ${{ vars.CONTAINER || 'ghcr.io/karchinlab/tcrtoolkit:main' }}
+
 jobs:
   unit-tests:
     name: Unit Tests
@@ -16,6 +19,22 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
+
+      - &resolve_test_container
+        name: Resolve test container
+        shell: bash
+        env:
+          IMAGE_BASE: ghcr.io/${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          container="$DEFAULT_CONTAINER"
+          if [[ "$container" == 'ghcr.io/karchinlab/tcrtoolkit:main' ]]; then
+            candidate="$IMAGE_BASE:${SOURCE_SHA::7}"
+            if docker manifest inspect "$candidate" >/dev/null 2>&1; then
+              container="$candidate"
+            fi
+          fi
+          echo "CONTAINER=$container" >> "$GITHUB_ENV"
 
       - name: Setup Java
         uses: actions/setup-java@v2
@@ -61,6 +80,8 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
+
+      - *resolve_test_container
 
       - name: Setup Java
         uses: actions/setup-java@v2

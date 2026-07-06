@@ -1,0 +1,42 @@
+nextflow_process {
+
+    name "Test RENDER_NOTEBOOK"
+    script "modules/local/report/render_notebook.nf"
+    process "RENDER_NOTEBOOK"
+
+    test("Should render basic notebook") {
+        // Note: this fixture uses the Jupyter `python3` engine (see tests/fixtures/test.qmd)
+        // If Jupyter kernels are not available in the container, this test will fail.
+
+        tag "basic"
+        tag "notebook"
+
+        when {
+            params {
+                samplesheet = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+
+            process {
+                """
+                input[0] = [
+                    file("${projectDir}/tests/fixtures/test.qmd"),
+                    file("${projectDir}/tests/fixtures")
+                ]
+                input[1] = "TCRtoolkit"
+                input[2] = "nextflow run main.nf"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.report_html) {
+                def html_file = path(get(0))
+                assert html_file.exists()
+                assert html_file.getFileName().toString().endsWith('.html')
+            }
+        }
+    }
+
+}

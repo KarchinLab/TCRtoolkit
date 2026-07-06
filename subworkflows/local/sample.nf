@@ -110,4 +110,6 @@ workflow SAMPLE {
 
     VDJDB_VDJMATCH (processed_samples, VDJDB_GET.out.ref_db)
 
+    emit:
+        sample_csv = SAMPLE_CALC.out.sample_csv
 }
