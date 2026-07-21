@@ -21,7 +21,83 @@ nextflow_process {
                 """
                 input[0] = [
                     file("${projectDir}/tests/fixtures/test.qmd"),
-                    file("${projectDir}/tests/fixtures")
+                    file("${projectDir}/tests/fixtures"),
+                    []
+                ]
+                input[1] = "TCRtoolkit"
+                input[2] = "nextflow run main.nf"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.report_html) {
+                def html_file = path(get(0))
+                assert html_file.exists()
+                assert html_file.getFileName().toString().endsWith('.html')
+            }
+        }
+    }
+
+    test("Should stage files into a nested project_dir layout") {
+        // Verifies the staged_layout mechanism used by notebooks that read from a
+        // project_dir/<subdir>/<file> tree (e.g. template_discovery_brief.qmd)
+        // instead of bare relative filenames.
+
+        tag "notebook"
+        tag "staged_layout"
+
+        when {
+            params {
+                samplesheet = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+
+            process {
+                """
+                input[0] = [
+                    file("${projectDir}/tests/fixtures/test.qmd"),
+                    [file("${projectDir}/tests/fixtures/valid_samplesheet.csv")],
+                    [["myproj/sample/valid_samplesheet.csv", "valid_samplesheet.csv"]]
+                ]
+                input[1] = "TCRtoolkit"
+                input[2] = "nextflow run main.nf"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.report_html) {
+                def html_file = path(get(0))
+                assert html_file.exists()
+                assert html_file.getFileName().toString().endsWith('.html')
+            }
+        }
+    }
+
+    test("Should stage a file under a renamed dest basename") {
+        // Verifies source and dest basenames can differ - e.g. per-patient files
+        // staged under a shared/prefixed basename (like GLIPH2's
+        // "patientA_all_motifs.txt") get symlinked to an unprefixed dest name
+        // ("gliph2/patientA/all_motifs.txt").
+
+        tag "notebook"
+        tag "staged_layout"
+
+        when {
+            params {
+                samplesheet = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+
+            process {
+                """
+                input[0] = [
+                    file("${projectDir}/tests/fixtures/test.qmd"),
+                    [file("${projectDir}/tests/fixtures/valid_samplesheet.csv")],
+                    [["myproj/gliph2/patientA/all_motifs.txt", "valid_samplesheet.csv"]]
                 ]
                 input[1] = "TCRtoolkit"
                 input[2] = "nextflow run main.nf"

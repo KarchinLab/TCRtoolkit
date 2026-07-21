@@ -27,27 +27,14 @@ convergence_dir = f"{project_dir}/convergence/"
 ```{python}
 #| code-fold: true
 
-import datetime
 import glob
-import itertools
-import math
-import os
-import sys
 import h5py
-import igraph as ig
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
+import os
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import scipy.cluster.hierarchy as sch
-import seaborn as sns
-from IPython.display import Image
-from matplotlib.colors import LinearSegmentedColormap
 from scipy.sparse import csr_matrix
-from scipy.stats import gaussian_kde
-import plotly.io as pio
 from scipy import stats
 from itertools import combinations
 from scipy.stats import mannwhitneyu
@@ -104,7 +91,6 @@ $$f_i = \frac{\text{Read count for clone } i}{\text{Total reads for all producti
 #| echo: false
 
 import pandas as pd
-import plotly.graph_objects as go
 
 def create_expansion_stacked_barplot_per_individual(df, subject_col, origin_col, timepoint_order_col):
     """
@@ -112,11 +98,11 @@ def create_expansion_stacked_barplot_per_individual(df, subject_col, origin_col,
     Generates one Quarto tab per individual with dropdowns for origin.
     Includes a horizontal threshold line for sequencing depth (3000 counts).
     """
-    # --- Ensure 'counts' column is numeric ---
+    # --- Ensure 'duplicate_count' column is numeric ---
     try:
-        df['counts'] = pd.to_numeric(df['counts'])
+        df['duplicate_count'] = pd.to_numeric(df['duplicate_count'])
     except ValueError:
-        print("Error: 'counts' column could not be converted to a numeric type.")
+        print("Error: 'duplicate_count' column could not be converted to a numeric type.")
         return
 
     subjects = [s for s in df[subject_col].unique() if pd.notna(s)]
@@ -138,11 +124,11 @@ def create_expansion_stacked_barplot_per_individual(df, subject_col, origin_col,
             for sample_name in unique_samples:
                 sample_df = origin_df[origin_df['sample'] == sample_name].copy()
 
-                total_reads = sample_df['counts'].sum()
+                total_reads = sample_df['duplicate_count'].sum()
                 if total_reads == 0:
                     continue
 
-                sample_df['frequency'] = (sample_df['counts'] / total_reads) * 100
+                sample_df['frequency'] = (sample_df['duplicate_count'] / total_reads) * 100
 
                 highly_expanded = sample_df[sample_df['frequency'] > 1]
                 expanded = sample_df[(sample_df['frequency'] >= 0.1) & (sample_df['frequency'] <= 1)]
@@ -360,7 +346,6 @@ This table is useful because it reveals the identities of the dominant clones dr
 #| output: asis
 #| echo: false
 
-import plotly.graph_objects as go
 
 def create_top_clones_tables_by_patient(df, n_clones=15):
     """
@@ -393,21 +378,21 @@ def create_top_clones_tables_by_patient(df, n_clones=15):
         # Build a table trace for each timepoint
         for i, tp in enumerate(unique_timepoints):
             tp_df = pat_df[pat_df[timepoint_col] == tp].copy()
-            tp_df = tp_df[tp_df['counts'] > 0]
+            tp_df = tp_df[tp_df['duplicate_count'] > 0]
 
             if tp_df.empty:
                 continue
 
             # Grab the top clones
-            top_n_clones = tp_df.nlargest(n_clones, 'counts')
+            top_n_clones = tp_df.nlargest(n_clones, 'duplicate_count')
 
             # Safely extract columns (avoids KeyErrors if TRBV/TRBJ are missing in some runs)
-            cols_to_show = ['CDR3b', 'TRBV', 'TRBJ', 'counts']
+            cols_to_show = ['junction_aa', 'v_call', 'j_call', 'duplicate_count']
             available_cols = [c for c in cols_to_show if c in top_n_clones.columns]
             display_df = top_n_clones[available_cols].copy()
             
             # Clean up headers for display
-            display_df.columns = [c.capitalize() if c == 'counts' else c for c in display_df.columns]
+            display_df.columns = [c.capitalize() if c == 'duplicate_count' else c for c in display_df.columns]
 
             fig.add_trace(
                 go.Table(
@@ -489,8 +474,6 @@ create_top_clones_tables_by_patient(concat_df, n_clones=15)
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from scipy.stats import mannwhitneyu
 
 def create_violin_with_heatmap_inset(df, meta_df, origin_col='origin'):
     """
@@ -503,16 +486,16 @@ def create_violin_with_heatmap_inset(df, meta_df, origin_col='origin'):
 
     # --- 1. Data Prep ---
     try:
-        df['counts'] = pd.to_numeric(df['counts'])
+        df['duplicate_count'] = pd.to_numeric(df['duplicate_count'])
     except ValueError:
-        print("Error: 'counts' column could not be converted to a numeric type.")
+        print("Error: 'duplicate_count' column could not be converted to a numeric type.")
         return
 
     # Filter for valid counts
-    plot_df = df[df['counts'] > 0].copy()
+    plot_df = df[df['duplicate_count'] > 0].copy()
     if plot_df.empty: return
     
-    plot_df['log10_counts'] = np.log10(plot_df['counts'])
+    plot_df['log10_counts'] = np.log10(plot_df['duplicate_count'])
 
     # --- 2. Merge with Metadata ---
     # Assuming df already has the metadata merged based on your previous code structure
@@ -958,9 +941,11 @@ conv_data = []
 for f in files:
     filename = os.path.basename(f)
     sample_id = filename.replace('_tcr_convergence.tsv', '')
-    if sample_id.endswith('_pseudobulk'): 
+    if sample_id.endswith('_pseudobulk'):
         sample_id = sample_id[:-11]
-    if sample_id.endswith('_airr'): 
+    if sample_id.endswith('_airr'):
+        sample_id = sample_id[:-5]
+    if sample_id.endswith('_cdr3'):
         sample_id = sample_id[:-5]
 
     try:
@@ -1098,7 +1083,6 @@ print(":::\n")
 
 import plotly.express as px
 import plotly.graph_objects as go
-from scipy.stats import mannwhitneyu
 from itertools import combinations
 import pandas as pd
 
@@ -1574,8 +1558,6 @@ import glob
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from scipy.stats import mannwhitneyu
 
 def create_pgen_tabs(meta_df, origin_col='origin'):
     """
@@ -2331,7 +2313,7 @@ def plot_vdjdb_species_specificity(VDJdb_dir, meta_df, subject_col='subject_id')
     print(":::\n")
 
 # Run the function
-plot_vdjdb_species_specificity(VDJdb_dir, meta)
+plot_vdjdb_species_specificity(VDJdb_dir, meta, subject_col=subject_col)
 
 ```
 **Figure 14: Top 15 recognized epitopes identified in bulk-TCR data.**  The number of unique TCR clonotypes in the sample that match a known epitope in the VDJdb database is shown on the x-axis. The plot highlights the most abundant antigen specificities inferred from the T-cell repertoire.
@@ -2515,7 +2497,7 @@ def plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta_df, subject_col='subject_id'):
     print(":::\n")
 
 # Run the function
-plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta)
+plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta, subject_col=subject_col)
 
 ```
 **Figure 15: TCR Repertoire Mapping to specific gene epitopes:** Sunburst chart visualizing the relationships between T-cell receptor (TCR) sequences and their known antigen specificities from the VDJdb curated database. The central ring represents the species, branching out to their specific genes, and finally to the individual TCR sequences from your dataset that match those specificities. The size of each segment corresponds to the number of TCRs associated with that particular specificity.
@@ -2691,7 +2673,7 @@ def plot_vdjdb_sunburst_reversed(VDJdb_dir, meta_df, subject_col='subject_id'):
     print(":::\n")
 
 # Run the function
-plot_vdjdb_sunburst_reversed(VDJdb_dir, meta)
+plot_vdjdb_sunburst_reversed(VDJdb_dir, meta, subject_col=subject_col)
 
 ```
 **Figure 16: Gene Epitopes Mapping to TCR sequences:** Sunburst chart visualizing the relationships antigens and T-cell receptor (TCR) sequences. The central ring represents TCRs sequences, branching out to their specific genes, and finally to the species the antigen belongs to. Only TCRs with a Freq>2 are shown, for visualization purposes.

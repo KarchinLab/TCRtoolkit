@@ -8,11 +8,15 @@ process GLIPH2_TURBOGLIPH {
     tuple val(patient), path(concat_cdr3)
 
     output:
-    path "${patient}/all_motifs.txt", emit: 'all_motifs'
-    path "${patient}/clone_network.txt", emit: 'clone_network'
-    path "${patient}/cluster_member_details.txt", emit: 'cluster_member_details'
+    // all_motifs/clone_network/cluster_member_details/global_similarities are
+    // copied to patient-prefixed top-level names because multiple patients'
+    // outputs share the same basename otherwise (e.g. "all_motifs.txt"), which
+    // collides when several patients' files are staged together downstream.
+    tuple val(patient), path("${patient}_all_motifs.txt"), emit: 'all_motifs'
+    tuple val(patient), path("${patient}_clone_network.txt"), emit: 'clone_network'
+    tuple val(patient), path("${patient}_cluster_member_details.txt"), emit: 'cluster_member_details'
     path "${patient}/convergence_groups.txt", emit: 'convergence_groups'
-    path "${patient}/global_similarities.txt", emit: 'global_similarities'
+    tuple val(patient), path("${patient}_global_similarities.txt"), emit: 'global_similarities'
     path "${patient}/local_similarities.txt", emit: 'local_similarities'
     path "${patient}/parameter.txt", emit: 'gliph2_parameters'
     
@@ -51,6 +55,13 @@ process GLIPH2_TURBOGLIPH {
     # Rename local_similarities file to standardize output name
     input_file="${patient}/local_similarities_*.txt"
     cat \$input_file > ${patient}/local_similarities.txt
+
+    # Copy to patient-prefixed top-level names to avoid basename collisions
+    # when multiple patients' outputs are staged together downstream.
+    cp ${patient}/all_motifs.txt ${patient}_all_motifs.txt
+    cp ${patient}/clone_network.txt ${patient}_clone_network.txt
+    cp ${patient}/cluster_member_details.txt ${patient}_cluster_member_details.txt
+    cp ${patient}/global_similarities.txt ${patient}_global_similarities.txt
     """
 }
 

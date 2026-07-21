@@ -5,11 +5,10 @@
 
 project_dir=f"{project_dir}"
 
-# Define files 
+# Define files
 concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 
-concat_csv_pheno=f"{project_dir}/compare_phenotype/concatenated_cdr3.tsv"
-sample_table_pheno=f"{project_dir}/pipeline_info/samplesheet_phenotype.csv"
+concat_csv_pheno = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 
 #  Define dirs
 tcrpheno_dir = f"{project_dir}/tcrpheno/"
@@ -46,7 +45,6 @@ from scipy import stats
 from itertools import combinations
 from scipy.stats import mannwhitneyu
 from plotly.subplots import make_subplots
-from pathlib import Path
 import re
 
 meta = pd.read_csv(sample_table, sep=',')
@@ -58,14 +56,8 @@ concat_df = concat_df.merge(meta[['sample', subject_col, alias_col, timepoint_co
 
 # Phenotype files
 
-# Samplesheet
-metadata_pheno_df = pd.read_csv(sample_table_pheno, sep=',', header=0, index_col="file")
-metadata_pheno_df.index = metadata_pheno_df.index.map(lambda p: Path(p).name)
-metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_pseudobulk', '', regex=False)
-metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_phenotype.tsv', '', regex=False)
-
 # Importing sample metadata (pheno-ps)
-clonotypes_pheno_df = pd.read_csv(concat_csv_pheno, sep='\t', header=0, index_col=0).reset_index()
+clonotypes_pheno_df = pd.read_csv(concat_csv_pheno, sep='\t', header=0)
 clonotypes_pheno_df['sample_phenotype'] = clonotypes_pheno_df['sample']
 # Add 'sample_phenotype' and 'phenotype'
 samples = sorted(meta['sample'].astype(str).unique(), key=len, reverse=True)
@@ -437,13 +429,13 @@ import sys
 warnings.filterwarnings("ignore")
 
 def create_patient_upset_figure(df, patient_id):
-    df_clean = df.dropna(subset=['phenotype', 'CDR3b']).copy()
+    df_clean = df.dropna(subset=['phenotype', 'junction_aa']).copy()
     phenotypes = sorted(df_clean['phenotype'].unique())
     if len(phenotypes) < 2:
         return None
 
     clones_by_pheno = {
-        p: list(df_clean[df_clean['phenotype'] == p]['CDR3b'].unique())
+        p: list(df_clean[df_clean['phenotype'] == p]['junction_aa'].unique())
         for p in phenotypes
     }
     upset_data = from_contents(clones_by_pheno)

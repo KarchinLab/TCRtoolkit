@@ -45,9 +45,27 @@ workflow PATIENT {
         params.threshold_vgene
     )
 
-    if(params.use_gliph2) {
+    // Each gliph2_* emit is a list of [patient, file] pairs - kept separate per
+    // output type (rather than mixed together) so downstream staging can map
+    // each pair back to its known target leaf-name (e.g. "all_motifs.txt")
+    // without having to parse it back out of the patient-prefixed filename.
+    //
+    // NOTE: this Nextflow version's strict-syntax workflow output collection
+    // requires emit values to be direct .out expressions - referencing a
+    // pre-computed local `def` variable in `emit:` fails at definition time
+    // with "Missing workflow output parameter", even outside any conditional.
+    // So the params.use_gliph2 ternary has to live in the emit line itself,
+    // referencing GLIPH2_TURBOGLIPH.out directly.
+    if (params.use_gliph2) {
         GLIPH2_TURBOGLIPH(
             PATIENT_CONCATENATE.out.patient_cdr3
         )
     }
+
+    emit:
+        giana_files                   = GIANA_CALC.out.giana_output.collect()
+        gliph2_all_motifs             = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.all_motifs.collect() : channel.value([])
+        gliph2_clone_network          = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.clone_network.collect() : channel.value([])
+        gliph2_cluster_member_details = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.cluster_member_details.collect() : channel.value([])
+        gliph2_global_similarities    = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.global_similarities.collect() : channel.value([])
 }

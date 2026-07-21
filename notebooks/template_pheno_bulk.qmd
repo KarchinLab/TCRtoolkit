@@ -148,9 +148,9 @@ def create_phenotype_tabs(meta_df):
             # --- Merge Metadata ---
             meta_row = meta_df[meta_df['sample'] == sample_id]
             if not meta_row.empty:
-                composition['subject_id'] = meta_row.iloc[0]['subject_id']
-                composition['alias'] = meta_row.iloc[0]['alias']
-                composition['sort_order'] = meta_row.iloc[0]['timepoint_order'] if 'timepoint_order' in meta_df.columns else 0
+                composition['subject_id'] = meta_row.iloc[0][subject_col]
+                composition['alias'] = meta_row.iloc[0][alias_col]
+                composition['sort_order'] = meta_row.iloc[0][timepoint_order_col] if timepoint_order_col in meta_df.columns else 0
             else:
                 composition['subject_id'] = np.nan
                 composition['alias'] = sample_id
@@ -321,10 +321,10 @@ def create_weighted_phenotype_plot(meta_df):
                 # Skip samples not in metadata, or define defaults
                 continue
                 
-            subject_id = meta_row.iloc[0]['subject_id']
-            alias = meta_row.iloc[0]['alias']
+            subject_id = meta_row.iloc[0][subject_col]
+            alias = meta_row.iloc[0][alias_col]
             # Default to 0 if order column is missing
-            tp_order = meta_row.iloc[0]['timepoint_order'] if 'timepoint_order' in meta_df.columns else 0
+            tp_order = meta_row.iloc[0][timepoint_order_col] if timepoint_order_col in meta_df.columns else 0
 
             # --- Load Data ---
             pheno_df = pd.read_csv(pheno_file_path, sep='\t')
@@ -339,10 +339,12 @@ def create_weighted_phenotype_plot(meta_df):
                 continue
 
             # --- Merge & Weight ---
-            # Match phenotype (junction_aa) with counts (CDR3b)
-            merged_df = pd.merge(pheno_df, sample_counts_df[['CDR3b', 'counts']], 
-                                 left_on='junction_aa', right_on='CDR3b', how='inner')
-            
+            # TCRPHENO output only carries 'sequence_id' (no CDR3/junction_aa column),
+            # which matches the same "{sample}|sequence{N}" IDs in concat_csv.
+            merged_df = pd.merge(pheno_df, sample_counts_df[['sequence_id', 'duplicate_count']],
+                                 on='sequence_id', how='inner')
+            merged_df.rename(columns={'duplicate_count': 'counts'}, inplace=True)
+
             merged_df = merged_df.dropna(subset=phenotype_cols + ['counts'])
             
             if merged_df.empty:

@@ -20,9 +20,9 @@ process VDJDB_VDJMATCH {
     path(ref_db)
 
     output:
-    path("${sample_meta.sample}.vdjmatch.txt")
-    path("${sample_meta.sample}.annot.summary.txt")
-    path "logs/${sample_meta.sample}.vdjmatch.log"
+    path("${sample_meta.sample}.vdjmatch.txt"), emit: 'vdjmatch_txt'
+    path("${sample_meta.sample}.annot.summary.txt"), emit: 'annot_summary'
+    path "logs/${sample_meta.sample}.vdjmatch.log", emit: 'log'
 
     script:
     def memGb = (task.memory.toMega() * 0.8 / 1024).intValue()

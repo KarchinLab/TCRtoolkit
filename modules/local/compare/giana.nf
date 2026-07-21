@@ -9,8 +9,8 @@ process GIANA_CALC {
     val threshold_vgene
 
     output:
-    path "${patient}_VgeneScores.txt"
-    path "${patient}_giana.txt"
+    path "${patient}_VgeneScores.txt", emit: 'vgene_scores'
+    path "${patient}_giana.txt", emit: 'giana_output'
     // path "giana_EncodingMatrix.txt"
 
     script:   

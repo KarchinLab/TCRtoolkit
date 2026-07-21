@@ -33,4 +33,7 @@ workflow COMPARE {
     TCRSHARING_SCATTERPLOT(
         TCRSHARING_CALC.out.shared_cdr3
     )
+
+    emit:
+        shared_cdr3 = TCRSHARING_CALC.out.shared_cdr3
 }

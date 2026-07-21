@@ -120,6 +120,26 @@
         "template_qc": {
           "type": "string",
           "description": "Path to QC notebook template."
+        },
+        "template_discovery_brief": {
+          "type": "string",
+          "description": "Path to discovery brief notebook template."
+        },
+        "template_details_part1": {
+          "type": "string",
+          "description": "Path to details (part 1) notebook template."
+        },
+        "template_details_part2": {
+          "type": "string",
+          "description": "Path to details (part 2) notebook template."
+        },
+        "template_pheno_sc": {
+          "type": "string",
+          "description": "Path to single-cell phenotype notebook template."
+        },
+        "template_pheno_bulk": {
+          "type": "string",
+          "description": "Path to bulk (TCRpheno) phenotype notebook template."
         }
       }
     },
