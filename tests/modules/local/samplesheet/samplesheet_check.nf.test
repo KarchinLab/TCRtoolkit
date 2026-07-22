@@ -55,7 +55,7 @@ nextflow_process {
 
                 def lines = path(samplesheet_utf8.get(0)).readLines()
                 assert lines.size() == 36  // Header + 35 samples
-                assert lines[0].replaceAll("^\uFEFF", "") == "sample,alias,patient,timepoint,origin,file"
+                assert lines[0].replaceAll("^\uFEFF", "") == "sample,alias,patient,timepoint,timepoint_order,origin,file"
             }
         }
     }

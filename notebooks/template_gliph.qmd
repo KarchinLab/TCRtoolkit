@@ -48,22 +48,29 @@ for patient in meta[subject_col].unique():
     am_csv = f"{p_dir}/{patient}_all_motifs.txt"
     gs_csv = f"{p_dir}/{patient}_global_similarities.txt"
 
-    if os.path.exists(cd_csv):
+    # GLIPH2 writes these as genuinely empty (0-byte) files, not just
+    # header-only, when it finds no clusters for a patient (small/sparse
+    # samples) - pd.read_csv raises EmptyDataError on those, so an
+    # os.path.exists check alone isn't enough; skip zero-size files too.
+    def _has_content(path):
+        return os.path.exists(path) and os.path.getsize(path) > 0
+
+    if _has_content(cd_csv):
         df = pd.read_csv(cd_csv, sep='\t')
         df[subject_col] = patient
         cluster_details_list.append(df)
 
-    if os.path.exists(cn_csv):
+    if _has_content(cn_csv):
         # clone_network has no header
-        df = pd.read_csv(cn_csv, sep='\t', header=None) 
+        df = pd.read_csv(cn_csv, sep='\t', header=None)
         clone_network_list.append(df)
 
-    if os.path.exists(am_csv):
+    if _has_content(am_csv):
         df = pd.read_csv(am_csv, sep='\t')
         df[subject_col] = patient
         all_motifs_list.append(df)
 
-    if os.path.exists(gs_csv):
+    if _has_content(gs_csv):
         df = pd.read_csv(gs_csv, sep='\t')
         df[subject_col] = patient
         # CRITICAL: Prefix cluster tags to prevent cross-patient collisions

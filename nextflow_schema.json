@@ -140,6 +140,14 @@
         "template_pheno_bulk": {
           "type": "string",
           "description": "Path to bulk (TCRpheno) phenotype notebook template."
+        },
+        "template_patient_clustering_on": {
+          "type": "string",
+          "description": "Path to patient-level clustering (GIANA/GLIPH2) notebook template, used when patient workflow_level is run."
+        },
+        "template_patient_clustering_off": {
+          "type": "string",
+          "description": "Path to placeholder notebook template used when patient workflow_level is not run."
         }
       }
     },

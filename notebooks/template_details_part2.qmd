@@ -6,7 +6,7 @@ format:
     toc: true
     toc_depth: 3
     code-fold: true
-    embed-resources: false
+    embed-resources: true
     number-sections: true
     smooth-scroll: true
     grid:
@@ -103,6 +103,4 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 
 {{< include ./template_sharing.qmd >}}
 
-{{< include ./template_giana.qmd >}}
-
-{{< include ./template_gliph.qmd >}}
+{{< include ./template_patient_clustering.qmd >}}

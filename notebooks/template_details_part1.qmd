@@ -6,7 +6,7 @@ format:
     toc: true
     toc_depth: 3
     code-fold: true
-    embed-resources: false
+    embed-resources: true
     number-sections: true
     smooth-scroll: true
     grid:

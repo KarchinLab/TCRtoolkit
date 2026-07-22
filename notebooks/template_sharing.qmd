@@ -48,7 +48,6 @@ import base64
 import json
 from IPython.display import HTML, display
 import warnings
-from upsetplot import from_contents, plot as upset_plot
 
 
 # - Loading data

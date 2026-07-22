@@ -22,6 +22,8 @@ process GLIPH2_TURBOGLIPH {
     
     script:
     """
+    mkdir -p ${patient}
+
     Rscript - <<EOF
     #!/usr/bin/env Rscript
 
@@ -34,22 +36,80 @@ process GLIPH2_TURBOGLIPH {
     colnames(df)[colnames(df) == "duplicate_count"] <- "counts"
     df[,'patient'] <- df[,'sample']
 
-    result <- turboGliph::gliph2(
-        cdr3_sequences = df,
-        result_folder = "./${patient}",
-        lcminp = ${params.local_min_pvalue},
-        sim_depth = ${params.simulation_depth},
-        kmer_mindepth = ${params.kmer_min_depth},
-        lcminove = ${params.local_min_OVE},
-        all_aa_interchangeable = FALSE,
-        n_cores = ${task.cpus}
-    )
+    # turboGliph::gliph2() can throw an uncaught internal error - not just
+    # print "no clusters/similarities found" - on edge-case-shaped input, e.g.
+    # a dplyr::left_join() type mismatch between the tag column of sample_stats
+    # (factor) and the tag column of ref_stats (double) when very few
+    # candidate motifs pass its internal filtering (seen on real Patient02
+    # data: crashes partway through "Part 2: Searching for global
+    # similarities", after only all_motifs.txt and local_similarities_*.txt
+    # were written). Catch this and fall back to empty results for the whole
+    # patient rather than failing the task.
+    gliph2_ok <- tryCatch({
+        turboGliph::gliph2(
+            cdr3_sequences = df,
+            result_folder = "./${patient}",
+            lcminp = ${params.local_min_pvalue},
+            sim_depth = ${params.simulation_depth},
+            kmer_mindepth = ${params.kmer_min_depth},
+            lcminove = ${params.local_min_OVE},
+            all_aa_interchangeable = FALSE,
+            n_cores = ${task.cpus}
+        )
+        TRUE
+    }, error = function(e) {
+        message("turboGliph::gliph2() failed for ${patient}, treating as no clusters found: ", conditionMessage(e))
+        FALSE
+    })
 
-    df3 <- read.csv('${patient}/cluster_member_details.txt', sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
-    df3[,'sample'] <- df3[,'patient']
-    df3 <- merge(df3, df[, c("CDR3b", "TRBV", "sample", 'counts')], by = c("CDR3b", "TRBV", "sample", 'counts'), all.x = TRUE)
-    df3 <- df3[, c('CDR3b', 'TRBV', 'TRBJ', 'counts', 'sample', 'tag', 'seq_ID', 'ultCDR3b')]
+    # gliph2() also doesn't error on the narrower "no significant clusters"
+    # case - it just writes cluster_member_details.txt as a single blank line
+    # with no header, which read.csv rejects outright ("no lines available in
+    # input"). The same fallback covers that case, a totally missing file (if
+    # gliph2() failed before reaching this point), and the tryCatch above.
+    df3 <- tryCatch({
+        tmp <- read.csv('${patient}/cluster_member_details.txt', sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
+        tmp[,'sample'] <- tmp[,'patient']
+        tmp <- merge(tmp, df[, c("CDR3b", "TRBV", "sample", 'counts')], by = c("CDR3b", "TRBV", "sample", 'counts'), all.x = TRUE)
+        tmp[, c('CDR3b', 'TRBV', 'TRBJ', 'counts', 'sample', 'tag', 'seq_ID', 'ultCDR3b')]
+    }, error = function(e) {
+        data.frame(CDR3b=character(), TRBV=character(), TRBJ=character(), counts=integer(),
+                   sample=character(), tag=character(), seq_ID=character(), ultCDR3b=character())
+    })
     write.table(df3, "${patient}/cluster_member_details.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+    # If gliph2() failed partway through (or before writing anything), some of
+    # its other declared output files may be entirely missing - write minimal
+    # placeholders for whichever ones aren't already there so Nextflow's own
+    # output declarations (which require every path to exist) don't turn this
+    # into a hard pipeline failure on top of the already-handled analysis
+    # failure.
+    if (!file.exists('${patient}/all_motifs.txt')) {
+        write.table(data.frame(motif=character(), num_in_sample=integer(), num_in_ref=integer(),
+                                fisher.score=double(), num_fold=double()),
+                    '${patient}/all_motifs.txt', sep = "\t", row.names = FALSE, quote = FALSE)
+    }
+    if (!file.exists('${patient}/clone_network.txt')) {
+        file.create('${patient}/clone_network.txt')
+    }
+    if (!file.exists('${patient}/global_similarities.txt')) {
+        write.table(data.frame(cluster_tag=character(), cluster_size=integer(), unique_CDR3b=integer(),
+                                num_in_ref=integer(), fisher.score=double(), aa_at_position=character(),
+                                TRBV=character(), CDR3b=character()),
+                    '${patient}/global_similarities.txt', sep = "\t", row.names = FALSE, quote = FALSE)
+    }
+    if (!file.exists('${patient}/convergence_groups.txt')) {
+        file.create('${patient}/convergence_groups.txt')
+    }
+    if (length(Sys.glob('${patient}/local_similarities_*.txt')) == 0) {
+        write.table(data.frame(motif=character(), num_in_sample=integer(), num_in_ref=integer(),
+                                fisher.score=double(), num_fold=double(), start=integer(), stop=integer(),
+                                members=character()),
+                    '${patient}/local_similarities_none.txt', sep = "\t", row.names = FALSE, quote = FALSE)
+    }
+    if (!file.exists('${patient}/parameter.txt')) {
+        file.create('${patient}/parameter.txt')
+    }
     EOF
 
     # Rename local_similarities file to standardize output name

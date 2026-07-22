@@ -62,10 +62,16 @@ workflow PATIENT {
         )
     }
 
+    // channel .collect() flattens tuple(val, path) emissions by default (e.g.
+    // [patientA, fileA, patientB, fileB] instead of [[patientA, fileA],
+    // [patientB, fileB]]) - confirmed via a minimal repro. workflows/tcrtoolkit.nf
+    // indexes these as [patient, file] pairs (p[0]/p[1]) downstream when staging
+    // per-patient gliph2 outputs, so flat: false is required to preserve that
+    // shape instead of silently interleaving patients and files.
     emit:
         giana_files                   = GIANA_CALC.out.giana_output.collect()
-        gliph2_all_motifs             = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.all_motifs.collect() : channel.value([])
-        gliph2_clone_network          = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.clone_network.collect() : channel.value([])
-        gliph2_cluster_member_details = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.cluster_member_details.collect() : channel.value([])
-        gliph2_global_similarities    = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.global_similarities.collect() : channel.value([])
+        gliph2_all_motifs             = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.all_motifs.collect(flat: false) : channel.value([])
+        gliph2_clone_network          = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.clone_network.collect(flat: false) : channel.value([])
+        gliph2_cluster_member_details = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.cluster_member_details.collect(flat: false) : channel.value([])
+        gliph2_global_similarities    = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.global_similarities.collect(flat: false) : channel.value([])
 }

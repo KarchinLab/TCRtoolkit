@@ -235,15 +235,24 @@ workflow TCRTOOLKIT {
     ch_reports = ch_reports.mix(ch_details_part1_report)
 
     // Details report (part 2) includes template_overlap.qmd, template_sharing.qmd,
-    // template_giana.qmd, and template_gliph.qmd. The latter two need patient-level
-    // clonotype clustering outputs, which only exist when 'patient' is in
-    // workflow_level; their own os.path.exists guards degrade gracefully when those
-    // files are absent, so those files are only staged when PATIENT actually ran.
+    // and a single generic template_patient_clustering.qmd - mirroring the
+    // template_pheno.qmd trick above, since template_giana.qmd/template_gliph.qmd
+    // need patient-level clonotype clustering outputs that only exist when
+    // 'patient' is in workflow_level. Rather than always splicing them in and
+    // relying on their internal os.path.exists guards (GIANA's own concat call
+    // crashes outright when no per-patient file exists at all, i.e. whenever
+    // PATIENT didn't run), Nextflow stages the "on" wrapper (which includes both)
+    // or the "off" placeholder under that shared name depending on workflow_level.
     def details_part2_base = sample_stats_agg
         .combine(ANNOTATE.out.concat_cdr3_sorted)
         .combine(COMPARE.out.shared_cdr3)
 
-    // template_details_part2.qmd pulls in these 4 files via {{< include >}}
+    def run_patient_clustering = levels.contains('patient')
+    def patient_clustering_notebook = run_patient_clustering
+        ? file(params.template_patient_clustering_on)
+        : file(params.template_patient_clustering_off)
+
+    // template_details_part2.qmd pulls in these files via {{< include >}}
     // shortcodes resolved relative to its own directory, so they have to be
     // staged alongside it too - see the equivalent part1 comment above.
     def part2_notebooks_dir = file(params.template_details_part2).parent
@@ -251,10 +260,14 @@ workflow TCRTOOLKIT {
         file("${part2_notebooks_dir}/template_overlap.qmd"),
         file("${part2_notebooks_dir}/template_sharing.qmd"),
         file("${part2_notebooks_dir}/template_giana.qmd"),
-        file("${part2_notebooks_dir}/template_gliph.qmd")
+        file("${part2_notebooks_dir}/template_gliph.qmd"),
+        patient_clustering_notebook
+    ]
+    def part2_staged_layout_extra = [
+        ["template_patient_clustering.qmd", patient_clustering_notebook.name]
     ]
 
-    if (levels.contains('patient')) {
+    if (run_patient_clustering) {
         ch_details_part2_report = details_part2_base
             .combine(PATIENT.out.giana_files.map { l -> [l] })
             .combine(PATIENT.out.gliph2_all_motifs.map { l -> [l] })
@@ -282,7 +295,8 @@ workflow TCRTOOLKIT {
                     all_motifs_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
                     clone_network_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
                     cluster_member_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
-                    global_sim_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] }
+                    global_sim_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
+                    part2_staged_layout_extra
                 tuple(
                     file(params.template_details_part2),
                     report_files,
@@ -299,7 +313,7 @@ workflow TCRTOOLKIT {
                         ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
                         ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name],
                         ["${params.project_name}/tcrsharing/${shared_cdr3.name}", shared_cdr3.name]
-                    ]
+                    ] + part2_staged_layout_extra
                 )
             }
     }

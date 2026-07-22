@@ -143,8 +143,16 @@ def plot_giana_tables_per_patient(meta_df, giana_dir, subject_col, timepoint_col
             display(Markdown(f"*[WARNING] No GIANA file found for patient '{patient}' (expected: {giana_file}). Skipping.*\n\n"))
             continue
 
-        # Load this patient's GIANA output
-        giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+        # GIANA writes only its "##"-prefixed metadata/header comment lines
+        # (no data rows at all) when it finds zero clusters for a patient's
+        # samples - after comment='#' strips those, pandas has nothing left
+        # to parse and raises EmptyDataError. Skip gracefully like any other
+        # "no data" case instead of crashing the whole report.
+        try:
+            giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+        except pd.errors.EmptyDataError:
+            display(Markdown(f"*[INFO] No GIANA clusters found for patient '{patient}'. Skipping.*\n\n"))
+            continue
 
         # Merge with all samples belonging to this patient
         patient_meta = meta_df[meta_df[subject_col] == patient][['sample', subject_col, timepoint_col]]
@@ -219,8 +227,13 @@ for patient in meta[subject_col].unique():
     if not os.path.exists(giana_file):
         continue
 
-    # Load this patient's GIANA output
-    giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+    # See the comment on the equivalent read above: GIANA writes only
+    # comment lines with zero clusters, which leaves nothing for pandas to
+    # parse once comment='#' strips them.
+    try:
+        giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+    except pd.errors.EmptyDataError:
+        continue
 
     # Merge with all samples belonging to this patient
     patient_meta = meta[meta[subject_col] == patient][['sample', subject_col, timepoint_col]]
@@ -293,18 +306,25 @@ for patient in meta[subject_col].unique():
     giana_file = os.path.join(giana_dir, f"{patient}_giana.txt")
     
     if os.path.exists(giana_file):
-        patient_df = pd.read_csv(giana_file, comment='#', sep='\t')
-        
-        # CRITICAL FIX: Make cluster IDs unique to the patient 
+        # See the comment on the first read in this notebook: GIANA writes
+        # only comment lines with zero clusters, which leaves nothing for
+        # pandas to parse once comment='#' strips them.
+        try:
+            patient_df = pd.read_csv(giana_file, comment='#', sep='\t')
+        except pd.errors.EmptyDataError:
+            print(f"*(No GIANA clusters found for: {giana_file})*")
+            continue
+
+        # CRITICAL FIX: Make cluster IDs unique to the patient
         # to prevent false merging across different GIANA runs
         patient_df['cluster'] = str(patient) + "_c" + patient_df['cluster'].astype(str)
-        
+
         all_giana_data.append(patient_df)
     else:
         print(f"*(No GIANA file found for: {giana_file})*")
 
 # Combine into a single master dataframe
-giana_df = pd.concat(all_giana_data, ignore_index=True)
+giana_df = pd.concat(all_giana_data, ignore_index=True) if all_giana_data else pd.DataFrame()
 
 # Merge metadata
 giana_df = giana_df.merge(meta[['sample', subject_col, timepoint_col, alias_col]], on='sample', how='left')
