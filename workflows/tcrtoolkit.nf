@@ -142,7 +142,6 @@ workflow TCRTOOLKIT {
         ? CONVERT.out.pseudobulk_phenotype_files.map { _meta, files -> files }.flatten().collect()
         : channel.value([])
 
-    // QC report requires sample-level aggregate outputs.
     ch_qc_report = sample_stats_agg
         .combine(ANNOTATE.out.concat_cdr3_sorted)
         .map { sample_stats_csv, concat_cdr3_sorted ->
@@ -155,19 +154,15 @@ workflow TCRTOOLKIT {
         }
     ch_reports = ch_reports.mix(ch_qc_report)
 
-    // Discovery brief requires sample-level aggregate outputs, TCRdist3/VDJdb
-    // per-sample outputs, and cross-sample TCR sharing - it reads them from a
-    // project_dir/<project_name>/<subdir>/<file> layout, so staged_layout tells
-    // RENDER_NOTEBOOK where to symlink each staged file within the task work dir.
-    // Each staged_layout entry is a [dest_path, source_basename] pair - source and
-    // dest basenames match here, but don't always (see gliph2 below).
+    // Discovery brief reads its inputs from a project_dir/<project_name>/
+    // <subdir>/<file> layout, so staged_layout tells RENDER_NOTEBOOK where to
+    // symlink each staged file - each entry is a [dest_path, source_basename]
+    // pair (source and dest basenames usually match, but not always - see
+    // gliph2 below).
     //
-    // NOTE: .collect()-produced list channels are wrapped in an extra list via
-    // `.map { l -> [l] }` before every .combine() below - .combine() otherwise
-    // flattens a list-valued item's contents into the tuple instead of keeping
-    // it as one element (confirmed directly: combining a scalar channel with an
-    // unwrapped .collect() channel of 3 items produces a 4-element flat tuple,
-    // not a 2-element [scalar, list] tuple).
+    // .collect()-produced list channels are wrapped via `.map { l -> [l] }`
+    // before every .combine() below - otherwise .combine() flattens the
+    // list's contents into the tuple instead of keeping it as one element.
     ch_discovery_report = sample_stats_agg
         .combine(ANNOTATE.out.concat_cdr3_sorted)
         .combine(COMPARE.out.shared_cdr3)
@@ -197,10 +192,6 @@ workflow TCRTOOLKIT {
         }
     ch_reports = ch_reports.mix(ch_discovery_report)
 
-    // Details report (part 1) includes template_sample.qmd, which reads sample-level
-    // aggregate outputs, the V/J gene-family pivot tables, and per-sample TCRdist3,
-    // OLGA, VDJdb, and convergence outputs from the same project_dir/<project_name>/
-    // <subdir>/<file> layout as the discovery brief.
     ch_details_part1_report = sample_stats_agg
         .combine(ANNOTATE.out.concat_cdr3_sorted)
         .combine(SAMPLE.out.v_family)
@@ -234,15 +225,11 @@ workflow TCRTOOLKIT {
         }
     ch_reports = ch_reports.mix(ch_details_part1_report)
 
-    // Details report (part 2) includes template_overlap.qmd, template_sharing.qmd,
-    // and a single generic template_patient_clustering.qmd - mirroring the
-    // template_pheno.qmd trick above, since template_giana.qmd/template_gliph.qmd
-    // need patient-level clonotype clustering outputs that only exist when
-    // 'patient' is in workflow_level. Rather than always splicing them in and
-    // relying on their internal os.path.exists guards (GIANA's own concat call
-    // crashes outright when no per-patient file exists at all, i.e. whenever
-    // PATIENT didn't run), Nextflow stages the "on" wrapper (which includes both)
-    // or the "off" placeholder under that shared name depending on workflow_level.
+    // template_giana.qmd/template_gliph.qmd need patient-level clustering
+    // outputs that only exist when 'patient' is in workflow_level (GIANA's
+    // concat crashes outright otherwise), so template_patient_clustering.qmd
+    // is resolved to an "on" (includes both) or "off" (placeholder) wrapper,
+    // mirroring the template_pheno.qmd trick above.
     def details_part2_base = sample_stats_agg
         .combine(ANNOTATE.out.concat_cdr3_sorted)
         .combine(COMPARE.out.shared_cdr3)
@@ -283,10 +270,9 @@ workflow TCRTOOLKIT {
                     global_sim_pairs.collect { p -> p[1] } +
                     part2_include_files
                 // gliph2 files keep their patient-prefixed basename (e.g.
-                // "patientA_all_motifs.txt", set in GLIPH2_TURBOGLIPH to avoid
-                // collisions across patients when staged) all the way through -
-                // template_gliph.qmd reads that same prefixed name from within
-                // each patient's subdir, so source and dest basenames match here.
+                // "patientA_all_motifs.txt") all the way through, since
+                // template_gliph.qmd reads that same name from each patient's
+                // subdir - source and dest basenames match here.
                 def staged_layout = [
                     ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
                     ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name],

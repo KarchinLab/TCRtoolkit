@@ -36,15 +36,9 @@ process GLIPH2_TURBOGLIPH {
     colnames(df)[colnames(df) == "duplicate_count"] <- "counts"
     df[,'patient'] <- df[,'sample']
 
-    # turboGliph::gliph2() can throw an uncaught internal error - not just
-    # print "no clusters/similarities found" - on edge-case-shaped input, e.g.
-    # a dplyr::left_join() type mismatch between the tag column of sample_stats
-    # (factor) and the tag column of ref_stats (double) when very few
-    # candidate motifs pass its internal filtering (seen on real Patient02
-    # data: crashes partway through "Part 2: Searching for global
-    # similarities", after only all_motifs.txt and local_similarities_*.txt
-    # were written). Catch this and fall back to empty results for the whole
-    # patient rather than failing the task.
+    # gliph2() can throw an uncaught internal error (e.g. a dplyr::left_join()
+    # type mismatch) rather than just reporting "no results found" - catch it
+    # and fall back to empty results for the whole patient.
     gliph2_ok <- tryCatch({
         turboGliph::gliph2(
             cdr3_sequences = df,
@@ -62,11 +56,9 @@ process GLIPH2_TURBOGLIPH {
         FALSE
     })
 
-    # gliph2() also doesn't error on the narrower "no significant clusters"
-    # case - it just writes cluster_member_details.txt as a single blank line
-    # with no header, which read.csv rejects outright ("no lines available in
-    # input"). The same fallback covers that case, a totally missing file (if
-    # gliph2() failed before reaching this point), and the tryCatch above.
+    # Also covers the narrower "no significant clusters" case, where gliph2()
+    # writes cluster_member_details.txt as a single blank line with no header,
+    # which read.csv rejects ("no lines available in input").
     df3 <- tryCatch({
         tmp <- read.csv('${patient}/cluster_member_details.txt', sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
         tmp[,'sample'] <- tmp[,'patient']
@@ -78,12 +70,8 @@ process GLIPH2_TURBOGLIPH {
     })
     write.table(df3, "${patient}/cluster_member_details.txt", sep = "\t", row.names = FALSE, quote = FALSE)
 
-    # If gliph2() failed partway through (or before writing anything), some of
-    # its other declared output files may be entirely missing - write minimal
-    # placeholders for whichever ones aren't already there so Nextflow's own
-    # output declarations (which require every path to exist) don't turn this
-    # into a hard pipeline failure on top of the already-handled analysis
-    # failure.
+    # Backfill placeholders for any other declared output file gliph2() left
+    # missing, so Nextflow's output declarations don't fail the task.
     if (!file.exists('${patient}/all_motifs.txt')) {
         write.table(data.frame(motif=character(), num_in_sample=integer(), num_in_ref=integer(),
                                 fisher.score=double(), num_fold=double()),

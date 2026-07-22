@@ -48,10 +48,8 @@ for patient in meta[subject_col].unique():
     am_csv = f"{p_dir}/{patient}_all_motifs.txt"
     gs_csv = f"{p_dir}/{patient}_global_similarities.txt"
 
-    # GLIPH2 writes these as genuinely empty (0-byte) files, not just
-    # header-only, when it finds no clusters for a patient (small/sparse
-    # samples) - pd.read_csv raises EmptyDataError on those, so an
-    # os.path.exists check alone isn't enough; skip zero-size files too.
+    # Some GLIPH2 outputs are genuinely 0-byte files when it finds no
+    # clusters, which crashes pd.read_csv - skip empty files too, not just missing.
     def _has_content(path):
         return os.path.exists(path) and os.path.getsize(path) > 0
 

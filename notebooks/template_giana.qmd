@@ -143,11 +143,8 @@ def plot_giana_tables_per_patient(meta_df, giana_dir, subject_col, timepoint_col
             display(Markdown(f"*[WARNING] No GIANA file found for patient '{patient}' (expected: {giana_file}). Skipping.*\n\n"))
             continue
 
-        # GIANA writes only its "##"-prefixed metadata/header comment lines
-        # (no data rows at all) when it finds zero clusters for a patient's
-        # samples - after comment='#' strips those, pandas has nothing left
-        # to parse and raises EmptyDataError. Skip gracefully like any other
-        # "no data" case instead of crashing the whole report.
+        # GIANA writes only "##" comment lines when it finds zero clusters,
+        # which leaves pandas nothing to parse after comment='#' strips them.
         try:
             giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
         except pd.errors.EmptyDataError:
