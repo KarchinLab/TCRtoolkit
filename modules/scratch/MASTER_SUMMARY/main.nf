@@ -6,18 +6,22 @@ process MASTER_SUMMARY {
     publishDir "${params.outdir}/Master_Summary", mode: 'copy', overwrite: true
 
     input:
-      path seurat_rds
-      path export_cells
+      // stageAs unique names: several of these are optional and default to the shared NO_FILE
+      // placeholder in VDJ-only mode. Without distinct staged names, Nextflow errors on
+      // "input file name collision" when two inputs resolve to the same NO_FILE. The .qmd
+      // treats any 0-byte staged file as absent.
+      path seurat_rds,                     stageAs: 'in_seurat_rds'
+      path export_cells,                   stageAs: 'in_export_cells'
 
-      path vdj_qc_per_sample_compact
-      path vdj_qc_before_after_summary
-      path vdj_qc_sample_sheet_resolved
-      path vdj_qc_clone_rank_abundance
+      path vdj_qc_per_sample_compact,      stageAs: 'in_vdj_qc_per_sample_compact'
+      path vdj_qc_before_after_summary,    stageAs: 'in_vdj_qc_before_after_summary'
+      path vdj_qc_sample_sheet_resolved,   stageAs: 'in_vdj_qc_sample_sheet_resolved'
+      path vdj_qc_clone_rank_abundance,    stageAs: 'in_vdj_qc_clone_rank_abundance'
 
-      path vdj_qc_before_after_retention_fig
-      path vdj_qc_pairing_bar_fig
-      path vdj_qc_clone_rank_abundance_fig
-      path vdj_qc_multiple_chains_fig
+      path vdj_qc_before_after_retention_fig, stageAs: 'in_vdj_qc_before_after_retention_fig'
+      path vdj_qc_pairing_bar_fig,            stageAs: 'in_vdj_qc_pairing_bar_fig'
+      path vdj_qc_clone_rank_abundance_fig,   stageAs: 'in_vdj_qc_clone_rank_abundance_fig'
+      path vdj_qc_multiple_chains_fig,        stageAs: 'in_vdj_qc_multiple_chains_fig'
 
       path qmd
       val  barrier_done

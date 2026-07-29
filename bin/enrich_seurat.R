@@ -117,7 +117,10 @@ if (length(gliph2_files) > 0) {
             # 'tag' is the GLIPH2 cluster/motif identifier
             cluster_col <- intersect(c("tag", "seq_ID", "ultCDR3b"), colnames(df))[1]
             if (is.na(cluster_col)) cluster_col <- colnames(df)[6]
-            patient_dir <- basename(dirname(f))
+            # Patient identity comes from the filename (${patient}_cluster_member_details.txt);
+            # fall back to the parent directory for legacy layouts.
+            patient_dir <- sub("_cluster_member_details.*$", "", basename(f))
+            if (patient_dir == basename(f)) patient_dir <- basename(dirname(f))
             df %>%
                 select(CDR3b = CDR3b, raw = all_of(cluster_col)) %>%
                 mutate(CDR3b          = toupper(CDR3b),

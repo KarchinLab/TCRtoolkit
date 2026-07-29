@@ -1,0 +1,41 @@
+# Example params file for single-cell TCR analysis.
+#   nextflow run . -params-file params_singlecell.yml
+#
+# Route is auto-detected: providing `input_annotated_object` selects the full-SC
+# route (with CoNGA / consensus / repertoire / master summary); omitting it runs
+# the VDJ-only route (full bulk analysis + QC/repertoire report, no GEX steps).
+
+mode: singlecell
+
+# ── Required inputs ───────────────────────────────────────────────────────────
+input_vdj_contigs: "cellranger/*/outs"          # Cell Ranger VDJ output glob
+sample_sheet: "sc_samplesheet.csv"              # columns: sample, path (+ patient_id, etc.)
+
+# ── Optional: annotated GEX Seurat object → full single-cell route ────────────
+# input_annotated_object: "annotated_tcells.rds"
+
+outdir: "out_singlecell"
+project_name: "sc_tcr_run"
+
+# ── Pseudobulk pooling ────────────────────────────────────────────────────────
+pseudobulk_by_phenotype: false                  # true → {sample}__{phenotype} units
+patient_col: "patient_id"                       # pool units per patient for clustering
+
+# ── Pseudobulk QC gate ────────────────────────────────────────────────────────
+pseudobulk_qc_min_clones: 25
+pseudobulk_qc_min_cells: 50
+pseudobulk_qc_mode: "drop"                       # drop | hard_stop
+
+# ── Analysis levels for the shared bulk engine ───────────────────────────────
+workflow_level: "sample,patient,compare"
+use_gliph2: true
+
+# ── Single-cell report toggles (full-SC route) ───────────────────────────────
+run_conga: true
+run_consensus: true
+run_repertoire: true
+run_master_summary: true
+
+# ── Containers ────────────────────────────────────────────────────────────────
+# container: "ghcr.io/karchinlab/tcrtoolkit:main"   # bulk engine (default)
+# sc_container: "syedsazaidi/scratch-tcr:latest"     # cell-level SC processes (default)

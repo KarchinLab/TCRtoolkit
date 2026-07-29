@@ -131,7 +131,9 @@ split_candidate_string <- function(x) {
 }
 
 safe_read_table <- function(path) {
+  # Treat empty placeholder files (staged NO_FILE, 0 bytes) as absent.
   if (is.null(path) || is.na(path) || path == "" || !file.exists(path)) return(NULL)
+  if (isTRUE(file.size(path) == 0)) return(NULL)
   ext <- tolower(tools::file_ext(path))
   if (ext %in% c("tsv", "tab", "txt")) fread(path, sep = "\t") else fread(path)
 }
@@ -189,7 +191,7 @@ theme_scratch_pub <- function(base_size = 12) {
 
 # input loading
 ```{r}
-seu <- if (file.exists(params$seurat_rds)) readRDS(params$seurat_rds) else NULL
+seu <- if (file.exists(params$seurat_rds) && isTRUE(file.size(params$seurat_rds) > 0)) readRDS(params$seurat_rds) else NULL
 export_cells <- safe_read_table(params$export_cells_file)
 
 vdj_qc_per_sample_compact <- safe_read_table(params$vdj_qc_per_sample_compact_file)
@@ -388,7 +390,7 @@ fig_map <- list(
 )
 
 valid_figs <- fig_map[
-  vapply(fig_map, function(x) !is.na(x) && nzchar(x) && file.exists(x), logical(1))
+  vapply(fig_map, function(x) !is.na(x) && nzchar(x) && file.exists(x) && isTRUE(file.size(x) > 0), logical(1))
 ]
 
 if (length(valid_figs) > 0) {

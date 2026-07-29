@@ -11,22 +11,24 @@
 process VDJ_TO_BULK {
     tag "VDJ → Bulk (Bridge 3)"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
+    container "${params.container}"
 
     publishDir "${params.outdir}/bridge/vdj_to_bulk", mode: 'copy', overwrite: true
 
     input:
     path  contigs_after_qc
     val   sample_col
+    path  sample_sheet
 
     output:
     path "bulk_samples/*.tsv",        emit: bulk_tsv_files
     path "synthetic_samplesheet.csv", emit: samplesheet
 
     script:
+    def ss = (sample_sheet && sample_sheet.name != 'NO_FILE') ? "--sample-sheet ${sample_sheet}" : ""
     """
     vdj_to_bulk.py \\
         "${contigs_after_qc}" \\
-        "${sample_col}"
+        "${sample_col}" ${ss}
     """
 }

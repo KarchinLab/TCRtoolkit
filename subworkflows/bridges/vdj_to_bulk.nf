@@ -18,9 +18,11 @@ workflow VDJ_TO_BULK_SW {
     contigs_after_qc    // path: contigs_after_qc.tsv from VDJ_QC
 
     main:
+    def ss = params.sample_sheet ? file(params.sample_sheet) : file("${projectDir}/assets/NO_FILE")
     VDJ_TO_BULK(
         contigs_after_qc,
-        params.vdj_meta_sample_col ?: 'sample'
+        params.vdj_meta_sample_col ?: 'sample',
+        ss
     )
 
     samplesheet_utf8 = VDJ_TO_BULK.out.samplesheet

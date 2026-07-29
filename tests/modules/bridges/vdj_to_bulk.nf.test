@@ -1,0 +1,152 @@
+nextflow_process {
+
+    name "Test VDJ_TO_BULK"
+    script "modules/bridges/vdj_to_bulk.nf"
+    process "VDJ_TO_BULK"
+
+    // Bridge 3: VDJ_QC contigs -> canonical AIRR clonotype schema, used on the
+    // VDJ-only route (no GEX object). Same positional column-order contract as
+    // SC_TO_CDR3 — see tests/modules/bridges/sc_to_cdr3.nf.test.
+
+    test("Should convert TRB contigs into the canonical schema") {
+
+        tag "bridges"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/contigs_after_qc.tsv")
+                input[1] = 'sample'
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def files = process.out.bulk_tsv_files.flatten().collect { path(it) }
+            assert files.size() == 2   // S1 and S2
+
+            def s1 = files.find { it.getFileName().toString() == 'S1_bulk.tsv' }
+            def s2 = files.find { it.getFileName().toString() == 'S2_bulk.tsv' }
+            assert s1 && s2
+
+            // Canonical column names AND order — must match ANNOTATE_PROCESS output
+            // so the shared engine's positional sort/dedup stays correct.
+            assert (s1.readLines()[0].split('\t') as List) == [
+                'junction_aa', 'v_call', 'd_call', 'j_call',
+                'duplicate_count', 'junction_aa_length', 'duplicate_frequency_percent',
+                'sequence', 'sequence_id', 'junction', 'sample'
+            ]
+
+            // TRA rows are excluded: S1 has 3 TRB contigs across 2 clonotypes,
+            // and its TRA contig must not appear.
+            def s1_rows = s1.readLines()[1..-1].collect { it.split('\t', -1) }
+            assert s1_rows.size() == 2
+            assert s1_rows.every { !it[0].startsWith('CAVRD') }
+            assert s1_rows.every { it[1].startsWith('TRBV') }
+
+            def s1_counts = s1_rows.collectEntries { [(it[0]): it[4]] }
+            assert s1_counts['CASSLGQAYEQYF'] == '2'
+            assert s1_counts['CASSIRSSYEQYF'] == '1'
+        }
+    }
+
+    test("Should normalise CDR3 case before collapsing clonotypes") {
+
+        tag "bridges"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/contigs_after_qc.tsv")
+                input[1] = 'sample'
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def s2 = process.out.bulk_tsv_files.flatten()
+                        .collect { path(it) }
+                        .find { it.getFileName().toString() == 'S2_bulk.tsv' }
+
+            def rows = s2.readLines()[1..-1].collect { it.split('\t', -1) }
+
+            // S2's two TRB contigs differ only in case ("CASSPQGAYNEQFF" vs
+            // "casspqgaynEQFF"). Without upper-casing they would be counted as two
+            // distinct clonotypes, inflating diversity on the VDJ-only route.
+            assert rows.size() == 1
+            assert rows[0][0] == 'CASSPQGAYNEQFF'
+            assert rows[0][4] == '2'
+            assert Math.abs(Double.parseDouble(rows[0][6]) - 100.0d) < 0.001d
+        }
+    }
+
+    test("Should emit a samplesheet carrying patient metadata") {
+
+        tag "bridges"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/contigs_after_qc.tsv")
+                input[1] = 'sample'
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def lines  = path(process.out.samplesheet.get(0)).readLines()
+            def header = lines[0].split(',') as List
+
+            assert header.contains('sample')
+            assert header.contains('file')
+            assert header.contains('patient_id')   // needed by PATIENT pooling
+
+            def rows = lines[1..-1].collect { it.split(',', -1) }
+            assert rows.size() == 2
+
+            def sample_idx  = header.indexOf('sample')
+            def patient_idx = header.indexOf('patient_id')
+            assert rows.collect { it[sample_idx] }.sort() == ['S1', 'S2']
+            assert rows.every { it[patient_idx] == 'P1' }
+        }
+    }
+
+    test("Should fail when no TRB contigs survive filtering") {
+
+        tag "bridges"
+        tag "error-handling"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/contigs_tra_only.tsv")
+                input[1] = 'sample'
+                """
+            }
+        }
+
+        then {
+            // An all-TRA input means the beta-chain analysis downstream would be
+            // empty — abort instead of producing an empty pseudobulk.
+            assert process.failed
+        }
+    }
+}

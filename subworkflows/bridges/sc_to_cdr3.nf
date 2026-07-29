@@ -19,12 +19,17 @@ workflow SC_TO_CDR3_SW {
     main:
     SC_TO_CDR3( export_cells )
 
-    // Build sample_map channel: [meta, file] per sample
-    SC_TO_CDR3.out.per_sample
-        .flatten()
-        .map { f ->
-            def sample = f.name.replaceAll('_cdr3\\.tsv$', '')
-            [[sample: sample], f]
+    // Build sample_map from unit_map.csv so meta carries patient (+ phenotype).
+    // patient_id lets the shared PATIENT step pool per-patient for clustering.
+    SC_TO_CDR3.out.unit_map
+        .splitCsv(header: true)
+        .map { row ->
+            def meta = [
+                sample    : row.sample,
+                patient_id: (row.patient ?: row.sample),
+                phenotype : (row.phenotype ?: '')
+            ]
+            [ meta, file(row.file) ]
         }
         .set { sample_map }
 

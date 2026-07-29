@@ -76,13 +76,6 @@ print('Date and time:         ' + str(datetime.datetime.now()))
 meta = pd.read_csv(sample_table, sep=',')
 meta_cols = meta.columns.tolist()
 
-if vgene_subject_col not in meta.columns:
-    vgene_subject_col = 'sample'
-if samplechart_x_col not in meta.columns:
-    samplechart_x_col = 'sample'
-if samplechart_color_col not in meta.columns:
-    samplechart_color_col = 'sample'
-
 ## reading combined repertoire statistics
 df = pd.read_csv(sample_stats_csv, sep=',')
 df = pd.merge(df, meta, on='sample', how='left')
@@ -213,10 +206,7 @@ where $N_{k}$ is the number of TCRs that use the $k$ th V gene, and T is the tot
 
 ## code adapted from https://www.moritzkoerber.com/posts/plotly-grouped-stacked-bar-chart/
 colors = ["#fafa70","#fdef6b","#ffe566","#ffda63","#ffd061","#ffc660","#ffbb5f","#fdb15f","#fba860","#f79e61","#f39562","#ef8c63","#e98365","#e37b66","#dd7367","#d66b68","#ce6469","#c65e6a","#bd576b","#b4526b","#ab4c6b","#a1476a","#974369","#8c3e68","#823a66","#773764","#6d3361","#62305e","#572c5a","#4d2956"]
-vgene_x_cols = [c.strip() for c in vgene_x_cols.split(',')]
-vgene_x_cols = [c for c in vgene_x_cols if c in v_family.columns]
-if not vgene_x_cols:
-    vgene_x_cols = ['sample']
+vgene_x_cols = vgene_x_cols.split(',')
 
 ## calculate proportions and add to v_family_long
 v_family_long = pd.melt(v_family,
@@ -236,16 +226,30 @@ subjects = (
     .unique()
 )
 
-# Build a single figure containing every subject's traces. A dropdown menu
-# (plotly updatemenus) is used to select which subject is shown at a time,
-# rather than stacking one figure per subject vertically.
-fig = go.Figure()
-
-subject_trace_idx = {}   # subject -> list of trace indices belonging to it
-subject_annotations = {} # subject -> list of annotation dicts
-
 for subject in subjects:
     current = v_family_long[v_family_long[vgene_subject_col] == subject]
+    fig = go.Figure()
+    fig.update_layout(
+        template="simple_white",
+        title_text=f"{vgene_subject_col}: {subject}",
+        xaxis=dict(title_text=f"{', '.join(vgene_x_cols)}"),
+        yaxis=dict(title_text="proportion"),
+        barmode="stack",
+        margin=dict(b=80, r=115),
+        legend=dict(
+            orientation="v",
+            x=1.02,
+            y=1,
+            yanchor="top",
+            itemsizing="constant",
+            traceorder="reversed"
+        )
+    )
+
+    fig.update_xaxes(
+        automargin=True,
+        title_standoff=30
+    )
 
     if len(vgene_x_cols) == 1:
         x_vals = current[vgene_x_cols[0]]
@@ -270,7 +274,6 @@ for subject in subjects:
     )
     summary = y_df.merge(summary, on='x')
 
-    idxs = []
     for g, c in zip(current.v_gene.unique(), colors):
         plot_df = current[current.v_gene == g]
         if len(vgene_x_cols) == 1:
@@ -284,7 +287,6 @@ for subject in subjects:
                 name=g,
                 marker_color=c,
                 legendgroup=g,
-                visible=(subject == subjects[0]),
 
                 customdata=plot_df[['sample']],
                 hovertemplate=(
@@ -298,88 +300,17 @@ for subject in subjects:
                 textposition='outside',
             )
         )
-        idxs.append(len(fig.data) - 1)
-    subject_trace_idx[subject] = idxs
 
-    anns = []
     if len(vgene_x_cols) == 1:
         for _, row in summary.iterrows():
-            anns.append(dict(
+            fig.add_annotation(
                 x=row['x'],
-                y=row['y_top'] + 0.02,
-                text=str(row['total_v_genes']),
-                showarrow=False,
-                yanchor='bottom',
-                font=dict(size=12)
-            ))
-    subject_annotations[subject] = anns
+                    y=row['y_top'] + 0.02,
+                    text=str(row['total_v_genes']),
+                    showarrow=False,
+                    yanchor='bottom',
+                    font=dict(size=12)
+            )
 
-# Label that sits above the dropdown; kept in every annotation set so it
-# persists when a button replaces the layout annotations.
-dropdown_label = dict(
-    text="Select sample:",
-    x=0,
-    xref="paper",
-    xanchor="left",
-    y=1.24,
-    yref="paper",
-    yanchor="bottom",
-    showarrow=False,
-    font=dict(size=14),
-)
-
-# Build one dropdown button per subject that toggles trace visibility,
-# the title, and the per-subject annotations.
-n_traces = len(fig.data)
-buttons = []
-for subject in subjects:
-    visible = [False] * n_traces
-    for i in subject_trace_idx[subject]:
-        visible[i] = True
-    buttons.append(dict(
-        label=str(subject),
-        method="update",
-        args=[
-            {"visible": visible},
-            {
-                "title.text": f"{vgene_subject_col}: {subject}",
-                "annotations": subject_annotations[subject] + [dropdown_label],
-            },
-        ],
-    ))
-
-fig.update_layout(
-    template="simple_white",
-    title_text=f"{vgene_subject_col}: {subjects[0]}",
-    xaxis=dict(title_text=f"{', '.join(vgene_x_cols)}"),
-    yaxis=dict(title_text="proportion"),
-    barmode="stack",
-    margin=dict(b=80, r=115, t=120),
-    legend=dict(
-        orientation="v",
-        x=1.02,
-        y=1,
-        yanchor="top",
-        itemsizing="constant",
-        traceorder="reversed"
-    ),
-    annotations=subject_annotations[subjects[0]] + [dropdown_label],
-    updatemenus=[dict(
-        buttons=buttons,
-        direction="down",
-        showactive=True,
-        x=0,
-        xanchor="left",
-        y=1.18,
-        yanchor="top",
-        pad=dict(l=0, t=0),
-    )],
-)
-
-fig.update_xaxes(
-    automargin=True,
-    title_standoff=30
-)
-
-fig.show()
+    fig.show()
 ```

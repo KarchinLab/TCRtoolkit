@@ -185,38 +185,29 @@ if __name__ == "__main__":
 
     df = pd.read_table(args.sample_tsv, delimiter = '\t')
 
-    # Normalise SC-derived CDR3b/TRBV/TRBJ/counts columns to AIRR names
-    df = df.rename(columns={
-        'CDR3b': 'junction_aa',
-        'TRBV':  'v_call',
-        'TRBJ':  'j_call',
-        'counts': 'duplicate_count',
-    })
-    if 'sequence' not in df.columns:
-        df['sequence'] = df['junction_aa']
-
-    df = df[['sequence', 'junction_aa', 'v_call', 'j_call', 'duplicate_count']]
+    df = df[['sequence', 'junction_aa', 'v_call', 'duplicate_count']]
 
     df = df.rename(columns={'sequence': 'cdr3_b_nucseq',
                         'junction_aa': 'cdr3_b_aa',
                         'v_call': 'v_b_gene',
-                        'j_call': 'j_b_gene',
                         'duplicate_count': 'count'
                         })
 
     df = df[df['cdr3_b_aa'].notna()]
     df = df[df['v_b_gene'].notna()]
-    df = df[df['j_b_gene'].notna()]
 
-    def _fix_allele(gene):
-        if not isinstance(gene, str):
-            return gene
-        if '*' not in gene:
-            return gene + '*01'
-        return gene.replace('*00', '*01')
+    # If allele information is not specified (as indicated by *00), replace with *01
+    df['v_b_gene'] = df['v_b_gene'].apply(lambda x: x.replace('*00', '*01'))
 
-    df['v_b_gene'] = df['v_b_gene'].apply(_fix_allele)
-    df['j_b_gene'] = df['j_b_gene'].apply(_fix_allele)
+    # Single-cell pseudobulk carries no CDR3 nucleotide sequence. tcrdist3 uses cdr3_b_nucseq
+    # as a clone grouping/index column, so an all-empty nucseq would drop every clone
+    # ("N of N were not captured" -> empty matrix). Beta-chain tcrdist distances are computed
+    # from cdr3_b_aa and V-gene-derived CDR1/CDR2, not the nucleotide sequence, so drop the
+    # column when it is empty. (Bulk / AIRR input has real nucseq and is unaffected.)
+    if 'cdr3_b_nucseq' in df.columns:
+        _ns = df['cdr3_b_nucseq'].astype('string').fillna('').str.strip()
+        if (_ns == '').all():
+            df = df.drop(columns=['cdr3_b_nucseq'])
 
     # --- 2. Calculate distance matrix ---
     # Levenshtein distance matrix

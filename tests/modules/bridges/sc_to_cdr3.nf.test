@@ -1,0 +1,162 @@
+nextflow_process {
+
+    name "Test SC_TO_CDR3"
+    script "modules/bridges/sc_to_cdr3.nf"
+    process "SC_TO_CDR3"
+
+    // Bridge 1b: TCELL_INTEGRATION per-cell export -> canonical AIRR clonotype schema.
+    //
+    // The column ORDER asserted below is load-bearing, not cosmetic: the shared bulk
+    // engine dedups positionally (ANNOTATE_DEDUPLICATE_CDR3_TRBV uses $1=junction_aa,
+    // $2=v_call; ANNOTATE_SORT_CDR3 sorts -k1,1 -k2,5). Reordering these columns
+    // silently corrupts OLGA/GIANA input rather than failing loudly.
+
+    test("Should pool by sample and emit the canonical schema") {
+
+        tag "bridges"
+
+        when {
+            params {
+                pseudobulk_by_phenotype = false
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/export_cells.tsv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def lines = path(process.out.concat_cdr3.get(0)).readLines()
+
+            // Canonical column names AND order
+            assert (lines[0].split('\t') as List) == [
+                'junction_aa', 'v_call', 'd_call', 'j_call',
+                'duplicate_count', 'junction_aa_length', 'duplicate_frequency_percent',
+                'sequence', 'sequence_id', 'junction', 'sample'
+            ]
+
+            // 2 clonotypes in S1 + 1 in S2 = 3 rows (the cell with no CDR3b is dropped)
+            assert lines.size() == 4
+
+            def rows = lines[1..-1].collect { it.split('\t', -1) }
+
+            // Cells collapse into clonotypes with correct counts:
+            //   S1 CASSLGQAYEQYF = 3 CD8_Tex + 1 CD4_Tem = 4 (pooled across phenotype)
+            def counts = rows.collectEntries { [(it[0] + '|' + it[10]): it[4]] }
+            assert counts['CASSLGQAYEQYF|S1']  == '4'
+            assert counts['CASSIRSSYEQYF|S1']  == '2'
+            assert counts['CASSPQGAYNEQFF|S2'] == '2'
+
+            // Frequencies are per-unit, not global: S1 total = 6 cells -> 4/6 = 66.67%
+            def freqs = rows.collectEntries { [(it[0] + '|' + it[10]): Double.parseDouble(it[6])] }
+            assert Math.abs(freqs['CASSLGQAYEQYF|S1'] - 66.666667d) < 0.001d
+            assert Math.abs(freqs['CASSIRSSYEQYF|S1'] - 33.333333d) < 0.001d
+            assert Math.abs(freqs['CASSPQGAYNEQFF|S2'] - 100.0d)    < 0.001d
+
+            // junction_aa_length is derived, not copied
+            assert rows.every { it[5] == it[0].length().toString() }
+
+            // One file per pseudobulk unit
+            assert process.out.per_sample.flatten().size() == 2
+        }
+    }
+
+    test("Should carry patient metadata into unit_map") {
+
+        tag "bridges"
+
+        when {
+            params {
+                pseudobulk_by_phenotype = false
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/export_cells.tsv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def map_lines = path(process.out.unit_map.get(0)).readLines()
+
+            assert (map_lines[0].split(',') as List) == ['sample', 'patient', 'phenotype', 'file']
+            assert map_lines.size() == 3   // header + S1 + S2
+
+            // Patient must survive the bridge — PATIENT pools per-patient for
+            // GIANA/GLIPH2/tcrdist, so losing it would silently degrade clustering
+            // to per-sample without any error.
+            def units = map_lines[1..-1].collect { it.split(',', -1) }
+            assert units.collect { it[0] }.sort() == ['S1', 'S2']
+            assert units.every { it[1] == 'P1' }
+            assert units.every { it[2] == '' }   // phenotype blank in sample-pooled mode
+        }
+    }
+
+    test("Should stratify into sample__phenotype units with --by-phenotype") {
+
+        tag "bridges"
+
+        when {
+            params {
+                pseudobulk_by_phenotype = true
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/export_cells.tsv")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def units = path(process.out.unit_map.get(0)).readLines()[1..-1]
+                            .collect { it.split(',', -1) }
+
+            // S2__CD4_Tem is absent: its only cell had no CDR3b and was filtered
+            assert units.collect { it[0] }.sort() == ['S1__CD4_Tem', 'S1__CD8_Tex', 'S2__CD8_Tex']
+            assert units.every { it[1] == 'P1' }
+
+            def concat = path(process.out.concat_cdr3.get(0)).readLines()
+            assert (concat[0].split('\t') as List)[0] == 'junction_aa'
+
+            // The shared clonotype now splits across phenotypes: 3 in CD8_Tex, 1 in CD4_Tem
+            def rows = concat[1..-1].collect { it.split('\t', -1) }
+            assert rows.size() == 4
+            def counts = rows.collectEntries { [(it[0] + '|' + it[10]): it[4]] }
+            assert counts['CASSLGQAYEQYF|S1__CD8_Tex'] == '3'
+            assert counts['CASSLGQAYEQYF|S1__CD4_Tem'] == '1'
+        }
+    }
+
+    test("Should fail loudly when the sample column is missing") {
+
+        tag "bridges"
+        tag "error-handling"
+
+        when {
+            params {
+                pseudobulk_by_phenotype = false
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/export_cells_no_sample.tsv")
+                """
+            }
+        }
+
+        then {
+            // Must abort rather than silently pooling every cell into one unit
+            assert process.failed
+        }
+    }
+}

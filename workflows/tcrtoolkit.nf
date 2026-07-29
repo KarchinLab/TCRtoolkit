@@ -16,8 +16,9 @@ include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 include { ANNOTATE }            from '../subworkflows/local/annotate'
+include { REPORT }              from '../subworkflows/local/report'
 
-include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
+// NOTE: cellranger pseudobulk + PSEUDOBULK_PHENOTYPE relocated to the single-cell modality.
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -36,8 +37,8 @@ workflow TCRTOOLKIT {
     def input_format = params.input_format.toLowerCase()
 
     // Validate
-    if (levels.contains('convert') && !['adaptive', 'cellranger'].contains(input_format)) {
-        println("\u001B[33m[WARN]\u001B[0m To run Convert workflow, please specify a valid convertible --input_format (adaptive or cellranger)")
+    if (levels.contains('convert') && !['adaptive'].contains(input_format)) {
+        println("\u001B[33m[WARN]\u001B[0m To run Convert workflow, please specify a valid convertible --input_format (adaptive). For single-cell / cellranger input use --mode singlecell.")
         if (!levels.contains('sample') && !levels.contains('compare')) {
             return
         }
@@ -59,20 +60,6 @@ workflow TCRTOOLKIT {
     if (input_format == 'adaptive') {
         CONVERT(INPUT_CHECK.out.sample_map, input_format)
         sample_map_final = CONVERT.out.sample_map_converted
-
-    } else if (input_format == 'cellranger') {
-        CONVERT(INPUT_CHECK.out.sample_map, input_format)
-        sample_map_final = CONVERT.out.sample_map_converted
-
-        if (params.sobject_gex) {
-            // Current SCRATCH-annotate gex input:
-            // data/SCRATCH_ANNOTATION:SCTYPE_STATE_ANNOTATION/data/project_T_Cells_annotation_object.RDS
-            PSEUDOBULK_PHENOTYPE(
-                CONVERT.out.pseudobulk_phenotype_files,
-                INPUT_CHECK.out.samplesheet_utf8,
-                levels
-            )
-        }
 
     } else {
         sample_map_final = INPUT_CHECK.out.sample_map
@@ -105,6 +92,29 @@ workflow TCRTOOLKIT {
             ANNOTATE.out.cdr3_pgen
         )
     }
+
+    // Report - works on channel of tuples [report name, [report files]]
+    ch_reports = channel.empty()
+
+    // QC report requires sample-level aggregate outputs.
+    ch_qc_report = SAMPLE.out.sample_csv
+        .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
+        .combine(ANNOTATE.out.concat_cdr3_sorted)
+        .map { sample_stats_csv, concat_cdr3_sorted ->
+            tuple(
+                file(params.template_qc),
+                [sample_stats_csv,
+                concat_cdr3_sorted]
+            )
+        }
+    ch_reports = ch_reports.mix(ch_qc_report)
+
+    // Another report
+    // ch_reports = ch_reports.mix( ... )
+
+    REPORT( ch_reports )
+
+
 }
 
 /*

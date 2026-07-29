@@ -24,14 +24,15 @@ assets/TCRseq_metadata_templates/*
 bin/__pycache__/*
 scripts/*
 
-## Quarto
-notebooks/*
-!notebooks/sample_stats_template.qmd
-!notebooks/compare_stats_template.qmd
-!notebooks/gliph2_report_template.qmd
+## Quarto (track .qmd sources; rendered outputs ignored above)
 
 ## Bash
 tmp
 
 ## vscode
 .vscode/*
+## R Markdown design doc build artifacts
+pipeline_design.html
+pipeline_design.pdf
+pipeline_design_files/
+figures/

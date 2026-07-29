@@ -1,0 +1,183 @@
+nextflow_process {
+
+    name "Test PSEUDOBULK_QC_CALC"
+    script "modules/local/pseudobulk_qc/main.nf"
+    process "PSEUDOBULK_QC_CALC"
+
+    // The QC gate decides whether a pseudobulk unit enters the shared bulk engine.
+    // Two contracts are asserted here:
+    //   1. the PASS/FAIL token lands in CSV column 6, which the module's awk
+    //      ('NR==2{print $6}') and the subworkflow's `qc_pass == 'PASS'` branch read;
+    //   2. the sample file is passed through UNCHANGED, so downstream stages see
+    //      canonical-schema data rather than the QC summary.
+
+    test("Should PASS a unit meeting both thresholds") {
+
+        tag "pseudobulk-qc"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = [
+                    [sample: 'S1'],
+                    file("${projectDir}/tests/fixtures/singlecell/pseudobulk_unit.tsv")
+                ]
+                input[1] = 2
+                input[2] = 50
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def (meta, sample_file, qc_pass, n_clones, n_cells) = process.out.scored.get(0)
+
+            assert meta.sample == 'S1'
+            assert qc_pass  == 'PASS'
+            assert n_clones == '3'
+            assert n_cells  == '60'    // 30 + 20 + 10 from duplicate_count
+
+            // Pass-through must be the original canonical-schema file
+            def header = path(sample_file).readLines()[0].split('\t') as List
+            assert header[0] == 'junction_aa'
+            assert header[4] == 'duplicate_count'
+            assert header.size() == 11
+        }
+    }
+
+    test("Should FAIL a unit below the cell threshold") {
+
+        tag "pseudobulk-qc"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = [
+                    [sample: 'S1'],
+                    file("${projectDir}/tests/fixtures/singlecell/pseudobulk_unit.tsv")
+                ]
+                input[1] = 2
+                input[2] = 100
+                """
+            }
+        }
+
+        then {
+            assert process.success   // the gate reports, it does not abort
+
+            def (meta, sample_file, qc_pass, n_clones, n_cells) = process.out.scored.get(0)
+            assert qc_pass  == 'FAIL'
+            assert n_cells  == '60'
+        }
+    }
+
+    test("Should FAIL a unit below the clone threshold") {
+
+        tag "pseudobulk-qc"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = [
+                    [sample: 'S1'],
+                    file("${projectDir}/tests/fixtures/singlecell/pseudobulk_unit.tsv")
+                ]
+                input[1] = 25
+                input[2] = 50
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def qc_pass = process.out.scored.get(0)[2]
+            assert qc_pass == 'FAIL'   // 3 clones < 25, even though 60 cells >= 50
+        }
+    }
+
+    test("Should write PASS into column 6 of the QC csv") {
+
+        tag "pseudobulk-qc"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = [
+                    [sample: 'S1'],
+                    file("${projectDir}/tests/fixtures/singlecell/pseudobulk_unit.tsv")
+                ]
+                input[1] = 2
+                input[2] = 50
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def lines = path(process.out.qc_csv.get(0)).readLines()
+
+            // Column order is what the module's awk depends on
+            assert (lines[0].split(',') as List) ==
+                ['sample', 'n_clones', 'n_cells', 'min_clones', 'min_cells', 'pass']
+
+            def row = lines[1].split(',', -1)
+            assert row[0] == 'S1'
+            assert row[5] == 'PASS'
+        }
+    }
+
+    test("Should report non-redundant TRBV family usage") {
+
+        tag "pseudobulk-qc"
+
+        when {
+            params {
+                outdir = "$outputDir"
+            }
+            process {
+                """
+                input[0] = [
+                    [sample: 'S1'],
+                    file("${projectDir}/tests/fixtures/singlecell/pseudobulk_unit.tsv")
+                ]
+                input[1] = 2
+                input[2] = 50
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def lines  = path(process.out.v_family_csv.get(0)).readLines()
+            def header = lines[0].split(',') as List
+            def row    = lines[1].split(',', -1)
+
+            assert header[0] == 'sample'
+            assert header.size() == 31   // sample + TRBV1..TRBV30
+
+            def usage = [header, row].transpose().collectEntries { k, v -> [(k): v] }
+
+            // Alleles collapse to families: TRBV5-1 -> TRBV5, TRBV19, TRBV28
+            assert usage['TRBV5']  == '1'
+            assert usage['TRBV19'] == '1'
+            assert usage['TRBV28'] == '1'
+            assert usage['TRBV7']  == '0'
+        }
+    }
+}

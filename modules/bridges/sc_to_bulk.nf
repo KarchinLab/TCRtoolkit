@@ -14,7 +14,7 @@
 process SC_TO_BULK {
     tag "SC → Bulk (Bridge 1)"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
+    container "${params.container}"
 
     publishDir "${params.outdir}/bridge/sc_to_bulk", mode: 'copy', overwrite: true
 

@@ -1,0 +1,4 @@
+junction_aa	v_call	d_call	j_call	duplicate_count	junction_aa_length	duplicate_frequency_percent	sequence	sequence_id	junction	sample
+CASSLGQAYEQYF	TRBV5-1		TRBJ2-7	30	13	50.0		CASSLGQAYEQYF		S1
+CASSIRSSYEQYF	TRBV19		TRBJ2-7	20	13	33.333333		CASSIRSSYEQYF		S1
+CASSPQGAYNEQFF	TRBV28		TRBJ2-1	10	14	16.666667		CASSPQGAYNEQFF		S1

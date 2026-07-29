@@ -11,7 +11,7 @@
 process SC_TO_CDR3 {
     tag "SC → CDR3 (Bridge 1b)"
     label 'process_low'
-    container "ghcr.io/karchinlab/tcrtoolkit:main"
+    container "${params.container}"
     publishDir "${params.outdir}/bridge/sc_to_cdr3", mode: 'copy', overwrite: true
 
     input:
@@ -20,9 +20,11 @@ process SC_TO_CDR3 {
     output:
     path "per_sample/*_cdr3.tsv", emit: per_sample
     path "concat_cdr3.tsv",       emit: concat_cdr3
+    path "unit_map.csv",          emit: unit_map
 
     script:
+    def by_pheno = params.pseudobulk_by_phenotype ? "--by-phenotype" : ""
     """
-    sc_to_cdr3.py "${export_cells}"
+    sc_to_cdr3.py "${export_cells}" ${by_pheno}
     """
 }

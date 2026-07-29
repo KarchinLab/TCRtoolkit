@@ -294,14 +294,20 @@ save_rdata_safe <- function(..., filename) {
 # loading Inputs
 ```{r}
 #| label: read-inputs
-require_file(params$seurat_rds, sprintf("Seurat RDS not found: %s", params$seurat_rds))
+# Seurat object is OPTIONAL: absent (or a NO_FILE placeholder) in the VDJ-only route,
+# where a per-clonotype export table is supplied instead. All analysis below runs on
+# export_cells_in, so the Seurat is only used as a fallback source of that table.
+seu <- if (!is.null(params$seurat_rds) && file.exists(params$seurat_rds) &&
+           !grepl("NO_FILE", params$seurat_rds)) readRDS(params$seurat_rds) else NULL
 
-seu <- readRDS(params$seurat_rds)
 export_cells_in <- safe_read_table(params$export_cells_file)
 metadata_tbl <- safe_read_table(params$metadata_file)
 previous_summary_tbl <- safe_read_table(params$previous_summary_file)
 
 if (is.null(export_cells_in)) {
+  if (is.null(seu)) {
+    stop("REPERTOIRE needs either a Seurat object (--input_annotated_object) or an export_cells table.")
+  }
   export_cells_in <- seu@meta.data %>% tibble::rownames_to_column("cell_id")
 }
 ```

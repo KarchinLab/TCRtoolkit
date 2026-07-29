@@ -1,488 +1,301 @@
-# TCR-Toolkit-SCRATCH
+# TCRtoolkit
 
-A unified Nextflow DSL2 pipeline for T-cell receptor (TCR) analysis that handles **bulk**, **single-cell**, and **combined** TCR data under a single entry point.
+A unified Nextflow DSL2 pipeline for T-cell receptor (TCR) repertoire analysis that handles both
+**bulk** and **single-cell** TCR data under a single entry point.
 
-Internally, the pipeline integrates two complementary analysis engines:
+The pipeline integrates two complementary engines that share **one** bulk analysis core:
 
-- **TCRtoolkit** — bulk and pseudo-bulk repertoire analysis (clonotype statistics, generation probabilities, TCR sharing, convergence, antigen specificity)
-- **SCRATCH-TCR** — single-cell GEX + TCR co-analysis (VDJ QC, T-cell integration, clonotype clustering, repertoire profiling)
+- **Bulk engine** — clonotype statistics, generation probabilities (OLGA), GIANA & GLIPH2 motif
+  clustering, TCRdist3 distances, convergence, and antigen specificity.
+- **Single-cell engine** — VDJ QC, T-cell integration with an annotated GEX object, cluster
+  mapping back onto cells, CoNGA, consensus clustering, and repertoire profiling.
 
-Users interact with one pipeline and one set of outputs. The choice of which engines run is determined automatically from the inputs provided, or set explicitly with `--mode`.
+Single-cell data is *pseudobulked* into clonotype tables and run through the **exact same** bulk
+code as bulk input — so GIANA/GLIPH2/TCRdist3 and every diversity metric are computed once and are
+directly comparable across modalities.
 
 ---
 
-## Table of Contents
+## Contents
 
-- [Overview](#overview)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Pipeline Modes](#pipeline-modes)
-  - [Mode 1: Bulk](#mode-1-bulk)
-  - [Mode 2: Single-cell](#mode-2-single-cell)
-    - [Full SC sub-mode](#full-sc-sub-mode)
-    - [VDJ-only sub-mode](#vdj-only-sub-mode)
-- [Parameters](#parameters)
-- [Outputs](#outputs)
 - [Architecture](#architecture)
-- [Bridge Modules](#bridge-modules)
-- [Configuration](#configuration)
-- [Contact](#contact)
-
----
-
-## Overview
-
-| Mode | Sub-mode | Input | What runs |
-|---|---|---|---|
-| `bulk` | — | AIRR / Adaptive / CellRanger TSV files | Full TCRtoolkit repertoire analysis |
-| `singlecell` | **Full SC** | Seurat RDS + Cell Ranger VDJ outs + sample sheet | VDJ QC → T-cell integration → TCRtoolkit bulk analysis → SC clustering (CONGA, GLIPH2, TCRdist3, GIANA) → Consensus → Master Summary |
-| `singlecell` | **VDJ-only** | Cell Ranger VDJ outs + sample sheet *(no GEX object)* | VDJ QC → TCRtoolkit bulk analysis only; SC clustering modules are skipped |
-
-The mode is auto-detected from the inputs you provide. Within `singlecell` mode, the sub-mode is also auto-detected: if `--input_annotated_object` is absent, the pipeline switches to VDJ-only automatically. You can also set the mode explicitly with `--mode bulk | singlecell | combined`.
-
----
-
-## Requirements
-
-- [Nextflow](https://www.nextflow.io/) ≥ 22.10
-- Java 11 or later
-- [Docker](https://docs.docker.com/engine/install/) **or** [Singularity](https://sylabs.io/singularity/)
-- Git
-
-Two containers are used automatically — no manual installation of tools required:
-
-| Container | Used by |
-|---|---|
-| `ghcr.io/karchinlab/tcrtoolkit:main` | Bulk analysis processes |
-| `syedsazaidi/scratch-tcr:latest` | Single-cell analysis processes |
-
----
-
-
-
-## Installation
-
-```bash
-git clone https://github.com/KarchinLab/TCRtoolkit.git
-cd TCR-Toolkit
-```
----
-
-## Quick Start
-
-### Mode 1 — Bulk only
-
-```bash
-nextflow run main.nf \
-  --samplesheet samplesheet.csv \
-  --input_format airr \
-  --workflow_level "sample,compare" \
-  --outdir results/bulk \
-  --project_name my_bulk_run
-```
-
-### Mode 2a — Single-cell (Full SC, with GEX object)
-
-```bash
-nextflow run main.nf \
-  --input_annotated_object annotated_seurat.RDS \
-  --input_vdj_contigs "data/VDJ/*/outs" \
-  --sample_sheet sc_samplesheet.csv \
-  --outdir results/singlecell \
-  --project_name my_sc_run
-```
-
-### Mode 2b — Single-cell (VDJ-only, no GEX object)
-
-```bash
-nextflow run main.nf \
-  --input_vdj_contigs "data/VDJ/*/outs" \
-  --sample_sheet sc_samplesheet.csv \
-  --outdir results/singlecell \
-  --project_name my_sc_run
-```
-
-Omitting `--input_annotated_object` triggers VDJ-only mode automatically.
-
-
-### Profile
-
-Add `-profile singularity or docker` to any of the commands above:
-
-```bash
-nextflow run main.nf -profile singularity/docker \
-  --input_annotated_object annotated_seurat.RDS \
-  --input_vdj_contigs "data/VDJ/*/outs" \
-  --sample_sheet sc_samplesheet.csv \
-  --outdir results
-```
-
-
----
-
-## Pipeline Modes
-
-### Mode 1: Bulk
-
-For bulk or pseudo-bulk TCR sequencing data. Runs the full TCRtoolkit repertoire analysis pipeline.
-
-```
-Input (AIRR / Adaptive / CellRanger TSVs)
-  │
-  ├── INPUT_CHECK          — validate samplesheet
-  ├── CONVERT (optional)   — Adaptive or CellRanger → AIRR format
-  ├── ANNOTATE             — CDR3 deduplication + OLGA generation probabilities
-  │
-  ├── SAMPLE               — per-sample statistics
-  │     ├── V/D/J gene usage
-  │     ├── TCRdist3 distance matrices + histograms
-  │     ├── OLGA pGen histograms
-  │     ├── Convergence analysis
-  │     ├── TCR phenotyping
-  │     └── VDJdb antigen-specificity matching
-  │
-  ├── PATIENT (optional)   — patient-level analysis
-  │     ├── GIANA clonotype clustering
-  │     └── GLIPH2 motif clustering (optional)
-  │
-  └── COMPARE (optional)   — cross-sample TCR sharing
-        ├── Sharing histogram
-        └── Sharing vs log10(pGen) scatter plot
-```
-
-**Samplesheet format (bulk):**
-
-```csv
-sample,file,timepoint,origin,patient,subject_id
-sample_A,/path/to/sample_A_airr.tsv,pre,blood,patient_1,P1
-sample_B,/path/to/sample_B_airr.tsv,post,blood,patient_1,P1
-```
-
----
-
-### Mode 2: Single-cell
-
-The single-cell mode has two sub-modes selected automatically based on whether a GEX-annotated Seurat object is provided.
-
----
-
-#### Full SC sub-mode
-
-Requires Cell Ranger VDJ output **and** a pre-processed Seurat RDS with GEX annotations. Runs the complete SCRATCH-TCR analysis alongside TCRtoolkit.
-
-```
-Input: Seurat RDS + Cell Ranger VDJ outs + sample sheet
-  │
-  ├── VDJ QC               — filter contigs (productive, high-confidence, UMI/CDR3 thresholds)
-  ├── T-cell Integration   — merge QC'd contigs into Seurat; assign clonotypes; subset T cells
-  │
-  ├── [Bridge 1: SC → Bulk]
-  │     Converts per-cell export table → per-sample AIRR TSVs
-  │     ↓
-  │   TCRtoolkit bulk analysis on SC-derived data
-  │     ├── ANNOTATE → OLGA pGen
-  │     ├── SAMPLE   → diversity, convergence, VDJdb
-  │     ├── PATIENT  → GIANA / GLIPH2 clustering
-  │     └── COMPARE  → TCR sharing across samples
-  │
-  ├── SC downstream modules (parallel with TCRtoolkit):
-  │     ├── TCRi       — TCR-based immune phenotyping scores
-  │     ├── CoNGA      — GEX + TCR graph co-analysis
-  │     ├── GLIPH2     — motif-based antigen specificity clustering
-  │     ├── TCRdist3   — distance-based clonotype clustering
-  │     ├── GIANA      — sequence-similarity clonotype clustering
-  │     └── Repertoire — clonal diversity, sharing, flux
-  │
-  ├── Consensus Clustering — majority-vote across GLIPH2, TCRdist3, GIANA
-  └── Master Summary       — aggregated HTML report
-```
-
-**Selectively disable SC modules:**
-
-```bash
-nextflow run main.nf \
-  --input_annotated_object seurat.RDS \
-  --input_vdj_contigs "VDJ/*/outs" \
-  --sample_sheet samplesheet.csv \
-  --run_tcri false \
-  --run_conga false \
-  --run_gliph2 true \
-  --run_tcrdist3 true \
-  --run_giana true \
-  --run_consensus true \
-  --run_repertoire true \
-  --run_master_summary true
-```
-
----
-
-#### VDJ-only sub-mode
-
-For when you have Cell Ranger VDJ output but **no GEX Seurat object**. T-cell integration and all SC clustering modules are skipped. TCRtoolkit bulk analysis is still performed on the VDJ contigs.
-
-Triggered automatically when `--input_annotated_object` is not provided.
-
-```
-Input: Cell Ranger VDJ outs + sample sheet  (no Seurat RDS)
-  │
-  ├── VDJ QC               — filter contigs (productive, high-confidence, UMI/CDR3 thresholds)
-  │
-  ├── [Bridge 3: VDJ → Bulk]
-  │     Converts contigs_after_qc.tsv (TRB rows) → per-sample AIRR TSVs
-  │     ↓
-  │   TCRtoolkit bulk analysis on VDJ-derived data
-  │     ├── ANNOTATE → OLGA pGen
-  │     ├── SAMPLE   → diversity, convergence, VDJdb
-  │     ├── PATIENT  → GIANA / GLIPH2 clustering
-  │     └── COMPARE  → TCR sharing across samples
-  │
-  └── (SC modules not run — no GEX object available)
-```
-
-> **Note:** In VDJ-only mode, clonotype counts are derived by grouping cells with the same CDR3β + V + J gene. This gives repertoire-level TCR analysis equivalent to bulk sequencing, but without any GEX-informed cell type annotations.
-
----
-
-**Sample sheet format (both single-cell sub-modes):**
-
-```csv
-sample,path
-HRS371754,/data/SCRATCH_ALIGN-CELLRANGER_VDJ/HRS371754/outs
-HRS371755,/data/SCRATCH_ALIGN-CELLRANGER_VDJ/HRS371755/outs
-```
-
-
-
-## Parameters
-
-### Universal
-
-| Parameter | Default | Description |
-|---|---|---|
-| `--mode` | auto-detected | `bulk` \| `singlecell` \| `combined` |
-| `--project_name` | timestamped | Name used in report titles and output directories |
-| `--outdir` | `results` | Output directory |
-| `--max_cpus` | `20` | Max CPUs per process |
-| `--max_memory` | `200.GB` | Max memory per process |
-| `--max_time` | `240.h` | Max walltime per process |
-
-### Shared metadata columns
-
-These column names are used in both the bulk samplesheet and the Seurat object metadata:
-
-| Parameter | Default | Description |
-|---|---|---|
-| `--sample_col` | `orig.ident` | Sample identifier column |
-| `--patient_col` | `patient_id` | Patient identifier column |
-| `--condition_col` | `condition` | Condition/group column |
-| `--timepoint_col` | `timepoint` | Timepoint column |
-| `--batch_col` | `batch` | Batch column |
-
-### Bulk (TCRtoolkit) parameters
-
-| Parameter | Default | Description |
-|---|---|---|
-| `--samplesheet` | — | Path to bulk samplesheet CSV |
-| `--input_format` | `airr` | `airr` \| `adaptive` \| `cellranger` |
-| `--workflow_level` | `sample,compare` | Comma-separated: `sample`, `patient`, `compare`, `convert` |
-| `--sobject_gex` | — | Seurat RDS for pseudo-bulk-by-phenotype (CellRanger mode only) |
-| `--olga_chunk_length` | `100000` | OLGA parallelization chunk size |
-| `--matrix_sparsity` | `sparse` | TCRdist3 matrix sparsity |
-| `--use_gliph2` | `false` | Run GLIPH2 at patient level |
-| `--threshold` | `7.0` | GIANA similarity threshold |
-
-### Single-cell (SCRATCH-TCR) parameters
-
-| Parameter | Default | Description |
-|---|---|---|
-| `--input_annotated_object` | — | Path to annotated Seurat `.RDS` *(optional — omit for VDJ-only mode)* |
-| `--input_vdj_contigs` | — | Glob path to Cell Ranger VDJ `outs/` directories |
-| `--sample_sheet` | — | Path to SC sample sheet CSV |
-| `--run_tcri` | `true` | Run TCRi module |
-| `--run_conga` | `true` | Run CoNGA module |
-| `--run_gliph2` | `true` | Run GLIPH2 SC module |
-| `--run_tcrdist3` | `true` | Run TCRdist3 SC module |
-| `--run_giana` | `true` | Run GIANA SC module |
-| `--run_consensus` | `true` | Run Consensus clustering |
-| `--run_repertoire` | `true` | Run Repertoire module |
-| `--run_master_summary` | `true` | Run Master Summary |
-| `--vdj_require_productive` | `true` | Keep productive contigs only |
-| `--vdj_keep_paired_only` | `false` | Keep only paired alpha-beta contigs |
-| `--clone_call_preference` | `aa` | Clonotype definition: `aa` or `nt` |
-| `--gliph_reference_bundle` | built-in | Path to GLIPH2 reference `.RData` |
-| `--tcrdist_radius` | `24` | TCRdist3 neighbor radius |
-| `--consensus_min_methods` | `2` | Minimum methods agreeing for consensus label |
-
-Full parameter documentation is in `nextflow.config`.
-
----
-
-## Outputs
-
-All results are written to `--outdir`. The directory structure depends on the mode:
-
-### Bulk mode outputs
-
-```
-results/
-├── sample_stats/         — per-sample V/D/J usage, clone statistics
-├── tcrdist3/             — pairwise distance matrices, histograms
-├── olga/                 — generation probability histograms per sample
-├── convergence/          — TCR convergence analysis per sample
-├── tcrpheno/             — TCR phenotype annotations
-├── vdjdb/                — antigen-specificity matches
-├── patient/              — patient-level concatenated CDR3, GIANA/GLIPH2 clusters
-└── compare/              — cross-sample TCR sharing table, histogram, scatter plot
-```
-
-### Single-cell mode outputs
-
-**Full SC sub-mode:**
-
-```
-results/
-├── bridge/sc_to_bulk/              — per-sample AIRR TSVs derived from SC data
-├── [bulk analysis outputs]         — same as bulk mode above, derived from SC data
-├── VDJ_QC/                         — VDJ_QC_analysis.html + QC tables/figures
-├── TCell_Integration/              — TCell_Integration_Report.html + Seurat RDS
-├── TCRi/                           — TCRi_Report.html
-├── CoNGA/                          — CoNGA_Report.html
-├── GLIPH2/                         — GLIPH2_Report.html
-├── TCRdist3/                       — TCRdist3_Report.html
-├── GIANA/                          — GIANA_Report.html
-├── Repertoire/                     — Repertoire_Report.html
-├── Consensus_Clustering/           — Clonotype_Clustering_Consensus_Report.html
-└── Master_Summary/                 — Master_Summary_Report.html
-```
-
-**VDJ-only sub-mode:**
-
-```
-results/
-├── bridge/vdj_to_bulk/             — per-sample AIRR TSVs derived from VDJ contigs
-├── [bulk analysis outputs]         — same as bulk mode above, derived from VDJ data
-└── VDJ_QC/                         — VDJ_QC_analysis.html + QC tables/figures
-```
-
+- [Analysis modes](#analysis-modes---mode)
+- [Pseudobulk pooling](#pseudobulk-pooling)
+- [Requirements & containers](#requirements--containers)
+- [Quick start](#quick-start)
+- [Parameters](#parameters)
+- [Route coverage](#route-coverage)
+- [Testing](#testing)
+- [Repository layout](#repository-layout)
 
 ---
 
 ## Architecture
 
-The pipeline is organized into two layers:
+`--mode` selects the modality (default `bulk`). The single-cell route auto-detects two sub-modes
+from whether an annotated GEX Seurat object is supplied.
 
+> **Legend** — 🟩 `tcrtoolkit` module (shared engine) · 🟪 `SCRATCH` single-cell module ·
+> 🟧 `bridge` (SC → bulk glue) · ⬜ input.
+
+```mermaid
+flowchart TD
+    START(["nextflow run . --mode"])
+    START -->|"bulk (default)"| BIN[/"AIRR / Adaptive samplesheet"/]
+    START -->|singlecell| SIN[/"Cell Ranger VDJ + sample sheet<br/>(+ optional GEX Seurat)"/]
+
+    %% ---- shared bulk engine ----
+    BIN --> ANN
+    subgraph ENG["Shared tcrtoolkit engine"]
+      direction TB
+      ANN["ANNOTATE"] --> SAM["SAMPLE · TCRdist3 · diversity"]
+      ANN --> PAT["PATIENT · GIANA · GLIPH2"]
+      ANN --> CMP["COMPARE"]
+    end
+
+    %% ---- single-cell head ----
+    SIN --> VQ["VDJ_QC"]
+    VQ --> GEX{"GEX object<br/>provided?"}
+    GEX -->|"yes · Full SC"| TI["TCELL_INTEGRATION"]
+    TI --> SCB["SC_TO_CDR3<br/>pseudobulk"]
+    GEX -->|"no · VDJ-only"| VB["VDJ_TO_BULK<br/>pseudobulk"]
+    SCB --> PQ["PSEUDOBULK_QC"]
+    VB --> PQ
+    PQ --> AF["ANNOTATE_FROM_CONCAT"]
+    AF --> SAM2["SAMPLE"]
+    AF --> PAT2["PATIENT · GIANA · GLIPH2"]
+
+    %% ---- GEX-gated cell-level tail ----
+    PAT2 -. "Full SC only" .-> CT["CLUSTER_TO_SC"]
+    SAM2 -. tcrdist .-> CT
+    subgraph GATED["Needs GEX — skipped in VDJ-only"]
+      direction TB
+      CT --> CG["CoNGA"]
+      CT --> CN["CONSENSUS"]
+    end
+
+    %% ---- reports run in BOTH routes ----
+    SAM2 --> RE["REPERTOIRE<br/>cell-level · or clonotype-level"]
+    PAT2 --> RE
+    CN -. enrich .-> RE
+    RE --> MS["MASTER_SUMMARY<br/>full · or CoNGA-excluded"]
+    CG -.-> MS
+
+    classDef tk fill:#dcfce7,stroke:#16a34a,color:#166534;
+    classDef sc fill:#ede9fe,stroke:#7c3aed,color:#5b21b6;
+    classDef br fill:#fef3c7,stroke:#d97706,color:#92400e;
+    classDef inp fill:#e2e8f0,stroke:#94a3b8,color:#0f172a;
+    classDef gate fill:#fde68a,stroke:#b45309,color:#92400e;
+    class ANN,SAM,PAT,CMP,AF,SAM2,PAT2 tk;
+    class VQ,TI,CG,CN,RE,MS sc;
+    class SCB,VB,PQ,CT br;
+    class BIN,SIN inp;
+    class GEX gate;
 ```
-main.nf                      ← detects mode + sub-mode, routes to one of three workflows
-  │
-  ├── workflows/bulk.nf       ← Scenario 1: TCRtoolkit bulk analysis
-  ├── workflows/singlecell.nf ← Scenario 2: branches on GEX object presence
-        ├── Full SC path: VDJ_QC → TCELL_INTEGRATION → Bridge 1 → TCRtoolkit + SC modules
-        └── VDJ-only path: VDJ_QC → Bridge 3 → TCRtoolkit bulk analysis only
- 
+
+**Reading the gate:** without a GEX object (VDJ-only), the dashed box —
+**CLUSTER_TO_SC → CoNGA / CONSENSUS** — is skipped (CoNGA needs gene-expression data; cluster
+mapping needs cells). **REPERTOIRE and MASTER_SUMMARY still run** in both routes: cell-level & full
+when a GEX object is present, clonotype-level repertoire & a CoNGA-excluded summary when it is not.
+
+---
+
+## Analysis modes (`--mode`)
+
+### Bulk mode (default)
+
+Bulk repertoire analysis. Input format is set via `--input_format`:
+
+| Format | Description |
+|---|---|
+| `airr` | AIRR-compliant tab-separated files |
+| `adaptive` | Adaptive Biotechnologies output files |
+
+```bash
+nextflow run . --samplesheet samplesheet.csv --input_format airr
+```
+
+### Single-cell mode
+
+Single-cell TCR analysis from Cell Ranger VDJ output, with an optional annotated GEX Seurat object.
+
+| Route | Trigger | Pipeline |
+|---|---|---|
+| **Full SC** | `--input_annotated_object` given | VDJ_QC → T-cell integration → pseudobulk → QC → shared engine → CLUSTER_TO_SC → CoNGA → consensus → repertoire → master summary |
+| **VDJ-only** | no GEX object | VDJ_QC → pseudobulk (from contigs) → QC → shared engine → clonotype-level repertoire → CoNGA-excluded master summary |
+
+```bash
+# VDJ-only
+nextflow run . --mode singlecell \
+    --input_vdj_contigs 'cellranger/*/outs' \
+    --sample_sheet sc_samplesheet.csv
+
+# Full single-cell (adds the annotated Seurat object)
+nextflow run . --mode singlecell \
+    --input_vdj_contigs 'cellranger/*/outs' \
+    --sample_sheet sc_samplesheet.csv \
+    --input_annotated_object annotated_tcells.rds
 ```
 
 ---
 
-## Bridge Modules
+## Pseudobulk pooling
 
-The bridge modules are the only genuinely new code in this pipeline. They connect the two analysis engines.
+Single cells are collapsed into per-unit clonotype tables **before** the shared engine runs. The
+default pools **by sample**; `patient` is carried as metadata so `PATIENT` pools **per patient**
+for clustering, and cell-type (phenotype) is applied **downstream**.
 
-### Bridge 1 — `SC_TO_BULK`
+```mermaid
+flowchart LR
+    C[/"Annotated cells<br/>sample · patient · phenotype · CDR3b"/]
+    C --> D{"--pseudobulk_by_phenotype ?"}
+    D -->|"false (default)"| E["unit = sample<br/>patient carried in metadata"]
+    D -->|"true"| F["unit = sample__phenotype"]
+    E --> G["PATIENT pools per patient<br/>for GIANA / GLIPH2 / TCRdist3"]
+    F --> G
+    G --> H["Phenotype applied downstream<br/>(cluster mapping · CoNGA · repertoire)"]
 
-**Purpose:** Enables TCRtoolkit's bulk analysis on single-cell data.
+    classDef inp fill:#e2e8f0,stroke:#94a3b8,color:#0f172a;
+    classDef gate fill:#fde68a,stroke:#b45309,color:#92400e;
+    classDef tk fill:#dcfce7,stroke:#16a34a,color:#166534;
+    classDef sc fill:#ede9fe,stroke:#7c3aed,color:#5b21b6;
+    class C inp; class D gate; class E,F,G tk; class H sc;
+```
 
-**How it works:**
-
-1. Reads the per-cell `export_cells.tsv` produced by SCRATCH-TCR's T-cell integration step
-2. Extracts beta chain CDR3 (`junction_aa`), TRBV (`v_call`), TRBJ (`j_call`) from the `CTaa` and `CTgene` columns
-3. Groups cells by sample, counts cells per clonotype → `duplicate_count`
-4. Writes one AIRR-format TSV per sample to `bulk_samples/`
-5. Writes a `synthetic_samplesheet.csv` that TCRtoolkit's input modules consume
-
-**Input:** `TCell_Integration_Report/tables/tcr_export_cells_with_embedding.tsv`  
-**Output:** `bulk_samples/<sample>_bulk.tsv` (one per sample) + `synthetic_samplesheet.csv`
-
-### Bridge 3 — `VDJ_TO_BULK`
-
-**Purpose:** Enables TCRtoolkit bulk analysis when no GEX Seurat object is available (VDJ-only mode).
-
-**How it works:**
-
-1. Reads `contigs_after_qc.tsv` produced by the VDJ QC step
-2. Filters to TRB (beta chain) rows only
-3. Maps columns: `cdr3` → `junction_aa`, `v_gene` → `v_call`, `j_gene` → `j_call`
-4. Groups cells by sample and clonotype, counting unique barcodes → `duplicate_count`
-5. Writes one AIRR-format TSV per sample to `bulk_samples/`
-6. Writes a `synthetic_samplesheet.csv` for downstream TCRtoolkit modules
-
-**Input:** `VDJ_QC/tables/contigs_after_qc.tsv`  
-**Output:** `bulk_samples/<sample>_bulk.tsv` (one per sample) + `synthetic_samplesheet.csv`
-
-**Used automatically** when `--input_annotated_object` is not provided.
-
-
+**Why not pre-split by phenotype?** Splitting each sample by cell-type shreds the repertoire — many
+units fall below the QC floor, and clusters that span cell states (the same clone in effector vs
+memory) get cut in two. Pooling the full repertoire per patient preserves statistical power;
+phenotype then enters as *association*. A secondary per-cell-type view is opt-in via
+`--pseudobulk_by_phenotype true` (under-powered `{sample}__{phenotype}` units are dropped by the QC
+gate).
 
 ---
 
+## Requirements & containers
 
+1. **Nextflow** (POSIX system, Bash 3.2+, Java 11–18):
+   ```bash
+   wget -qO- https://get.nextflow.io | bash
+   ```
+2. **Docker** — `docker.enabled = true` is set by default. Two images run the pipeline,
+   assigned **per-process**:
 
-
-
-
-### Bridge 2 — `CLUSTER_TO_SC` (optional)
-
-**Purpose:** Maps TCRtoolkit's bulk GIANA/GLIPH2 cluster assignments back onto single cells for cross-pipeline annotation.
-
-**How it works:**
-
-1. Reads bulk cluster files (CDR3b → cluster_id) from TCRtoolkit's patient-level GIANA and GLIPH2 outputs
-2. Joins onto `export_cells.tsv` using CDR3b as the key
-3. Outputs per-cell TSVs with bulk cluster columns added
-
-**When to use:** When you want to visualize or compare bulk clustering results overlaid on the single-cell UMAP. Not required for the core Consensus clustering step (which uses SCRATCH-TCR's own SC-level GLIPH2/TCRdist3/GIANA).
-
-**Invoke manually** after a singlecell or combined run:
+| Container | Runs |
+|---|---|
+| `ghcr.io/karchinlab/tcrtoolkit:main` (`--container`) | Bulk & shared engine — including **GIANA, GLIPH2, TCRdist3** (tcrtoolkit tools), OLGA, diversity stats, and the pandas bridges |
+| `syedsazaidi/scratch-tcr` (`--sc_container`) | Single-cell R / Seurat / scanpy steps — VDJ QC, T-cell integration, CoNGA, consensus, repertoire, master summary, cluster mapping |
 
 ```bash
-nextflow run main.nf \
-  ... \
-  --giana_clusters_file results/patient/PATIENT_giana.txt \
-  --gliph_clusters_file results/patient/PATIENT_gliph2.txt
+docker pull syedsazaidi/scratch-tcr
+docker pull ghcr.io/karchinlab/tcrtoolkit:main
 ```
 
 ---
 
-## Configuration
+## Quick start
 
-### Resource limits
-
-Set global resource caps in `nextflow.config` or on the command line:
-
-```bash
-nextflow run main.nf ... --max_cpus 32 --max_memory 256.GB --max_time 48.h
-```
-
-### Institutional profile (HPC)
-
-Create `conf/lsf.config` following the [nf-core institutional profile guide](https://nf-co.re/docs/tutorials/use_nf-core_pipelines/config_institutional_profile), then run:
+Non-default parameters are best supplied via a `-params-file` so numeric/boolean values are not
+cast to strings.
 
 ```bash
-nextflow run main.nf -profile lsf,singularity ...
+# Bulk — uses the bundled minimal example
+nextflow run . --samplesheet tests/test_data/minimal-example/samplesheet.csv --input_format airr
+
+# Single-cell — edit the template first
+nextflow run . -params-file params_singlecell.yml
 ```
 
-### Container override
-
-The SCRATCH-TCR container is set via `params.container` in `nextflow.config`. To use a local Singularity image:
-
-```bash
-nextflow run main.nf -profile singularity \
-  --container /path/to/scratch_tcr.sif \
-  ...
-```
+Useful flags: `-resume` (reuse cached steps), `-with-report report.html -with-trace` (execution +
+resource report).
 
 ---
 
-## Contact
+## Parameters
 
-For issues and contributions, please open a GitHub issue or pull request.
+**Bulk mode**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--samplesheet` | — | Path or URL to sample sheet CSV |
+| `--outdir` | `out` | Output directory |
+| `--input_format` | `airr` | `airr` or `adaptive` |
+| `--workflow_level` | `sample,compare` | `sample`, `patient`, `compare` (comma-separated) |
+| `--use_gliph2` | `true` | Enable GLIPH2 CDR3 motif clustering |
+
+**Single-cell mode (`--mode singlecell`)**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--input_vdj_contigs` | — | Cell Ranger VDJ output glob (required) |
+| `--sample_sheet` | — | SC sample sheet CSV — columns `sample`, `path` (+ `patient_id`, …) |
+| `--input_annotated_object` | — | Optional annotated GEX Seurat `.rds`; present → full-SC route |
+| `--pseudobulk_by_phenotype` | `false` | Stratify pseudobulk into `{sample}__{phenotype}` units |
+| `--pseudobulk_qc_min_clones` | `25` | Min unique clonotypes per unit (QC gate) |
+| `--pseudobulk_qc_min_cells` | `50` | Min cells per unit (QC gate) |
+| `--pseudobulk_qc_mode` | `drop` | `drop` = skip failing units · `hard_stop` = abort |
+| `--patient_col` | `patient_id` | Metadata key used to pool units per patient |
+| `--sc_container` | `syedsazaidi/scratch-tcr:latest` | Container for cell-level single-cell steps |
+| `--run_conga` / `--run_consensus` / `--run_repertoire` / `--run_master_summary` | `true` | Toggle single-cell report stages |
+
+**Resources**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--max_memory` | `768.GB` | Upper cap on any single process's memory request |
+| `--max_cpus` | `192` | Upper cap on CPUs |
+
+Single-cell cell-level steps reserve ~60 GB each → plan for **~64 GB RAM** (128 GB comfortable) for
+single-cell mode; bulk mode is lighter (~16–64 GB). Tune in `conf/base.config`.
+
+---
+
+## Route coverage
+
+| Stage | Full SC · GEX present | VDJ-only · no GEX |
+|---|:---:|:---:|
+| VDJ QC → pseudobulk → QC gate | ✅ | ✅ |
+| OLGA · GIANA · GLIPH2 · TCRdist3 · diversity | ✅ | ✅ |
+| CLUSTER_TO_SC · CoNGA · CONSENSUS | ✅ | ❌ skipped (needs GEX) |
+| Repertoire analysis | ✅ cell-level | ✅ clonotype-level |
+| Master summary | ✅ full | ✅ CoNGA-excluded |
+
+---
+
+## Testing
+
+Component tests use [nf-test](https://www.nf-test.com/) and run on the host (no images needed):
+
+```bash
+nf-test test tests/modules/bridges/sc_to_cdr3.nf.test \
+             tests/modules/bridges/vdj_to_bulk.nf.test \
+             tests/modules/local/pseudobulk_qc/pseudobulk_qc.nf.test
+```
+
+Bulk module tests run inside the Docker container (`docker.enabled = true`).
+
+---
+
+## Repository layout
+
+```
+main.nf                          --mode dispatcher (bulk | singlecell)
+workflows/
+  tcrtoolkit.nf                  bulk workflow (shared engine)
+  singlecell.nf                  single-cell orchestrator (both routes)
+subworkflows/
+  local/                         shared engine: annotate, sample, patient, compare,
+                                   report, pseudobulk_qc  (+ ANNOTATE_FROM_CONCAT)
+  scratch/                       single-cell: vdj_qc, tcell_integration, conga,
+                                   consensus_clustering, repertoire, master_summary
+  bridges/                       sc_to_cdr3, vdj_to_bulk, cluster_to_sc
+modules/
+  local/                         tcrtoolkit modules (incl. GIANA, GLIPH2, TCRdist3)
+  scratch/                       single-cell module implementations + .qmd reports
+  bridges/                       sc_to_cdr3, vdj_to_bulk, cluster_to_sc,
+                                   sc_sample_stats, bulk_to_export
+bin/                             analysis scripts (Python / R)
+conf/base.config                 per-process resources + SC container routing
+notebooks/                       bulk Quarto report templates
+```
+
+For the full design rationale and change log, see `DESIGN.md` and `IMPLEMENTATION_SPEC.md`.

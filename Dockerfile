@@ -1,4 +1,4 @@
-FROM mambaorg/micromamba:1.5.8
+FROM mambaorg/micromamba:2
 
 # Ensure we run as root for apt
 USER root
@@ -50,14 +50,22 @@ RUN git init /opt/GIANA && \
     chmod +x /opt/GIANA/GIANA4.1.py && \
     ln -s /opt/GIANA/GIANA4.1.py /usr/local/bin/GIANA
 
-# Install quarto
-RUN mkdir -p /opt/quarto/1.6.42 \
-    && curl -o /tmp/quarto.tar.gz -L \
-        "https://github.com/quarto-dev/quarto-cli/releases/download/v1.6.42/quarto-1.6.42-linux-amd64.tar.gz" \
-    && tar -zxvf /tmp/quarto.tar.gz \
-        -C "/opt/quarto/1.6.42" \
-        --strip-components=1 \
-    && rm /tmp/quarto.tar.gz 
+# Install quarto (match the container architecture)
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64) quarto_arch="amd64" ;; \
+        arm64) quarto_arch="arm64" ;; \
+        *) echo "Unsupported architecture for Quarto: $arch"; exit 1 ;; \
+    esac; \
+    mkdir -p /opt/quarto/1.9.38; \
+    curl -L -o /tmp/quarto.tar.gz \
+        "https://github.com/quarto-dev/quarto-cli/releases/download/v1.9.38/quarto-1.9.38-linux-${quarto_arch}.tar.gz"; \
+    tar -zxf /tmp/quarto.tar.gz \
+        -C "/opt/quarto/1.9.38" \
+        --strip-components=1; \
+    test -x /opt/quarto/1.9.38/bin/quarto; \
+    rm /tmp/quarto.tar.gz
 
 # Install VDJmatch and symlink
 RUN mkdir -p /opt/vdjmatch/1.3.1 \
@@ -68,7 +76,8 @@ RUN mkdir -p /opt/vdjmatch/1.3.1 \
     && ln -s /opt/vdjmatch/1.3.1/vdjmatch-1.3.1/vdjmatch-1.3.1.jar /usr/local/bin/vdjmatch.jar
 
 # Add to PATH
-ENV PATH="/opt/quarto/1.6.42/bin:${PATH}"
+ENV PATH="/opt/quarto/1.9.38/bin:${PATH}"
 
 # Add LD_LIBRARY_PATH for pandas
 ENV LD_LIBRARY_PATH=/opt/conda/lib
+
