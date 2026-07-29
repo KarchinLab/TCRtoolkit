@@ -1,231 +1,400 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/break-through-cancer/tcrtoolkit-pipeline/main/nextflow_schema.json",
-  "title": "tcrtoolkit pipeline parameters",
-  "description": "BTC TCR Toolkit pipeline",
-  "type": "object",
-
-  "$defs": {
-    "input_output_options": {
-      "title": "Input/output options",
-      "type": "object",
-      "fa_icon": "fas fa-terminal",
-      "description": "Define where the pipeline should find input data and save output data.",
-      "required": ["samplesheet", "outdir"],
-      "properties": {
-        "samplesheet": {
-          "type": "string",
-          "format": "file-path",
-          "pattern": ".*.csv$",
-          "description": "Path to the samplesheet describing input AIRR data.",
-          "help_text": "A CSV of samples and metadata for this TCR analysis.",
-          "fa_icon": "fas fa-file-csv"
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/break-through-cancer/tcrtoolkit-pipeline/main/nextflow_schema.json",
+    "title": "tcrtoolkit pipeline parameters",
+    "description": "BTC TCR Toolkit pipeline",
+    "type": "object",
+    "$defs": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": [
+                "samplesheet",
+                "outdir"
+            ],
+            "properties": {
+                "samplesheet": {
+                    "type": "string",
+                    "format": "file-path",
+                    "pattern": ".*.csv$",
+                    "description": "Path to the samplesheet describing input AIRR data.",
+                    "help_text": "A CSV of samples and metadata for this TCR analysis.",
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "outdir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "default": "out",
+                    "description": "Output directory where results will be saved.",
+                    "fa_icon": "fas fa-folder-open"
+                }
+            }
         },
-        "outdir": {
-          "type": "string",
-          "format": "directory-path",
-          "default": "out",
-          "description": "Output directory where results will be saved.",
-          "fa_icon": "fas fa-folder-open"
+        "resource_options": {
+            "title": "Max resource options",
+            "type": "object",
+            "fa_icon": "fab fa-acquisitions-incorporated",
+            "description": "Set the top limit for requested resources for any single job.",
+            "properties": {
+                "max_cpus": {
+                    "type": "integer",
+                    "default": 192,
+                    "description": "Maximum CPUs that can be requested by any process.",
+                    "fa_icon": "fas fa-microchip"
+                },
+                "max_memory": {
+                    "type": "string",
+                    "default": "768.GB",
+                    "pattern": "^\\d+(?:\\.\\d+|\\.)?\\s*(?:[KMGT]?B|[KMGT])$",
+                    "description": "Maximum memory for any process.",
+                    "fa_icon": "fas fa-memory"
+                },
+                "max_time": {
+                    "type": "integer",
+                    "default": 172800000,
+                    "description": "Maximum walltime for any job, converted from Nextflow Duration object.",
+                    "fa_icon": "far fa-clock"
+                }
+            }
+        },
+        "workflow_options": {
+            "title": "Workflow parameters",
+            "type": "object",
+            "fa_icon": "fas fa-project-diagram",
+            "description": "General pipeline workflow settings.",
+            "properties": {
+                "workflow_level": {
+                    "type": "string",
+                    "default": "sample,compare",
+                    "description": "Comma-separated workflow stages.",
+                    "pattern": "^(sample|patient|compare|convert)(,(sample|patient|compare|convert))*$"
+                },
+                "project_name": {
+                    "type": "string",
+                    "description": "Name of this analysis project."
+                },
+                "publish_dir_mode": {
+                    "type": "string",
+                    "default": "copy",
+                    "enum": [
+                        "copy",
+                        "move",
+                        "link",
+                        "symlink"
+                    ],
+                    "description": "Method used by `publishDir` to save outputs."
+                },
+                "container": {
+                    "type": "string",
+                    "description": "Docker/Singularity container image to use for pipeline processes.",
+                    "fa_icon": "fas fa-box"
+                }
+            }
+        },
+        "airr_options": {
+            "title": "AIRR data options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Parameters related to AIRR format and schema references.",
+            "properties": {
+                "input_format": {
+                    "type": "string",
+                    "default": "airr",
+                    "enum": [
+                        "airr",
+                        "adaptive",
+                        "cellranger"
+                    ],
+                    "description": "Input data format."
+                },
+                "airr_schema": {
+                    "type": "string",
+                    "description": "Path to AIRR rearrangement schema JSON."
+                },
+                "imgt_lookup": {
+                    "type": "string",
+                    "description": "Path to imgt lookup table."
+                },
+                "sample_stats_template": {
+                    "type": "string",
+                    "description": "Path to sample notebook template."
+                },
+                "compare_stats_template": {
+                    "type": "string",
+                    "description": "Path to compare notebook template."
+                },
+                "template_qc": {
+                    "type": "string",
+                    "description": "Path to QC notebook template."
+                }
+            }
+        },
+        "plotting_options": {
+            "title": "Plotting and metadata options",
+            "type": "object",
+            "fa_icon": "fas fa-chart-bar",
+            "description": "Parameters for plotting and metadata columns.",
+            "properties": {
+                "samplechart_x_col": {
+                    "type": "string",
+                    "default": "timepoint"
+                },
+                "samplechart_color_col": {
+                    "type": "string",
+                    "default": "origin"
+                },
+                "vgene_subject_col": {
+                    "type": "string",
+                    "default": "patient"
+                },
+                "vgene_x_cols": {
+                    "type": "string",
+                    "default": "origin,timepoint"
+                },
+                "subject_col": {
+                    "type": "string",
+                    "default": "patient",
+                    "description": "Samplesheet column identifying the subject/patient."
+                },
+                "timepoint_col": {
+                    "type": "string",
+                    "default": "timepoint",
+                    "description": "Samplesheet column identifying the timepoint."
+                },
+                "timepoint_order_col": {
+                    "type": "string",
+                    "default": "timepoint_order",
+                    "description": "Samplesheet column giving the sort order of timepoints."
+                },
+                "alias_col": {
+                    "type": "string",
+                    "default": "alias",
+                    "description": "Samplesheet column giving a display alias for each sample."
+                }
+            }
+        },
+        "olga_options": {
+            "title": "OLGA options",
+            "type": "object",
+            "fa_icon": "fas fa-layer-group",
+            "properties": {
+                "olga_chunk_length": {
+                    "type": "integer",
+                    "default": 100000,
+                    "minimum": 1000,
+                    "description": "Number of sequences processed per OLGA chunk. Larger values reduce parallelization and increase memory usage."
+                }
+            }
+        },
+        "giana_options": {
+            "title": "GIANA clustering options",
+            "type": "object",
+            "fa_icon": "fas fa-brain",
+            "properties": {
+                "threshold": {
+                    "type": "number",
+                    "default": 7.0
+                },
+                "threshold_score": {
+                    "type": "number",
+                    "default": 3.6
+                },
+                "threshold_vgene": {
+                    "type": "number",
+                    "default": 3.7
+                }
+            }
+        },
+        "gliph2_options": {
+            "title": "GLIPH2 clustering options",
+            "type": "object",
+            "fa_icon": "fas fa-code-branch",
+            "properties": {
+                "use_gliph2": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "gliph2_report_template": {
+                    "type": "string"
+                },
+                "ref_files": {
+                    "type": "string"
+                },
+                "local_min_pvalue": {
+                    "type": "string",
+                    "default": "0.001"
+                },
+                "p_depth": {
+                    "type": "string",
+                    "default": "1000"
+                },
+                "global_convergence_cutoff": {
+                    "type": "string",
+                    "default": "1"
+                },
+                "simulation_depth": {
+                    "type": "string",
+                    "default": "1000"
+                },
+                "kmer_min_depth": {
+                    "type": "string",
+                    "default": "3"
+                },
+                "local_min_OVE": {
+                    "type": "string",
+                    "default": "c(1000, 100, 10)"
+                },
+                "algorithm": {
+                    "type": "string",
+                    "default": "GLIPH2"
+                },
+                "all_aa_interchangeable": {
+                    "type": "string",
+                    "default": "1"
+                }
+            }
+        },
+        "tcrdist3_options": {
+            "title": "TCRdist3 distance options",
+            "type": "object",
+            "fa_icon": "fas fa-ruler-combined",
+            "properties": {
+                "matrix_sparsity": {
+                    "type": "string",
+                    "default": "sparse",
+                    "enum": [
+                        "sparse",
+                        "full"
+                    ]
+                },
+                "distance_metric": {
+                    "type": "string",
+                    "default": "tcrdist"
+                },
+                "db_path": {
+                    "type": "string"
+                }
+            }
+        },
+        "singlecell_options": {
+            "title": "Single-cell options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Single-cell TCR modality (--mode singlecell). Ignored in bulk mode.",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": [
+                        "bulk",
+                        "singlecell"
+                    ],
+                    "default": "bulk",
+                    "description": "Pipeline modality. Default 'bulk' (omit for existing bulk runs)."
+                },
+                "input_vdj_contigs": {
+                    "type": "string",
+                    "format": "path",
+                    "description": "Cell Ranger VDJ contigs (required for --mode singlecell)."
+                },
+                "sample_sheet": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Single-cell sample sheet (distinct from bulk --samplesheet)."
+                },
+                "input_annotated_object": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Optional annotated GEX Seurat RDS. Present \u2192 full-SC route; absent \u2192 VDJ-only route."
+                },
+                "pseudobulk_by_phenotype": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Optional: stratify pseudobulk into {sample}__{phenotype} units (secondary per-cell-type view)."
+                },
+                "pseudobulk_qc_min_clones": {
+                    "type": "integer",
+                    "default": 25,
+                    "description": "Min unique clonotypes per pseudobulk unit."
+                },
+                "pseudobulk_qc_min_cells": {
+                    "type": "integer",
+                    "default": 50,
+                    "description": "Min total cells per pseudobulk unit."
+                },
+                "pseudobulk_qc_mode": {
+                    "type": "string",
+                    "enum": [
+                        "drop",
+                        "hard_stop"
+                    ],
+                    "default": "drop",
+                    "description": "'drop' = skip failing units; 'hard_stop' = abort run."
+                },
+                "patient_col": {
+                    "type": "string",
+                    "default": "patient_id",
+                    "description": "Metadata key used to pool units per patient for clustering."
+                },
+                "sc_container": {
+                    "type": "string",
+                    "default": "syedsazaidi/scratch-tcr:latest",
+                    "description": "Container for cell-level single-cell processes (Seurat/scanpy/CONGA/tcrdist3)."
+                },
+                "run_conga": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run CONGA (full-SC only)."
+                },
+                "run_consensus": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run consensus clustering (full-SC only)."
+                },
+                "run_repertoire": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run repertoire analysis."
+                },
+                "run_master_summary": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run master summary report."
+                }
+            }
         }
-      }
     },
-
-    "resource_options": {
-      "title": "Max resource options",
-      "type": "object",
-      "fa_icon": "fab fa-acquisitions-incorporated",
-      "description": "Set the top limit for requested resources for any single job.",
-      "properties": {
-        "max_cpus": {
-          "type": "integer",
-          "default": 192,
-          "description": "Maximum CPUs that can be requested by any process.",
-          "fa_icon": "fas fa-microchip"
+    "allOf": [
+        {
+            "$ref": "#/$defs/input_output_options"
         },
-        "max_memory": {
-          "type": "string",
-          "default": "768.GB",
-          "pattern": "^\\d+(?:\\.\\d+|\\.)?\\s*(?:[KMGT]?B|[KMGT])$",
-          "description": "Maximum memory for any process.",
-          "fa_icon": "fas fa-memory"
+        {
+            "$ref": "#/$defs/resource_options"
         },
-        "max_time": {
-          "type": "integer",
-          "default": 172800000,
-          "description": "Maximum walltime for any job, converted from Nextflow Duration object.",
-          "fa_icon": "far fa-clock"
+        {
+            "$ref": "#/$defs/workflow_options"
+        },
+        {
+            "$ref": "#/$defs/airr_options"
+        },
+        {
+            "$ref": "#/$defs/plotting_options"
+        },
+        {
+            "$ref": "#/$defs/olga_options"
+        },
+        {
+            "$ref": "#/$defs/giana_options"
+        },
+        {
+            "$ref": "#/$defs/gliph2_options"
+        },
+        {
+            "$ref": "#/$defs/tcrdist3_options"
+        },
+        {
+            "$ref": "#/$defs/singlecell_options"
         }
-      }
-    },
-
-    "workflow_options": {
-      "title": "Workflow parameters",
-      "type": "object",
-      "fa_icon": "fas fa-project-diagram",
-      "description": "General pipeline workflow settings.",
-      "properties": {
-        "workflow_level": {
-          "type": "string",
-          "default": "sample,compare",
-          "description": "Comma-separated workflow stages.",
-          "pattern": "^(sample|patient|compare|convert)(,(sample|patient|compare|convert))*$"
-        },
-        "project_name": {
-          "type": "string",
-          "description": "Name of this analysis project."
-        },
-        "publish_dir_mode": {
-          "type": "string",
-          "default": "copy",
-          "enum": ["copy", "move", "link", "symlink"],
-          "description": "Method used by `publishDir` to save outputs."
-        },
-        "container": {
-          "type": "string",
-          "description": "Docker/Singularity container image to use for pipeline processes.",
-          "fa_icon": "fas fa-box"
-        }
-      }
-    },
-
-    "airr_options": {
-      "title": "AIRR data options",
-      "type": "object",
-      "fa_icon": "fas fa-dna",
-      "description": "Parameters related to AIRR format and schema references.",
-      "properties": {
-        "input_format": {
-          "type": "string",
-          "default": "airr",
-          "enum": ["airr", "adaptive", "cellranger"],
-          "description": "Input data format."
-        },
-        "airr_schema": {
-          "type": "string",
-          "description": "Path to AIRR rearrangement schema JSON."
-        },
-        "imgt_lookup": {
-          "type": "string",
-          "description": "Path to imgt lookup table."
-        },
-        "sample_stats_template": {
-          "type": "string",
-          "description": "Path to sample notebook template."
-        },
-        "compare_stats_template": {
-          "type": "string",
-          "description": "Path to compare notebook template."
-        },
-        "template_qc": {
-          "type": "string",
-          "description": "Path to QC notebook template."
-        }
-      }
-    },
-
-    "plotting_options": {
-      "title": "Plotting and metadata options",
-      "type": "object",
-      "fa_icon": "fas fa-chart-bar",
-      "description": "Parameters for plotting and metadata columns.",
-      "properties": {
-        "samplechart_x_col": { "type": "string", "default": "timepoint" },
-        "samplechart_color_col": { "type": "string", "default": "origin" },
-        "vgene_subject_col": { "type": "string", "default": "patient" },
-        "vgene_x_cols": { "type": "string", "default": "origin,timepoint" },
-        "subject_col": {
-          "type": "string",
-          "default": "patient",
-          "description": "Samplesheet column identifying the subject/patient."
-        },
-        "timepoint_col": {
-          "type": "string",
-          "default": "timepoint",
-          "description": "Samplesheet column identifying the timepoint."
-        },
-        "timepoint_order_col": {
-          "type": "string",
-          "default": "timepoint_order",
-          "description": "Samplesheet column giving the sort order of timepoints."
-        },
-        "alias_col": {
-          "type": "string",
-          "default": "alias",
-          "description": "Samplesheet column giving a display alias for each sample."
-        }
-      }
-    },
-
-    "olga_options": {
-      "title": "OLGA options",
-      "type": "object",
-      "fa_icon": "fas fa-layer-group",
-      "properties": {
-        "olga_chunk_length": {
-          "type": "integer",
-          "default": 100000,
-          "minimum": 1000,
-          "description": "Number of sequences processed per OLGA chunk. Larger values reduce parallelization and increase memory usage."
-        }
-      }
-    },
-
-    "giana_options": {
-      "title": "GIANA clustering options",
-      "type": "object",
-      "fa_icon": "fas fa-brain",
-      "properties": {
-        "threshold": { "type": "number", "default": 7.0 },
-        "threshold_score": { "type": "number", "default": 3.6 },
-        "threshold_vgene": { "type": "number", "default": 3.7 }
-      }
-    },
-
-    "gliph2_options": {
-      "title": "GLIPH2 clustering options",
-      "type": "object",
-      "fa_icon": "fas fa-code-branch",
-      "properties": {
-        "use_gliph2": {"type": "boolean", "default": true},
-        "gliph2_report_template": { "type": "string" },
-        "ref_files": { "type": "string" },
-        "local_min_pvalue": { "type": "string", "default": "0.001" },
-        "p_depth": { "type": "string", "default": "1000" },
-        "global_convergence_cutoff": { "type": "string", "default": "1" },
-        "simulation_depth": { "type": "string", "default": "1000" },
-        "kmer_min_depth": { "type": "string", "default": "3" },
-        "local_min_OVE": { "type": "string", "default": "c(1000, 100, 10)" },
-        "algorithm": { "type": "string", "default": "GLIPH2" },
-        "all_aa_interchangeable": { "type": "string", "default": "1" }
-      }
-    },
-
-    "tcrdist3_options": {
-      "title": "TCRdist3 distance options",
-      "type": "object",
-      "fa_icon": "fas fa-ruler-combined",
-      "properties": {
-        "matrix_sparsity": {
-          "type": "string",
-          "default": "sparse",
-          "enum": ["sparse", "full"]
-        },
-        "distance_metric": { "type": "string", "default": "tcrdist" },
-        "db_path": { "type": "string" }
-      }
-    }
-  },
-
-  "allOf": [
-    { "$ref": "#/$defs/input_output_options" },
-    { "$ref": "#/$defs/resource_options" },
-    { "$ref": "#/$defs/workflow_options" },
-    { "$ref": "#/$defs/airr_options" },
-    { "$ref": "#/$defs/plotting_options" },
-    { "$ref": "#/$defs/olga_options" },
-    { "$ref": "#/$defs/giana_options" },
-    { "$ref": "#/$defs/gliph2_options" },
-    { "$ref": "#/$defs/tcrdist3_options" }
-  ]
+    ]
 }

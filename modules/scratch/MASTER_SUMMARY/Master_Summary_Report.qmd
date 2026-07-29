@@ -1,0 +1,613 @@
+---
+title: "SCRATCH-TCR: Master Summary Report"
+author: "Syed Shujaat Ali Zaidi"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: defualt
+    df-print: paged
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  project_name: "SCRATCH-TCR Project"
+  outdir: "Master_Summary_Report"
+
+  vdj_qc_per_sample_compact_file: ""
+  vdj_qc_before_after_summary_file: ""
+  vdj_qc_sample_sheet_resolved_file: ""
+  vdj_qc_clone_rank_abundance_file: ""
+
+  vdj_qc_before_after_retention_fig: ""
+  vdj_qc_pairing_bar_fig: ""
+  vdj_qc_clone_rank_abundance_fig: ""
+  vdj_qc_multiple_chains_fig: ""
+  
+  # core inputs
+  seurat_rds: "data/seurat_with_consensus_clonotype_clusters.rds"
+  export_cells_file: "data/consensus_export_cells.tsv"
+
+  # optional module rollups
+  vdj_qc_summary_file: "data/vdj_qc_per_sample_compact.tsv"
+  tcell_integration_summary_file: "data/tcell_summary_rollup.tsv"
+  tcri_summary_file: "data/tcri_summary_rollup.tsv"
+  conga_summary_file: "data/conga_summary_rollup.tsv"
+  gliph2_summary_file: "data/gliph2_summary_rollup.tsv"
+  tcrdist3_summary_file: "data/tcrdist3_summary_rollup.tsv"
+  giana_summary_file: "data/giana_summary_rollup.tsv"
+  consensus_summary_file: "data/consensus_summary_rollup.tsv"
+  repertoire_summary_file: "data/repertoire_summary_rollup.tsv"
+
+  # optional richer inputs
+  diversity_by_sample_file: "data/diversity_by_sample.tsv"
+  clone_burden_file: "data/clone_burden_cells_by_sample.tsv"
+  sample_overlap_matrix_file: "data/sample_overlap_matrix.tsv"
+  method_presence_file: "data/method_presence_summary.tsv"
+  method_cluster_counts_file: "data/method_cluster_counts.tsv"
+  consensus_cluster_summary_file: "data/consensus_cluster_summary.tsv"
+  annotation_tcri_summary_file: "data/annotation_tcri_summary.tsv"
+  annotation_conga_summary_file: "data/annotation_conga_summary.tsv"
+  annotation_gliph2_summary_file: "data/annotation_gliph2_summary.tsv"
+  annotation_tcrdist3_summary_file: "data/annotation_tcrdist3_summary.tsv"
+  annotation_giana_summary_file: "data/annotation_giana_summary.tsv"
+  annotation_consensus_summary_file: "data/annotation_consensus_summary.tsv"
+
+  # mapping
+  label_col: ""
+  sample_col: "sample"
+  patient_col: "patient"
+  condition_col: "condition"
+  timepoint_col: "timepoint"
+  clone_id_col: "clone_id"
+  clone_size_col: "clone_size"
+  consensus_cluster_col: "consensus_cluster"
+
+  label_candidates: "annot;Annotation;celltype;CellType;predicted.celltype.l2;celltypist;azimuth_labels;seurat_clusters"
+  sample_candidates: "sample;META_SAMPLE;orig.ident;sample_id"
+  patient_candidates: "patient;META_PATIENT;patient_id;subject;donor"
+  condition_candidates: "condition;META_TIMECOND;group;status"
+  timepoint_candidates: "timepoint;visit;day;META_TIMECOND"
+  clone_id_candidates: "clone_id;CTaa;clonotype;clone"
+  clone_size_candidates: "clone_size;CloneSize;clone_n"
+  consensus_cluster_candidates: "consensus_cluster;consensus;consensus_id"
+  
+  
+  figure_format: "png"
+  figure_width: 10
+  figure_height: 7
+  figure_dpi: 300
+  base_size: 12
+
+  top_n_annotations: 20
+  top_n_consensus_clusters: 20
+---
+
+# setup
+```{r}
+#| label: setup-chunk
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(forcats)
+  library(scales)
+  library(knitr)
+  library(kableExtra)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(patchwork)
+})
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, "tables"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, "figures"), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
+
+sanitize_param_string <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NULL)
+  trimws(gsub("\\u00A0", " ", as.character(x)))
+}
+
+normalize_colnames <- function(df) {
+  colnames(df) <- trimws(gsub("\\u00A0", " ", colnames(df)))
+  df
+}
+
+split_candidate_string <- function(x) {
+  if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(character())
+  x <- gsub('"', "", as.character(x))
+  x <- trimws(unlist(strsplit(x, ";", fixed = TRUE)))
+  x[nzchar(x)]
+}
+
+safe_read_table <- function(path) {
+  # Treat empty placeholder files (staged NO_FILE, 0 bytes) as absent.
+  if (is.null(path) || is.na(path) || path == "" || !file.exists(path)) return(NULL)
+  if (isTRUE(file.size(path) == 0)) return(NULL)
+  ext <- tolower(tools::file_ext(path))
+  if (ext %in% c("tsv", "tab", "txt")) fread(path, sep = "\t") else fread(path)
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  df <- normalize_colnames(df)
+  preferred <- sanitize_param_string(preferred)
+
+  if (length(candidates) == 1 && is.character(candidates)) {
+    candidates <- split_candidate_string(candidates)
+  }
+  candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
+
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) hits[[1]] else NULL
+}
+
+save_plot_safe <- function(plot_obj, filename,
+                           width = params$figure_width,
+                           height = params$figure_height,
+                           dpi = params$figure_dpi) {
+  ggsave(
+    filename = file.path(params$outdir, "figures", filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+save_table_safe <- function(df, filename) {
+  fwrite(df, file.path(params$outdir, "tables", filename), sep = "\t")
+}
+
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+      plot.subtitle = element_text(size = base_size, hjust = 0),
+      axis.title = element_text(face = "bold"),
+      axis.text = element_text(color = "black"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+      strip.background = element_rect(fill = "grey95", color = "grey80"),
+      strip.text = element_text(face = "bold"),
+      legend.title = element_text(face = "bold")
+    )
+}
+
+```
+
+# input loading
+```{r}
+seu <- if (file.exists(params$seurat_rds) && isTRUE(file.size(params$seurat_rds) > 0)) readRDS(params$seurat_rds) else NULL
+export_cells <- safe_read_table(params$export_cells_file)
+
+vdj_qc_per_sample_compact <- safe_read_table(params$vdj_qc_per_sample_compact_file)
+vdj_qc_before_after_summary <- safe_read_table(params$vdj_qc_before_after_summary_file)
+vdj_qc_sample_sheet_resolved <- safe_read_table(params$vdj_qc_sample_sheet_resolved_file)
+vdj_qc_clone_rank_abundance <- safe_read_table(params$vdj_qc_clone_rank_abundance_file)
+vdj_qc_summary <- safe_read_table(params$vdj_qc_summary_file)
+tcell_integration_summary <- safe_read_table(params$tcell_integration_summary_file)
+tcri_summary <- safe_read_table(params$tcri_summary_file)
+conga_summary <- safe_read_table(params$conga_summary_file)
+gliph2_summary <- safe_read_table(params$gliph2_summary_file)
+tcrdist3_summary <- safe_read_table(params$tcrdist3_summary_file)
+giana_summary <- safe_read_table(params$giana_summary_file)
+consensus_summary <- safe_read_table(params$consensus_summary_file)
+repertoire_summary <- safe_read_table(params$repertoire_summary_file)
+
+diversity_by_sample <- safe_read_table(params$diversity_by_sample_file)
+clone_burden <- safe_read_table(params$clone_burden_file)
+sample_overlap_matrix <- safe_read_table(params$sample_overlap_matrix_file)
+method_presence <- safe_read_table(params$method_presence_file)
+method_cluster_counts <- safe_read_table(params$method_cluster_counts_file)
+consensus_cluster_summary <- safe_read_table(params$consensus_cluster_summary_file)
+
+annotation_tcri_summary <- safe_read_table(params$annotation_tcri_summary_file)
+annotation_conga_summary <- safe_read_table(params$annotation_conga_summary_file)
+annotation_gliph2_summary <- safe_read_table(params$annotation_gliph2_summary_file)
+annotation_tcrdist3_summary <- safe_read_table(params$annotation_tcrdist3_summary_file)
+annotation_giana_summary <- safe_read_table(params$annotation_giana_summary_file)
+annotation_consensus_summary <- safe_read_table(params$annotation_consensus_summary_file)
+```
+
+# Resolving Columns
+```{r}
+if (is.null(export_cells) && !is.null(seu)) {
+  export_cells <- seu@meta.data %>% tibble::rownames_to_column("cell_id")
+}
+
+label_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$label_col, params$label_candidates) else NULL
+sample_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$sample_col, params$sample_candidates) else NULL
+patient_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$patient_col, params$patient_candidates) else NULL
+condition_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$condition_col, params$condition_candidates) else NULL
+timepoint_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$timepoint_col, params$timepoint_candidates) else NULL
+clone_id_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$clone_id_col, params$clone_id_candidates) else NULL
+clone_size_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$clone_size_col, params$clone_size_candidates) else NULL
+consensus_cluster_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$consensus_cluster_col, params$consensus_cluster_candidates) else NULL
+```
+
+# Overview
+```{r}
+#| label: overview
+#| results: asis
+overview_tbl <- tibble::tibble(
+  Metric = c(
+    "Project name",
+    "Cells in export table",
+    "Samples",
+    "Patients",
+    "Conditions",
+    "Timepoints",
+    "Unique clonotypes",
+    "Unique consensus clusters"
+  ),
+  Value = c(
+    params$project_name,
+    if (!is.null(export_cells)) nrow(export_cells) else NA,
+    if (!is.null(export_cells) && !is.null(sample_col)) length(unique(na.omit(export_cells[[sample_col]]))) else NA,
+    if (!is.null(export_cells) && !is.null(patient_col)) length(unique(na.omit(export_cells[[patient_col]]))) else NA,
+    if (!is.null(export_cells) && !is.null(condition_col)) length(unique(na.omit(export_cells[[condition_col]]))) else NA,
+    if (!is.null(export_cells) && !is.null(timepoint_col)) length(unique(na.omit(export_cells[[timepoint_col]]))) else NA,
+    if (!is.null(export_cells) && !is.null(clone_id_col)) length(unique(na.omit(export_cells[[clone_id_col]]))) else NA,
+    if (!is.null(export_cells) && !is.null(consensus_cluster_col)) length(unique(na.omit(export_cells[[consensus_cluster_col]]))) else NA
+  )
+)
+
+save_table_safe(overview_tbl, "master_overview.tsv")
+
+print(
+  kableExtra::kbl(overview_tbl, caption = "Master project overview.") %>%
+    kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
+)
+
+```
+
+# Module Rollups
+```{r}
+#| label: module-rollups
+#| results: asis
+rollup_list <- list(
+  VDJ_QC = vdj_qc_summary,
+  TCell_Integration = tcell_integration_summary,
+  TCRi = tcri_summary,
+  CoNGA = conga_summary,
+  GLIPH2 = gliph2_summary,
+  TCRdist3 = tcrdist3_summary,
+  GIANA = giana_summary,
+  Consensus = consensus_summary,
+  Repertoire = repertoire_summary
+)
+
+rollup_presence <- tibble::tibble(
+  module = names(rollup_list),
+  available = vapply(rollup_list, function(x) !is.null(x), logical(1))
+)
+
+save_table_safe(rollup_presence, "module_output_availability.tsv")
+
+print(
+  kableExtra::kbl(rollup_presence, caption = "Module output availability.") %>%
+    kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
+)
+```
+
+# VDJ QC
+```{r}
+#| label: vdj-qc-section
+#| results: asis
+
+if (!is.null(vdj_qc_per_sample_compact) && nrow(vdj_qc_per_sample_compact) > 0) {
+  vdj_qc_per_sample_compact_master <- vdj_qc_per_sample_compact %>%
+    dplyr::select(
+      dplyr::any_of(c(
+        "sample",
+        "patient_id",
+        "timepoint",
+        "n_cells_total",
+        "n_cells_paired",
+        "pct_cells_paired",
+        "n_unique_clones"
+      ))
+    )
+
+  save_table_safe(vdj_qc_per_sample_compact, "master_vdj_qc_per_sample_compact.tsv")
+
+  print(
+    kableExtra::kbl(
+      vdj_qc_per_sample_compact_master,
+      caption = "VDJ QC per-sample compact summary."
+    ) %>%
+      kableExtra::kable_styling(
+        full_width = FALSE,
+        bootstrap_options = c("striped","hover","condensed"),
+        font_size = 11
+      ) %>%
+      kableExtra::scroll_box(width = "100%", height = "420px")
+  )
+}
+
+if (!is.null(vdj_qc_before_after_summary) && nrow(vdj_qc_before_after_summary) > 0) {
+  save_table_safe(vdj_qc_before_after_summary, "master_vdj_qc_before_after_summary.tsv")
+
+  print(
+    kableExtra::kbl(
+      vdj_qc_before_after_summary,
+      caption = "VDJ QC contigs before/after filtering summary."
+    ) %>%
+      kableExtra::kable_styling(
+        full_width = FALSE,
+        bootstrap_options = c("striped","hover","condensed"),
+        font_size = 11
+      ) %>%
+      kableExtra::scroll_box(width = "100%", height = "320px")
+  )
+}
+
+if (!is.null(vdj_qc_sample_sheet_resolved) && nrow(vdj_qc_sample_sheet_resolved) > 0) {
+  save_table_safe(vdj_qc_sample_sheet_resolved, "master_vdj_qc_sample_sheet_resolved.tsv")
+}
+
+if (!is.null(vdj_qc_clone_rank_abundance) && nrow(vdj_qc_clone_rank_abundance) > 0) {
+  top_clone_rank <- vdj_qc_clone_rank_abundance %>%
+    dplyr::group_by(sample) %>%
+    dplyr::slice_head(n = 10) %>%
+    dplyr::ungroup()
+
+  save_table_safe(top_clone_rank, "master_vdj_qc_clone_rank_abundance_top.tsv")
+
+  print(
+    kableExtra::kbl(
+      top_clone_rank,
+      caption = "Top ranked clonotypes by sample."
+    ) %>%
+      kableExtra::kable_styling(
+        full_width = FALSE,
+        bootstrap_options = c("striped","hover","condensed"),
+        font_size = 11
+      ) %>%
+      kableExtra::scroll_box(width = "100%", height = "320px")
+  )
+}
+
+fig_map <- list(
+  "QC retention before/after filtering" = params$vdj_qc_before_after_retention_fig,
+  "Pairing status by sample" = params$vdj_qc_pairing_bar_fig,
+  "Clone rank abundance" = params$vdj_qc_clone_rank_abundance_fig,
+  "Multiple chains by sample" = params$vdj_qc_multiple_chains_fig
+)
+
+valid_figs <- fig_map[
+  vapply(fig_map, function(x) !is.na(x) && nzchar(x) && file.exists(x) && isTRUE(file.size(x) > 0), logical(1))
+]
+
+if (length(valid_figs) > 0) {
+  cat("### Selected VDJ QC figures\n\n")
+
+  for (nm in names(valid_figs)) {
+    fp <- valid_figs[[nm]]
+    out_name <- basename(fp)
+    file.copy(fp, file.path(params$outdir, "figures", out_name), overwrite = TRUE)
+
+    cat("#### ", nm, "\n\n", sep = "")
+    print(knitr::include_graphics(fp))
+    cat("\n\n")
+  }
+}
+```
+
+
+# Diversity
+```{r}
+if (!is.null(diversity_by_sample) && nrow(diversity_by_sample) > 0) {
+  div_long <- diversity_by_sample %>%
+    pivot_longer(cols = intersect(c("shannon","simpson","inv_simpson","richness"), colnames(diversity_by_sample)),
+                 names_to = "metric", values_to = "value")
+
+  p_div <- ggplot(div_long, aes(x = metric, y = value, fill = metric)) +
+    geom_boxplot(alpha = 0.85, outlier.size = 0.4) +
+    geom_jitter(width = 0.12, size = 1.2, alpha = 0.7) +
+    guides(fill = "none") +
+    labs(
+      title = "Repertoire diversity summary",
+      x = NULL,
+      y = "Metric value"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_div
+  save_plot_safe(p_div, "master_diversity_boxplots.png")
+}
+```
+
+# Clone Birden
+```{r}
+if (!is.null(clone_burden) && nrow(clone_burden) > 0) {
+  sample_col_burden <- if ("sample" %in% colnames(clone_burden)) "sample" else colnames(clone_burden)[1]
+  frac_col <- if ("frac_cells" %in% colnames(clone_burden)) "frac_cells" else if ("frac_clones" %in% colnames(clone_burden)) "frac_clones" else NULL
+  bin_col <- if ("clone_bin" %in% colnames(clone_burden)) "clone_bin" else NULL
+
+  if (!is.null(frac_col) && !is.null(bin_col)) {
+    p_burden <- ggplot(clone_burden, aes_string(x = sample_col_burden, y = frac_col, fill = bin_col)) +
+      geom_col(position = "fill") +
+      coord_flip() +
+      scale_y_continuous(labels = percent_format(accuracy = 1)) +
+      labs(
+        title = "Clonal burden across samples",
+        x = NULL,
+        y = "Fraction",
+        fill = "Clone bin"
+      ) +
+      theme_scratch_pub(params$base_size)
+
+    p_burden
+    save_plot_safe(p_burden, "master_clone_burden.png")
+  }
+}
+```
+
+# Method coverage and cluster counts
+```{r}
+plot_list <- list()
+
+if (!is.null(method_presence) && nrow(method_presence) > 0) {
+  mp <- method_presence %>%
+    mutate(method = fct_reorder(method, frac_cells))
+  p1 <- ggplot(mp, aes(x = method, y = frac_cells)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(title = "Method coverage", x = NULL, y = "Fraction of cells annotated") +
+    theme_scratch_pub(params$base_size)
+  plot_list$coverage <- p1
+}
+
+if (!is.null(method_cluster_counts) && nrow(method_cluster_counts) > 0) {
+  mc <- method_cluster_counts %>%
+    mutate(method = fct_reorder(method, n_clusters))
+  p2 <- ggplot(mc, aes(x = method, y = n_clusters)) +
+    geom_col(fill = "darkorange") +
+    coord_flip() +
+    scale_y_continuous(labels = comma) +
+    labs(title = "Clusters detected by method", x = NULL, y = "Number of clusters") +
+    theme_scratch_pub(params$base_size)
+  plot_list$counts <- p2
+}
+
+if (length(plot_list) == 2) {
+  wrap_plots(plot_list$coverage, plot_list$counts, ncol = 2)
+  save_plot_safe(wrap_plots(plot_list$coverage, plot_list$counts, ncol = 2), "master_method_panels.png", width = 14, height = 6)
+} else if (length(plot_list) == 1) {
+  print(plot_list[[1]])
+}
+```
+
+# Sample Overlap
+```{r}
+if (!is.null(sample_overlap_matrix) && nrow(sample_overlap_matrix) > 0) {
+  som <- as.data.frame(sample_overlap_matrix)
+  rownames(som) <- som[[1]]
+  som[[1]] <- NULL
+  som <- as.matrix(som)
+
+  ht <- Heatmap(
+    som,
+    name = "Overlap",
+    col = colorRamp2(c(0, 0.5, 1), c("white", "gold", "firebrick")),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    column_title = "Sample repertoire overlap",
+    heatmap_legend_param = list(title = "Overlap")
+  )
+  draw(ht)
+}
+```
+
+# Annotation-centered comparison
+```{r}
+annotation_panels <- list(
+  TCRi = annotation_tcri_summary,
+  CoNGA = annotation_conga_summary,
+  GLIPH2 = annotation_gliph2_summary,
+  TCRdist3 = annotation_tcrdist3_summary,
+  GIANA = annotation_giana_summary,
+  Consensus = annotation_consensus_summary
+)
+
+anno_comp <- lapply(names(annotation_panels), function(nm) {
+  df <- annotation_panels[[nm]]
+  if (is.null(df) || nrow(df) == 0) return(NULL)
+
+  annot_col <- if ("annot" %in% colnames(df)) "annot" else colnames(df)[1]
+  frac_col <- intersect(c("frac_high","frac_clustered","frac_gliph","frac_tcrdist","frac_giana","frac_consensus"), colnames(df))
+  if (length(frac_col) == 0) return(NULL)
+
+  df %>%
+    transmute(
+      method = nm,
+      annot = .data[[annot_col]],
+      frac = .data[[frac_col[1]]]
+    )
+})
+
+anno_comp <- dplyr::bind_rows(anno_comp)
+
+if (nrow(anno_comp) > 0) {
+  anno_comp2 <- anno_comp %>%
+    group_by(method) %>%
+    slice_max(order_by = frac, n = params$top_n_annotations, with_ties = FALSE) %>%
+    ungroup()
+
+  p_anno <- ggplot(anno_comp2, aes(x = reorder(annot, frac), y = frac, fill = method)) +
+    geom_col() +
+    coord_flip() +
+    facet_wrap(~method, scales = "free_y") +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "Top annotation enrichments across modules",
+      x = NULL,
+      y = "Fraction / enrichment summary"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_anno
+  save_plot_safe(p_anno, "master_annotation_comparison.png", width = 14, height = 10)
+}
+```
+
+# Concensus Cluster Burden
+```{r}
+if (!is.null(consensus_cluster_summary) && nrow(consensus_cluster_summary) > 0) {
+  ccs <- consensus_cluster_summary %>%
+    slice_head(n = params$top_n_consensus_clusters) %>%
+    mutate(consensus_cluster = fct_reorder(consensus_cluster, n_cells))
+
+  p_cons <- ggplot(ccs, aes(x = consensus_cluster, y = n_cells)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    scale_y_continuous(labels = comma) +
+    labs(
+      title = "Top consensus clonotype clusters",
+      x = NULL,
+      y = "Cells"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  p_cons
+  save_plot_safe(p_cons, "master_consensus_clusters.png")
+}
+```
+
+# key tables
+```{r}
+if (!is.null(consensus_cluster_summary) && nrow(consensus_cluster_summary) > 0) {
+  kable(consensus_cluster_summary %>% slice_head(n = params$top_n_consensus_clusters),
+        caption = "Top consensus clusters.") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed","responsive"))
+}
+
+if (!is.null(diversity_by_sample) && nrow(diversity_by_sample) > 0) {
+  kable(diversity_by_sample,
+        caption = "Diversity metrics by sample.") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed","responsive"))
+}
+```
+
+# session info
+```{r}
+writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.master_summary.txt"))
+sessionInfo()
+```

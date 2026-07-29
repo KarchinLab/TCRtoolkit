@@ -15,7 +15,10 @@ process GLIPH2_TURBOGLIPH {
     path "${patient}/global_similarities.txt", emit: 'global_similarities'
     path "${patient}/local_similarities.txt", emit: 'local_similarities'
     path "${patient}/parameter.txt", emit: 'gliph2_parameters'
-    
+    // Patient-prefixed copy so collected files stay unique across patients (mirrors GIANA's
+    // ${patient}_giana.txt). Consumed by the single-cell CLUSTER_TO_SC bridge.
+    path "${patient}_cluster_member_details.txt", emit: 'cluster_member_details_named'
+
     script:
     """
     Rscript - <<EOF
@@ -51,6 +54,9 @@ process GLIPH2_TURBOGLIPH {
     # Rename local_similarities file to standardize output name
     input_file="${patient}/local_similarities_*.txt"
     cat \$input_file > ${patient}/local_similarities.txt
+
+    # Patient-prefixed top-level copy for unique staging when collected across patients.
+    cp ${patient}/cluster_member_details.txt ${patient}_cluster_member_details.txt
     """
 }
 

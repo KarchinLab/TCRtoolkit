@@ -1,0 +1,2205 @@
+---
+title: "SCRATCH-TCR: VDJ QC Analysis"
+author: "Syed Shujaat Ali Zaidi"
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+    df-print: paged
+    smooth-scroll: true
+    anchor-sections: true
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  # ======================================================
+  # Inputs
+  # ======================================================
+  sample_sheet: "vdj_samples.txt"
+  metadata_file: ""
+  outdir: "VDJ_QC"
+  input_annotated_object: ""
+
+  # ======================================================
+  # Sample sheet columns
+  # sample sheet must minimally contain:
+  #   sample, path
+  # ======================================================
+  sample_sheet_sample_col: "sample"
+  sample_sheet_path_col: "path"
+
+  # ======================================================
+  # Metadata mapping (optional)
+  # ======================================================
+  meta_barcode_col: "barcode"
+  meta_sample_col: "sample"
+  meta_patient_col: "patient_id"
+  meta_condition_col: "condition"
+  meta_timepoint_col: "timepoint"
+
+  meta_barcode_candidates: !expr c("barcode","cell_id","cell","CB")
+  meta_sample_candidates: !expr c("sample","sample_id","orig.ident","library_id")
+  meta_patient_candidates: !expr c("patient_id","patient","subject_id")
+  meta_condition_candidates: !expr c("condition","group","status","DiseaseStatus")
+  meta_timepoint_candidates: !expr c("timepoint","time","visit","day")
+
+  # ======================================================
+  # QC parameters
+  # ======================================================
+  chain_mode: "auto"            # auto / T-AB / T-GD / both
+  require_productive: true
+  require_high_conf: true
+  require_full_length: true
+  min_umis: 1
+  min_reads: 0
+  keep_one_per_chain: true
+  keep_paired_only: false
+  keep_dual_alpha: true
+  keep_dual_beta: true
+  cdr3_aa_min: 8
+  cdr3_aa_max: 25
+  drop_stop_or_frames: true
+  top_n_samples_table: 50
+
+  # ======================================================
+  # Plot/report settings
+  # ======================================================
+  figures_dir: "figures"
+  tables_dir: "tables"
+  save_tables: true
+  save_figures: true
+  figure_format: "png"
+  figure_width: 10
+  figure_height: 7
+  figure_dpi: 300
+  base_size: 12
+
+  top_n_v: 20
+  top_n_j: 20
+  min_clone_size_plot: 1
+
+  show_reads_umis: true
+  show_patient_panels: true
+  show_condition_panels: true
+  show_timepoint_panels: true
+  show_clone_rank_plot: true
+  show_vj_heatmaps: true
+
+  report_label: "VDJ QC Analysis"
+---
+
+
+##SETUP
+```{r}
+#| label: setup
+suppressPackageStartupMessages({
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(forcats)
+  library(ggplot2)
+  library(scales)
+  library(purrr)
+  library(glue)
+  library(knitr)
+  library(kableExtra)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(patchwork)
+  library(RColorBrewer)
+  library(plotly)
+  # library(DT)
+  library(htmltools)
+  library(htmlwidgets)
+  library(tibble)
+})
+
+options(stringsAsFactors = FALSE)
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$figures_dir), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, params$tables_dir), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(x, y) if (!is.null(x) && length(x) > 0 && !all(is.na(x))) x else y
+
+# theme_scratch_pub <- function(base_size = 12) {
+#   theme_bw(base_size = base_size) +
+#     theme(
+#       plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+#       plot.subtitle = element_text(size = base_size, hjust = 0),
+#       axis.title = element_text(face = "bold"),
+#       axis.text = element_text(color = "black"),
+#       panel.grid.minor = element_blank(),
+#       panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+#       strip.background = element_rect(fill = "grey95", color = "grey80"),
+#       strip.text = element_text(face = "bold"),
+#       legend.title = element_text(face = "bold"),
+#       legend.key = element_blank(),
+#       plot.caption = element_text(size = base_size - 2, color = "grey40")
+#     )
+# }
+# theme_scratch_pub <- function(base_size = 12) {
+#   theme_bw(base_size = base_size) +
+#     theme(
+#       plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
+#       plot.subtitle = element_text(size = base_size, hjust = 0),
+#       axis.title = element_text(face = "bold", size = base_size - 1),
+#       # Shrink Y-axis labels slightly
+#       axis.text.y = element_text(color = "black", size = base_size - 3), 
+#       # Rotate X-axis labels 45 degrees and shrink
+#       axis.text.x = element_text(color = "black", size = base_size - 3, angle = 45, hjust = 1), 
+#       panel.grid.minor = element_blank(),
+#       panel.grid.major = element_line(linewidth = 0.1, color = "grey90"),
+#       strip.background = element_rect(fill = "grey95", color = "grey80"),
+#       strip.text = element_text(face = "bold", size = base_size - 2),
+#       legend.title = element_text(face = "bold", size = base_size - 2),
+#       legend.text = element_text(size = base_size - 3),
+#       plot.caption = element_text(size = base_size - 4, color = "grey40")
+#     )
+# }
+theme_scratch_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 3, hjust = 0),
+      plot.subtitle = element_text(size = base_size, hjust = 0, color = "grey30"),
+      axis.title = element_text(face = "bold", size = base_size),
+      axis.text.y = element_text(color = "black", size = base_size - 2),
+      axis.text.x = element_text(color = "black", size = base_size - 2, angle = 45, hjust = 1),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.2, color = "grey92"),
+      strip.background = element_rect(fill = "#eef5f3", color = "#d9e6e1"),
+      strip.text = element_text(face = "bold", size = base_size - 1),
+      legend.title = element_text(face = "bold", size = base_size - 1),
+      legend.text = element_text(size = base_size - 2),
+      legend.key = element_blank(),
+      plot.caption = element_text(size = base_size - 3, color = "grey40"),
+      plot.margin = margin(10, 12, 10, 10)
+    )
+}
+
+save_plot_safe <- function(plot_obj, filename,
+                           width = params$figure_width,
+                           height = params$figure_height,
+                           dpi = params$figure_dpi) {
+  if (!isTRUE(params$save_figures)) return(invisible(NULL))
+  ggsave(
+    filename = file.path(params$outdir, params$figures_dir, filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+save_table_safe <- function(df, filename) {
+  if (!isTRUE(params$save_tables)) return(invisible(NULL))
+  fwrite(df, file.path(params$outdir, params$tables_dir, filename), sep = "\t")
+}
+
+safe_read_table <- function(path) {
+  if (is.null(path) || is.na(path) || path == "" || !file.exists(path)) return(NULL)
+  ext <- tolower(tools::file_ext(path))
+  if (ext %in% c("tsv", "tab", "txt")) {
+    fread(path, sep = "\t")
+  } else {
+    fread(path)
+  }
+}
+
+first_existing_col <- function(df, preferred, candidates = character()) {
+  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
+  hits <- intersect(candidates, colnames(df))
+  if (length(hits) > 0) return(hits[[1]])
+  return(NULL)
+}
+
+require_cols <- function(df, cols, object_name = deparse(substitute(df))) {
+  miss <- setdiff(cols, colnames(df))
+  if (length(miss) > 0) {
+    stop(glue("{object_name} is missing required columns: {paste(miss, collapse = ', ')}"))
+  }
+}
+
+has_col <- function(df, col) {
+  !is.null(col) && col %in% colnames(df)
+}
+
+to_logical <- function(v) {
+  if (is.logical(v)) return(v)
+  if (is.numeric(v)) return(v != 0)
+  if (is.character(v)) return(tolower(trimws(v)) %in% c("true", "t", "yes", "y", "1"))
+  return(as.logical(v))
+}
+
+numify <- function(x) suppressWarnings(as.numeric(x))
+
+clean_chain <- function(x) {
+  x <- as.character(x)
+  x <- toupper(trimws(x))
+  x
+}
+
+infer_chain_mode <- function(chain_vals) {
+  chain_vals <- unique(na.omit(chain_vals))
+  has_ab <- any(chain_vals %in% c("TRA","TRB"))
+  has_gd <- any(chain_vals %in% c("TRG","TRD"))
+  if (has_ab && !has_gd) return("T-AB")
+  if (!has_ab && has_gd) return("T-GD")
+  if (has_ab && has_gd) return("both")
+  "unknown"
+}
+
+filter_chain_mode <- function(df, chain_col, mode = "auto") {
+  if (!has_col(df, chain_col)) return(df)
+  mode_use <- mode
+  if (mode_use == "auto") mode_use <- infer_chain_mode(df[[chain_col]])
+  if (mode_use == "T-AB") return(df %>% filter(.data[[chain_col]] %in% c("TRA","TRB")))
+  if (mode_use == "T-GD") return(df %>% filter(.data[[chain_col]] %in% c("TRG","TRD")))
+  df
+}
+
+safe_pct <- function(x, denom) ifelse(denom == 0, NA_real_, x / denom)
+
+coalesce_chr <- function(x, y) ifelse(is.na(x) | x == "", y, x)
+
+detect_vdj_file <- function(outs_dir, fname) {
+  roots <- c(
+    outs_dir,
+    file.path(outs_dir, "vdj_t"),
+    file.path(outs_dir, "vdj_b")
+  )
+  fp <- file.path(roots, fname)
+  i <- which(file.exists(fp))[1]
+  if (is.na(i)) return(NULL)
+  fp[[i]]
+}
+
+read_samplesheet <- function(path, sample_col = "sample", path_col = "path") {
+  stopifnot(file.exists(path))
+  df <- safe_read_table(path) %>% as.data.frame()
+  require_cols(df, c(sample_col, path_col), "sample_sheet")
+  stopifnot(!anyDuplicated(df[[sample_col]]))
+
+  df <- df %>%
+    mutate(
+      sample = as.character(.data[[sample_col]]),
+      raw_path = as.character(.data[[path_col]])
+    )
+
+  df$outs <- vapply(df$raw_path, function(p) {
+    p <- normalizePath(p, mustWork = FALSE)
+    if (dir.exists(file.path(p, "outs"))) {
+      file.path(p, "outs")
+    } else if (grepl("/outs/?$", p) && dir.exists(p)) {
+      p
+    } else {
+      stop("Could not find 'outs' directory for path: ", p)
+    }
+  }, character(1))
+
+  df %>% select(sample, outs) %>% distinct()
+}
+
+load_vdj_one <- function(sname, outs_dir) {
+  contigs_fp <- detect_vdj_file(outs_dir, "filtered_contig_annotations.csv")
+  clonotypes_fp <- detect_vdj_file(outs_dir, "clonotypes.csv")
+  metrics_fp <- detect_vdj_file(outs_dir, "metrics_summary.csv")
+
+  if (is.null(contigs_fp)) {
+    stop("[", sname, "] missing filtered_contig_annotations.csv under ", outs_dir)
+  }
+  if (is.null(clonotypes_fp)) {
+    stop("[", sname, "] missing clonotypes.csv under ", outs_dir)
+  }
+
+  contigs <- fread(contigs_fp) %>% as.data.frame()
+  clonotypes <- fread(clonotypes_fp) %>% as.data.frame()
+  metrics <- NULL
+  if (!is.null(metrics_fp) && file.exists(metrics_fp)) {
+    metrics <- tryCatch(fread(metrics_fp) %>% as.data.frame(), error = function(e) NULL)
+  }
+
+  contigs$sample <- sname
+  clonotypes$sample <- sname
+  if (!is.null(metrics)) metrics$sample <- sname
+
+  list(
+    contigs = contigs,
+    clonotypes = clonotypes,
+    metrics = metrics
+  )
+}
+
+
+metric_card <- function(title, value, subtitle = NULL, color = "#eef5f3") {
+  htmltools::div(
+    style = paste0(
+      "background:", color, "; border:1px solid #d8e3df; border-radius:12px; ",
+      "padding:14px 16px; margin:8px 8px 8px 0; min-width:200px; display:inline-block;"
+    ),
+    htmltools::tags$div(style = "font-size:13px; color:#4b5b57; font-weight:600;", title),
+    htmltools::tags$div(style = "font-size:28px; font-weight:700; color:#1f2d2a;", value),
+    if (!is.null(subtitle)) htmltools::tags$div(style = "font-size:12px; color:#6b7c77;", subtitle)
+  )
+}
+
+
+scroll_kable <- function(df, caption = NULL, height = "360px", font_size = 11) {
+  kableExtra::kbl(df, caption = caption) %>%
+    kableExtra::kable_styling(
+      full_width = FALSE,
+      bootstrap_options = c("striped","hover","condensed"),
+      font_size = font_size
+    ) %>%
+    kableExtra::scroll_box(width = "100%", height = height)
+}
+
+save_widget_safe <- function(widget, filename) {
+  if (!isTRUE(params$save_figures)) return(invisible(NULL))
+  htmlwidgets::saveWidget(
+    widget = widget,
+    file = file.path(params$outdir, params$figures_dir, filename),
+    selfcontained = TRUE
+  )
+}
+
+
+ggplotly_clean <- function(p, tooltip = c("x", "y")) {
+  plotly::ggplotly(p, tooltip = tooltip) %>%
+    plotly::layout(
+      margin = list(l = 60, r = 30, b = 60, t = 60),
+      legend = list(orientation = "v")
+    )
+}
+
+```
+
+#read input
+```{r}
+#| label: read-inputs
+
+sample_sheet <- read_samplesheet(
+  params$sample_sheet,
+  sample_col = params$sample_sheet_sample_col,
+  path_col = params$sample_sheet_path_col
+)
+
+metadata_tbl <- safe_read_table(params$metadata_file)
+
+if ((is.null(metadata_tbl) || nrow(metadata_tbl) == 0) &&
+    !is.null(params$input_annotated_object) &&
+    params$input_annotated_object != "" &&
+    !grepl("NO_FILE", basename(params$input_annotated_object)) &&
+    file.exists(params$input_annotated_object)) {
+
+  suppressPackageStartupMessages({
+    library(Seurat)
+    library(tibble)
+    library(dplyr)
+  })
+
+  seu <- readRDS(params$input_annotated_object)
+
+  metadata_tbl <- seu@meta.data %>%
+    tibble::rownames_to_column("cell_id_full") %>%
+    mutate(
+      sample = as.character(orig.ident),
+      barcode = if ("raw_cell_id" %in% colnames(.)) {
+        sub("-1$", "", as.character(raw_cell_id))
+      } else {
+        sub("^[^_]+_", "", cell_id_full) |> sub("-1$", "", x = _)
+      },
+      patient_id = if ("patient_id" %in% colnames(.)) as.character(patient_id) else NA_character_,
+      condition  = if ("condition"  %in% colnames(.)) as.character(condition)  else NA_character_,
+      timepoint  = if ("timepoint"  %in% colnames(.)) as.character(timepoint)  else NA_character_
+    )
+
+  cat("\nLoaded metadata from annotated object\n")
+  print(colnames(metadata_tbl))
+  print(head(metadata_tbl[, c("sample","barcode","patient_id","condition","timepoint")], 10))
+}
+
+```
+
+##load files VDJ
+```{r}
+#| label: load-vdj
+vdj_list <- lapply(seq_len(nrow(sample_sheet)), function(i) {
+  load_vdj_one(sample_sheet$sample[i], sample_sheet$outs[i])
+})
+names(vdj_list) <- sample_sheet$sample
+
+contigs_all_pre <- rbindlist(lapply(vdj_list, `[[`, "contigs"), use.names = TRUE, fill = TRUE) %>% as.data.frame()
+clonotypes_all  <- rbindlist(lapply(vdj_list, `[[`, "clonotypes"), use.names = TRUE, fill = TRUE) %>% as.data.frame()
+
+metrics_list <- lapply(vdj_list, `[[`, "metrics")
+metrics_list <- metrics_list[!vapply(metrics_list, is.null, logical(1))]
+metrics_all <- if (length(metrics_list) > 0) {
+  rbindlist(metrics_list, use.names = TRUE, fill = TRUE) %>% as.data.frame()
+} else {
+  NULL
+}
+```
+
+## validate-standardize
+```{r}
+#| label: validate-and-standardize
+need_cols <- c("barcode", "chain", "cdr3", "productive")
+require_cols(contigs_all_pre, need_cols, "contigs_all_pre")
+
+contigs_all_pre <- contigs_all_pre %>%
+  mutate(
+    sample = as.character(sample),
+    barcode = as.character(barcode),
+    cell_id = as.character(barcode),
+    chain = clean_chain(chain),
+    productive = if ("productive" %in% names(.)) to_logical(productive) else productive,
+    high_confidence = if ("high_confidence" %in% names(.)) to_logical(high_confidence) else high_confidence,
+    full_length = if ("full_length" %in% names(.)) to_logical(full_length) else full_length,
+    umis = if ("umis" %in% names(.)) numify(umis) else NA_real_,
+    reads = if ("reads" %in% names(.)) numify(reads) else NA_real_,
+    cdr3 = as.character(cdr3),
+    cdr3_nt = if ("cdr3_nt" %in% names(.)) as.character(cdr3_nt) else NA_character_,
+    v_gene = if ("v_gene" %in% names(.)) as.character(v_gene) else NA_character_,
+    j_gene = if ("j_gene" %in% names(.)) as.character(j_gene) else NA_character_,
+    raw_clonotype_id = if ("raw_clonotype_id" %in% names(.)) as.character(raw_clonotype_id) else if ("clonotype_id" %in% names(.)) as.character(clonotype_id) else NA_character_
+  )
+```
+
+##merge-optional-metadata
+```{r}
+#| label: merge-optional-metadata
+
+contigs_all_pre$patient_id <- NA_character_
+contigs_all_pre$condition  <- NA_character_
+contigs_all_pre$timepoint  <- NA_character_
+
+if (!is.null(metadata_tbl) && nrow(metadata_tbl) > 0) {
+  message("--- Merging VDJ contigs with GEX metadata ---")
+
+  md_sample_col    <- "sample"
+  md_barcode_col   <- "barcode"
+  md_patient_col   <- if ("patient_id" %in% colnames(metadata_tbl)) "patient_id" else NULL
+  md_condition_col <- if ("condition" %in% colnames(metadata_tbl)) "condition" else NULL
+  md_timepoint_col <- if ("timepoint" %in% colnames(metadata_tbl)) "timepoint" else NULL
+
+  metadata_prep <- metadata_tbl %>%
+    mutate(
+      md_sample  = as.character(.data[[md_sample_col]]),
+      md_barcode = sub("-1$", "", as.character(.data[[md_barcode_col]]))
+    )
+
+  # barcode + sample level mapping
+  barcode_meta_map <- metadata_prep %>%
+    transmute(
+      sample = md_sample,
+      barcode_clean = md_barcode,
+      patient_id_join = if (!is.null(md_patient_col)) as.character(.data[[md_patient_col]]) else NA_character_,
+      condition_join  = if (!is.null(md_condition_col)) as.character(.data[[md_condition_col]]) else NA_character_,
+      timepoint_join  = if (!is.null(md_timepoint_col)) as.character(.data[[md_timepoint_col]]) else NA_character_
+    ) %>%
+    distinct(sample, barcode_clean, .keep_all = TRUE)
+
+  # sample-level fallback
+  sample_meta_map <- metadata_prep %>%
+    transmute(
+      sample = md_sample,
+      patient_id_sample = if (!is.null(md_patient_col)) as.character(.data[[md_patient_col]]) else NA_character_,
+      condition_sample  = if (!is.null(md_condition_col)) as.character(.data[[md_condition_col]]) else NA_character_,
+      timepoint_sample  = if (!is.null(md_timepoint_col)) as.character(.data[[md_timepoint_col]]) else NA_character_
+    ) %>%
+    distinct(sample, .keep_all = TRUE)
+
+  contigs_all_pre <- contigs_all_pre %>%
+    mutate(
+      sample = as.character(sample),
+      barcode_clean = sub("-1$", "", as.character(barcode))
+    ) %>%
+    left_join(barcode_meta_map, by = c("sample", "barcode_clean")) %>%
+    left_join(sample_meta_map, by = "sample") %>%
+    mutate(
+      patient_id = dplyr::coalesce(patient_id_join, patient_id_sample),
+      condition  = dplyr::coalesce(condition_join, condition_sample),
+      timepoint  = dplyr::coalesce(timepoint_join, timepoint_sample)
+    ) %>%
+    select(-any_of(c(
+      "barcode_clean",
+      "patient_id_join", "condition_join", "timepoint_join",
+      "patient_id_sample", "condition_sample", "timepoint_sample"
+    )))
+
+  message(sprintf(
+    "Merged metadata: patient_id non-NA = %d / %d ; timepoint non-NA = %d / %d",
+    sum(!is.na(contigs_all_pre$patient_id)), nrow(contigs_all_pre),
+    sum(!is.na(contigs_all_pre$timepoint)), nrow(contigs_all_pre)
+  ))
+}
+```
+
+# metadata-debug
+```{r}
+#| label: metadata-debug
+cat("\n===== DEBUG MERGED METADATA =====\n")
+print(
+  contigs_all_pre %>%
+    select(sample, barcode, patient_id, condition, timepoint) %>%
+    distinct() %>%
+    head(20)
+)
+
+
+cat("\nPer-sample merged metadata summary:\n")
+print(
+  contigs_all_pre %>%
+    group_by(sample) %>%
+    summarise(
+      patient_vals = paste(unique(na.omit(patient_id)), collapse = ";"),
+      condition_vals = paste(unique(na.omit(condition)), collapse = ";"),
+      timepoint_vals = paste(unique(na.omit(timepoint)), collapse = ";"),
+      .groups = "drop"
+    )
+)
+```
+
+##chain mode
+```{r}
+#| label: chain-mode
+detected_chain_mode <- infer_chain_mode(contigs_all_pre$chain)
+effective_chain_mode <- if (params$chain_mode == "auto") detected_chain_mode else params$chain_mode
+
+contigs_all_pre <- filter_chain_mode(contigs_all_pre, "chain", params$chain_mode)
+```
+
+##QC-filtering
+```{r}
+#| label: qc-filtering
+contigs_all_pre <- contigs_all_pre %>%
+  mutate(
+    cdr3_len = nchar(cdr3),
+    has_stop = ifelse(is.na(cdr3), NA, str_detect(cdr3, "\\*")),
+    has_frame_issue = ifelse(is.na(cdr3_nt), FALSE, nchar(cdr3_nt) %% 3 != 0)
+  )
+
+contigs_all_post <- contigs_all_pre %>%
+  {
+    x <- .
+    if (params$require_productive && "productive" %in% names(x)) {
+      x <- x %>% filter(productive)
+    }
+    if (params$require_high_conf && "high_confidence" %in% names(x)) {
+      x <- x %>% filter(high_confidence)
+    }
+    if (params$require_full_length && "full_length" %in% names(x)) {
+      x <- x %>% filter(full_length)
+    }
+    if ("umis" %in% names(x)) {
+      x <- x %>% filter(is.na(umis) | umis >= params$min_umis)
+    }
+    if ("reads" %in% names(x)) {
+      x <- x %>% filter(is.na(reads) | reads >= params$min_reads)
+    }
+
+    x <- x %>% filter(!is.na(cdr3), cdr3 != "")
+
+    if (isTRUE(params$drop_stop_or_frames)) {
+      x <- x %>% filter(!grepl("\\*", cdr3))
+      if ("cdr3_nt" %in% names(x)) {
+        x <- x %>% filter(is.na(cdr3_nt) | nchar(cdr3_nt) %% 3 == 0)
+      }
+    }
+
+    x <- x %>%
+      filter(
+        nchar(cdr3) >= params$cdr3_aa_min,
+        nchar(cdr3) <= params$cdr3_aa_max
+      )
+
+    if (isTRUE(params$keep_one_per_chain)) {
+      order_vars <- intersect(c("umis", "reads"), names(x))
+      if (length(order_vars) > 0) {
+        x <- x %>%
+          group_by(sample, barcode, chain) %>%
+          arrange(across(all_of(order_vars), desc), .by_group = TRUE) %>%
+          slice(1) %>%
+          ungroup()
+      } else {
+        x <- x %>% distinct(sample, barcode, chain, .keep_all = TRUE)
+      }
+    }
+
+    x
+  }
+
+if (!isTRUE(params$keep_dual_alpha)) {
+  contigs_all_post <- contigs_all_post %>%
+    group_by(sample, barcode) %>%
+    filter(!(chain == "TRA" & row_number() > 1)) %>%
+    ungroup()
+}
+
+if (!isTRUE(params$keep_dual_beta)) {
+  contigs_all_post <- contigs_all_post %>%
+    group_by(sample, barcode) %>%
+    filter(!(chain == "TRB" & row_number() > 1)) %>%
+    ungroup()
+}
+
+if (isTRUE(params$keep_paired_only)) {
+  if (effective_chain_mode == "T-AB") {
+    contigs_all_post <- contigs_all_post %>%
+      group_by(sample, barcode) %>%
+      filter(any(chain == "TRA") & any(chain == "TRB")) %>%
+      ungroup()
+  } else if (effective_chain_mode == "T-GD") {
+    contigs_all_post <- contigs_all_post %>%
+      group_by(sample, barcode) %>%
+      filter(any(chain == "TRG") & any(chain == "TRD")) %>%
+      ungroup()
+  }
+}
+```
+
+
+## removed-contigs
+```{r}
+#| label: removed-contigs
+key_cols <- intersect(
+  c("sample","barcode","chain","cdr3","cdr3_nt","v_gene","j_gene","raw_clonotype_id"),
+  colnames(contigs_all_pre)
+)
+
+if (length(key_cols) == 0) {
+  removed <- contigs_all_pre[0, , drop = FALSE]
+} else {
+  removed <- dplyr::anti_join(
+    contigs_all_pre,
+    contigs_all_post,
+    by = key_cols
+  )
+}
+```
+
+
+## QC-Summary before-after
+```{r}
+#| label: qc-summary-before-after
+qc_summary <- contigs_all_pre %>%
+  mutate(stage = "before") %>%
+  bind_rows(contigs_all_post %>% mutate(stage = "after")) %>%
+  group_by(sample, stage) %>%
+  summarise(
+    cells_with_any = n_distinct(barcode),
+    contigs = n(),
+    mean_contigs_per_cell = contigs / cells_with_any,
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = stage,
+    values_from = c(cells_with_any, contigs, mean_contigs_per_cell)
+  )
+
+before_df <- contigs_all_pre %>% count(sample, name = "contigs_before")
+after_df  <- contigs_all_post %>% count(sample, name = "contigs_after")
+
+qc_retention <- before_df %>%
+  left_join(after_df, by = "sample") %>%
+  mutate(
+    contigs_after = replace_na(contigs_after, 0L),
+    dropped = pmax(contigs_before - contigs_after, 0L),
+    retained_prop = ifelse(contigs_before > 0, contigs_after / contigs_before, NA_real_),
+    retained_pct = 100 * retained_prop
+  ) %>%
+  arrange(desc(contigs_before))
+```
+
+### Pairing Summary
+```{r}
+#| label: pairing-summary
+pairing_all <- contigs_all_post %>%
+  group_by(sample, cell_id = barcode) %>%
+  summarise(
+    patient_id = first(na.omit(patient_id)) %||% NA_character_,
+    condition = first(na.omit(condition)) %||% NA_character_,
+    timepoint = first(na.omit(timepoint)) %||% NA_character_,
+    n_prod = n(),
+    n_TRA = sum(chain == "TRA"),
+    n_TRB = sum(chain == "TRB"),
+    n_TRG = sum(chain == "TRG"),
+    n_TRD = sum(chain == "TRD"),
+    has_TRA = any(chain == "TRA"),
+    has_TRB = any(chain == "TRB"),
+    has_TRG = any(chain == "TRG"),
+    has_TRD = any(chain == "TRD"),
+    alpha_ct = sum(chain == "TRA"),
+    beta_ct = sum(chain == "TRB"),
+    gamma_ct = sum(chain == "TRG"),
+    delta_ct = sum(chain == "TRD"),
+    cdr3a = paste(unique(cdr3[chain == "TRA"]), collapse = ";"),
+    cdr3b = paste(unique(cdr3[chain == "TRB"]), collapse = ";"),
+    cdr3g = paste(unique(cdr3[chain == "TRG"]), collapse = ";"),
+    cdr3d = paste(unique(cdr3[chain == "TRD"]), collapse = ";"),
+    trav = paste(unique(v_gene[chain == "TRA"]), collapse = ";"),
+    trbv = paste(unique(v_gene[chain == "TRB"]), collapse = ";"),
+    trgv = paste(unique(v_gene[chain == "TRG"]), collapse = ";"),
+    trdv = paste(unique(v_gene[chain == "TRD"]), collapse = ";"),
+    traj = paste(unique(j_gene[chain == "TRA"]), collapse = ";"),
+    trbj = paste(unique(j_gene[chain == "TRB"]), collapse = ";"),
+    trgj = paste(unique(j_gene[chain == "TRG"]), collapse = ";"),
+    trdj = paste(unique(j_gene[chain == "TRD"]), collapse = ";"),
+    clone_id = first(na.omit(raw_clonotype_id)) %||% NA_character_,
+    max_reads = suppressWarnings(max(reads, na.rm = TRUE)),
+    max_umis = suppressWarnings(max(umis, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pairing = case_when(
+      effective_chain_mode == "T-AB" & has_TRA & has_TRB ~ "Alpha+Beta",
+      effective_chain_mode == "T-AB" & has_TRA & !has_TRB ~ "Alpha_only",
+      effective_chain_mode == "T-AB" & !has_TRA & has_TRB ~ "Beta_only",
+      effective_chain_mode == "T-GD" & has_TRG & has_TRD ~ "Gamma+Delta",
+      effective_chain_mode == "T-GD" & has_TRG & !has_TRD ~ "Gamma_only",
+      effective_chain_mode == "T-GD" & !has_TRG & has_TRD ~ "Delta_only",
+      effective_chain_mode == "both" & (has_TRA & has_TRB) ~ "Alpha+Beta",
+      effective_chain_mode == "both" & (has_TRG & has_TRD) ~ "Gamma+Delta",
+      TRUE ~ "Other"
+    ),
+    multi_alpha = alpha_ct > 1,
+    multi_beta = beta_ct > 1,
+    multi_gamma = gamma_ct > 1,
+    multi_delta = delta_ct > 1
+  )
+```
+
+
+
+##CDR3 lengths
+```{r}
+#| label: cdr3-lengths
+cdr3_len_all <- contigs_all_post %>%
+  filter(!is.na(cdr3), cdr3 != "") %>%
+  mutate(
+    len = nchar(cdr3),
+    chain_grp = case_when(
+      chain == "TRA" ~ "TRA",
+      chain == "TRB" ~ "TRB",
+      chain == "TRG" ~ "TRG",
+      chain == "TRD" ~ "TRD",
+      TRUE ~ "Other"
+    )
+  )
+```
+
+
+##vj-usage
+```{r}
+#| label: vj-usage-and-clone-rank
+v_usage <- NULL
+j_usage <- NULL
+
+if (isTRUE(params$show_vj_heatmaps) && any(!is.na(contigs_all_post$v_gene))) {
+  v_usage <- contigs_all_post %>%
+    filter(!is.na(v_gene), v_gene != "") %>%
+    count(sample, v_gene, name = "n") %>%
+    group_by(sample) %>%
+    mutate(freq = n / sum(n)) %>%
+    ungroup()
+
+  top_v <- v_usage %>%
+    group_by(v_gene) %>%
+    summarise(total = sum(n), .groups = "drop") %>%
+    arrange(desc(total)) %>%
+    slice_head(n = params$top_n_v) %>%
+    pull(v_gene)
+
+  v_usage <- v_usage %>% filter(v_gene %in% top_v)
+}
+
+if (isTRUE(params$show_vj_heatmaps) && any(!is.na(contigs_all_post$j_gene))) {
+  j_usage <- contigs_all_post %>%
+    filter(!is.na(j_gene), j_gene != "") %>%
+    count(sample, j_gene, name = "n") %>%
+    group_by(sample) %>%
+    mutate(freq = n / sum(n)) %>%
+    ungroup()
+
+  top_j <- j_usage %>%
+    group_by(j_gene) %>%
+    summarise(total = sum(n), .groups = "drop") %>%
+    arrange(desc(total)) %>%
+    slice_head(n = params$top_n_j) %>%
+    pull(j_gene)
+
+  j_usage <- j_usage %>% filter(j_gene %in% top_j)
+}
+
+clone_rank_tbl <- NULL
+if (isTRUE(params$show_clone_rank_plot)) {
+  clone_rank_tbl <- pairing_all %>%
+    filter(!is.na(clone_id), clone_id != "") %>%
+    count(sample, clone_id, name = "n_cells") %>%
+    group_by(sample) %>%
+    arrange(desc(n_cells), .by_group = TRUE) %>%
+    mutate(rank = row_number()) %>%
+    ungroup() %>%
+    filter(n_cells >= params$min_clone_size_plot)
+}
+```
+
+##Compact Summary
+```{r}
+#| label: compact-sample-summary
+pairing_rates <- pairing_all %>%
+  count(sample, pairing, name = "cells") %>%
+  group_by(sample) %>%
+  mutate(frac = cells / sum(cells)) %>%
+  pivot_wider(names_from = pairing, values_from = c(cells, frac), values_fill = 0) %>%
+  ungroup()
+
+sample_qc <- pairing_all %>%
+  group_by(sample) %>%
+  summarise(
+    patient_id = first(na.omit(patient_id)) %||% NA_character_,
+    condition = first(na.omit(condition)) %||% NA_character_,
+    timepoint = first(na.omit(timepoint)) %||% NA_character_,
+    n_cells_total = n(),
+    n_cells_paired = sum(pairing %in% c("Alpha+Beta","Gamma+Delta")),
+    n_cells_multichain = sum(multi_alpha | multi_beta | multi_gamma | multi_delta, na.rm = TRUE),
+    pct_cells_paired = safe_pct(n_cells_paired, n_cells_total),
+    pct_cells_multichain = safe_pct(n_cells_multichain, n_cells_total),
+    n_unique_clones = n_distinct(clone_id[!is.na(clone_id) & clone_id != ""]),
+    median_max_reads = suppressWarnings(median(max_reads[is.finite(max_reads)], na.rm = TRUE)),
+    median_max_umis = suppressWarnings(median(max_umis[is.finite(max_umis)], na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  left_join(qc_summary, by = "sample") %>%
+  left_join(qc_retention, by = "sample") %>%
+  left_join(pairing_rates, by = "sample")
+```
+
+
+## Optional metadata summaries
+```{r}
+#| label: metadata-panels
+show_patient <- isTRUE(params$show_patient_panels) && any(!is.na(sample_qc$patient_id))
+show_condition <- isTRUE(params$show_condition_panels) && any(!is.na(sample_qc$condition))
+# show_timepoint <- isTRUE(params$show_timepoint_panels) && any(!is.na(sample_qc$timepoint))
+show_timepoint <- isTRUE(params$show_timepoint_panels) &&
+  any(!is.na(sample_qc$timepoint)) &&
+  dplyr::n_distinct(na.omit(sample_qc$timepoint)) >= 2
+```
+
+##save outputs
+```{r}
+#| label: save-tables
+save_table_safe(sample_sheet, "sample_sheet_resolved.tsv")
+save_table_safe(contigs_all_pre, "contigs_before_qc.tsv")
+save_table_safe(contigs_all_post, "contigs_after_qc.tsv")
+save_table_safe(removed, "contigs_removed_by_qc.tsv")
+save_table_safe(qc_summary, "vdj_qc_summary_before_after.tsv")
+save_table_safe(qc_retention, "qc_contigs_before_after_summary.tsv")
+save_table_safe(pairing_all, "pairing_status_all.tsv")
+save_table_safe(sample_qc, "vdj_qc_per_sample_compact.tsv")
+save_table_safe(cdr3_len_all, "cdr3_lengths_all.tsv")
+save_table_safe(clonotypes_all, "clonotypes_all.tsv")
+if (!is.null(metrics_all)) save_table_safe(metrics_all, "vdj_metrics_summary_all.tsv")
+if (!is.null(v_usage)) save_table_safe(v_usage, "v_gene_usage.tsv")
+if (!is.null(j_usage)) save_table_safe(j_usage, "j_gene_usage.tsv")
+if (!is.null(clone_rank_tbl)) save_table_safe(clone_rank_tbl, "clone_rank_abundance.tsv")
+```
+
+
+
+## What this module does
+
+::: {.callout-note}
+This module performs quality control on Cell Ranger VDJ contig outputs before downstream clonotype analysis.  
+It standardizes contig annotations, merges optional sample-level metadata, applies explicit QC filters, and summarizes the retained receptor repertoire at the contig, cell, and sample levels.  
+This matters because downstream tools such as GLIPH2, TCRdist3, GIANA, repertoire analysis, and consensus clustering are only as reliable as the receptor calls entering them.  
+The report is based primarily on filtered contig annotations, clonotype assignments, and optional sample metadata, and it evaluates retention, pairing, multi-chain burden, CDR3 properties, V/J usage, and clone size structure.
+:::
+
+## How to read this report
+
+::: {.callout-tip}
+- **Higher contig retention** usually indicates that most receptor calls survived the QC rules and were technically consistent with the expected assay.
+- **Higher paired-chain fraction** is generally desirable for alpha-beta or gamma-delta analyses because paired receptors are more interpretable biologically.
+- **High multi-chain burden** can reflect true biology in some cases, but can also indicate doublets, ambient contamination, or ambiguous contig recovery.
+- **CDR3 length distributions** should look biologically plausible and fairly consistent across samples; strong shifts or extreme tails are potential red flags.
+- **Clone rank-abundance curves** reveal whether repertoires are broad versus dominated by a few expanded clonotypes.
+- **V/J usage heatmaps** help spot sample-specific biases, batch effects, or biologically enriched receptor programs.
+:::
+
+## Red flags and biologically interesting patterns
+
+::: {.callout-warning}
+**Potential red flags**
+- very low retention after QC
+- very low paired fraction
+- unusually high multi-chain burden
+- missing read or UMI support fields
+- strong outlier samples in CDR3 length or V/J usage patterns
+
+**Potentially interesting biology**
+- strong clonal dominance in a subset of samples
+- reproducible V/J enrichment across related samples
+- distinct pairing behavior by patient, condition, or timepoint
+- broad versus focused repertoire structure across the cohort
+:::
+
+
+
+## Overview
+```{r}
+#| label: Key summary metrics
+#| results: asis
+
+n_samples <- n_distinct(sample_sheet$sample)
+n_contigs_before <- nrow(contigs_all_pre)
+n_contigs_after <- nrow(contigs_all_post)
+n_cells_after <- n_distinct(pairing_all$cell_id)
+pct_retained_num <- n_contigs_after / max(1, n_contigs_before)
+pct_retained <- percent(pct_retained_num, accuracy = 0.1)
+
+paired_frac <- mean(pairing_all$pairing %in% c("Alpha+Beta","Gamma+Delta"), na.rm = TRUE)
+multichain_frac <- mean(pairing_all$multi_alpha | pairing_all$multi_beta | pairing_all$multi_gamma | pairing_all$multi_delta, na.rm = TRUE)
+
+top_sample_by_cells <- sample_qc %>%
+  arrange(desc(n_cells_total)) %>%
+  slice_head(n = 1) %>%
+  pull(sample)
+
+top_sample_by_retention <- qc_retention %>%
+  arrange(desc(retained_prop)) %>%
+  slice_head(n = 1) %>%
+  pull(sample)
+
+htmltools::browsable(
+  htmltools::tagList(
+    metric_card("Resolved samples", comma(n_samples), "libraries in sample sheet"),
+    metric_card("Contigs before QC", comma(n_contigs_before), "raw filtered contigs"),
+    metric_card("Contigs after QC", comma(n_contigs_after), "passing QC"),
+    metric_card("Retention rate", pct_retained, "fraction of contigs retained"),
+    metric_card("Cells after QC", comma(n_cells_after), "unique barcodes retained"),
+    metric_card("Paired-chain fraction", percent(paired_frac, accuracy = 0.1), "post-QC cells"),
+    metric_card("Multi-chain burden", percent(multichain_frac, accuracy = 0.1), "cells with >1 productive chain type"),
+    metric_card("Detected chain mode", detected_chain_mode, "inferred from contigs"),
+    metric_card("Effective chain mode", effective_chain_mode, "used for filtering"),
+    metric_card("Top sample by cells", top_sample_by_cells %||% "NA", "largest retained sample"),
+    metric_card("Top sample by retention", top_sample_by_retention %||% "NA", "highest QC retention")
+  )
+)
+
+overview_tbl <- tibble(
+  Metric = c(
+    "Report label",
+    "Resolved samples",
+    "Detected chain mode",
+    "Effective chain mode",
+    "Contigs before QC",
+    "Contigs after QC",
+    "Retention rate",
+    "Cells after QC",
+    "Unique clonotypes loaded"
+  ),
+  Value = c(
+    params$report_label,
+    comma(n_samples),
+    detected_chain_mode,
+    effective_chain_mode,
+    comma(n_contigs_before),
+    comma(n_contigs_after),
+    pct_retained,
+    comma(n_cells_after),
+    comma(nrow(clonotypes_all))
+  )
+)
+print(
+  scroll_kable(
+    overview_tbl,
+    caption = "High-level overview of VDJ QC analysis.",
+    height = "260px"
+  )
+)
+
+save_table_safe(overview_tbl, "vdj_qc_overview_metrics.tsv")
+# kable(overview_tbl, caption = "High-level overview of VDJ QC analysis.") %>%
+#   kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
+```
+
+##sample-level Summary
+```{r}
+#| label: sample-summary-table
+#| results: asis
+
+# print(colnames(sample_qc))
+
+top_n_samples_table <- params$top_n_samples_table
+if (is.null(top_n_samples_table) || is.na(top_n_samples_table)) {
+  top_n_samples_table <- 50
+}
+top_n_samples_table <- as.integer(top_n_samples_table)
+
+sample_qc_display <- sample_qc %>%
+  mutate(
+    retained_pct = sprintf("%.1f%%", retained_pct),
+    pct_cells_paired = percent(pct_cells_paired, accuracy = 0.1),
+    pct_cells_multichain = percent(pct_cells_multichain, accuracy = 0.1)
+  )
+
+if ("contigs_after" %in% colnames(sample_qc_display)) {
+  sample_qc_display <- sample_qc_display %>%
+    arrange(desc(contigs_after))
+} else {
+  sample_qc_display <- sample_qc_display %>%
+    arrange(desc(n_cells_total))
+}
+
+sample_qc_display <- sample_qc_display %>%
+  slice_head(n = top_n_samples_table)
+
+print(
+  scroll_kable(
+    sample_qc_display,
+    caption = "Per-sample VDJ QC compact summary.",
+    height = "420px",
+    font_size = 11
+  )
+)
+
+# kable(sample_qc_display, caption = "Per-sample VDJ QC compact summary.") %>%
+#   kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed","responsive"))
+
+# #| label: sample-summary-table
+# print(colnames(sample_qc))
+# 
+# sample_qc_display <- sample_qc %>%
+#   mutate(
+#     retained_pct = sprintf("%.1f%%", retained_pct),
+#     pct_cells_paired = percent(pct_cells_paired, accuracy = 0.1),
+#     pct_cells_multichain = percent(pct_cells_multichain, accuracy = 0.1)
+#   )
+# 
+# if ("contigs_after" %in% colnames(sample_qc_display)) {
+#   sample_qc_display <- sample_qc_display %>%
+#     arrange(desc(contigs_after))
+# } else {
+#   sample_qc_display <- sample_qc_display %>%
+#     arrange(desc(n_cells_total))
+# }
+# 
+# sample_qc_display <- sample_qc_display %>%
+#   slice_head(n = params$top_n_samples_table)
+# 
+# kable(sample_qc_display, caption = "Per-sample VDJ QC compact summary.") %>%
+#   kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed","responsive"))
+```
+
+## QC figure panels {.tabset}
+
+### Retention and support
+
+::: {.callout-note}
+These plots summarize how strongly QC filtering affected each sample and whether retained contigs have adequate read and UMI support.
+:::
+
+
+```{r}
+#| label: before-after-figures
+p_before_counts <- qc_retention %>%
+  ggplot(aes(x = reorder(sample, contigs_before), y = contigs_before)) +
+  geom_col(fill = "grey50") +
+  coord_flip() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Contigs Before QC", x = NULL, y = "Contigs") +
+  theme_scratch_pub(params$base_size)
+
+p_after_counts <- qc_retention %>%
+  ggplot(aes(x = reorder(sample, contigs_before), y = contigs_after)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Contigs After QC", x = NULL, y = "Contigs") +
+  theme_scratch_pub(params$base_size)
+
+p_retained <- qc_retention %>%
+  ggplot(aes(x = reorder(sample, retained_prop), y = retained_pct)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  geom_text(aes(label = sprintf("%.1f%%", retained_pct)), hjust = 1.05, size = 3, color = "white") +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(title = "Retention After QC", x = NULL, y = "Retained (%)") +
+  theme_scratch_pub(params$base_size)
+
+patch_before_after <- p_before_counts + p_after_counts + p_retained + plot_layout(ncol = 3)
+patch_before_after
+save_plot_safe(patch_before_after, glue("qc_before_after_retention.{params$figure_format}"), width = 16, height = 5)
+```
+
+```{r}
+#| label: read-umi-plots
+if (isTRUE(params$show_reads_umis) && any(!is.na(contigs_all_post$reads))) {
+  p_reads <- contigs_all_post %>%
+    filter(!is.na(reads), reads > 0) %>%
+    ggplot(aes(x = reads, fill = chain)) +
+    geom_histogram(bins = 50, alpha = 0.8, position = "identity") +
+    scale_x_log10(labels = label_number(scale_cut = cut_short_scale())) +
+    labs(
+      title = "Read Support of Passing Contigs",
+      subtitle = "Histogram shown on log10 scale.",
+      x = "Reads",
+      y = "Contig count",
+      fill = "Chain"
+    ) +
+    theme_scratch_pub(params$base_size)
+  ggplotly_clean(p_reads)
+  # print(p_reads)
+  save_plot_safe(p_reads, glue("reads_support_histogram.{params$figure_format}"))
+}
+
+if (isTRUE(params$show_reads_umis) && any(!is.na(contigs_all_post$umis))) {
+  p_umis <- contigs_all_post %>%
+    filter(!is.na(umis), umis > 0) %>%
+    ggplot(aes(x = umis, fill = chain)) +
+    geom_histogram(bins = 50, alpha = 0.8, position = "identity") +
+    scale_x_log10(labels = label_number(scale_cut = cut_short_scale())) +
+    labs(
+      title = "UMI Support of Passing Contigs",
+      subtitle = "Histogram shown on log10 scale.",
+      x = "UMIs",
+      y = "Contig count",
+      fill = "Chain"
+    ) +
+    theme_scratch_pub(params$base_size)
+  ggplotly_clean(p_umis)
+  # print(p_umis)
+  save_plot_safe(p_umis, glue("umis_support_histogram.{params$figure_format}"))
+}
+```
+
+
+### Pairing and chain structure
+
+::: {.callout-note}
+Paired-chain recovery is one of the most important QC outcomes for TCR analysis. High paired fractions support reliable receptor interpretation, while elevated single-chain or multi-chain patterns can indicate technical dropout or ambiguous receptor assignment.
+:::
+
+#### Pairing status by sample
+```{r}
+#| label: pairing-plot-dropdown
+#| warning: false
+#| message: false
+
+pairing_plot_tbl <- pairing_all %>%
+  count(sample, pairing, name = "n") %>%
+  mutate(
+    pairing = factor(pairing, levels = unique(pairing))
+  )
+
+samples_pair <- sort(unique(pairing_plot_tbl$sample))
+pairing_levels <- levels(pairing_plot_tbl$pairing)
+
+# make sure every sample has all pairing categories
+pairing_plot_tbl_complete <- tidyr::expand_grid(
+  sample = samples_pair,
+  pairing = pairing_levels
+) %>%
+  left_join(pairing_plot_tbl, by = c("sample", "pairing")) %>%
+  mutate(n = ifelse(is.na(n), 0, n))
+
+pairing_colors <- c(
+  "Alpha_only" = "#F8766D",
+  "Alpha+Beta" = "#00BA38",
+  "Beta_only"  = "#619CFF"
+)
+
+# fallback if labels differ slightly
+for (nm in unique(as.character(pairing_plot_tbl_complete$pairing))) {
+  if (!nm %in% names(pairing_colors)) {
+    pairing_colors[[nm]] <- "#999999"
+  }
+}
+
+fig_pair <- plotly::plot_ly()
+
+for (i in seq_along(samples_pair)) {
+  s <- samples_pair[i]
+  df_s <- pairing_plot_tbl_complete %>% dplyr::filter(sample == s)
+
+  fig_pair <- fig_pair %>%
+    plotly::add_bars(
+      data = df_s,
+      x = ~pairing,
+      y = ~n,
+      color = ~pairing,
+      colors = pairing_colors,
+      text = ~paste0(
+        "Sample: ", s,
+        "<br>Pairing: ", pairing,
+        "<br>Cells: ", scales::comma(n)
+      ),
+      hoverinfo = "text",
+      visible = if (i == 1) TRUE else FALSE,
+      showlegend = if (i == 1) TRUE else FALSE
+    )
+}
+
+n_traces_per_sample <- length(pairing_levels)
+
+buttons_pair <- lapply(seq_along(samples_pair), function(i) {
+  vis <- rep(FALSE, length(samples_pair) * n_traces_per_sample)
+  idx <- ((i - 1) * n_traces_per_sample + 1):(i * n_traces_per_sample)
+  vis[idx] <- TRUE
+
+  list(
+    method = "update",
+    args = list(
+      list(visible = vis, showlegend = vis),
+      list(
+        title = list(text = paste0("Pairing status: ", samples_pair[i]))
+      )
+    ),
+    label = samples_pair[i]
+  )
+})
+
+fig_pair <- fig_pair %>%
+  plotly::layout(
+    title = list(text = paste0("Pairing status: ", samples_pair[1])),
+    barmode = "group",
+    xaxis = list(title = ""),
+    yaxis = list(title = "Cells"),
+    updatemenus = list(
+      list(
+        type = "dropdown",
+        active = 0,
+        x = 0.02,
+        y = 1.15,
+        xanchor = "left",
+        yanchor = "top",
+        buttons = buttons_pair
+      )
+    ),
+    annotations = list(
+      list(
+        x = 0.0,
+        y = 1.19,
+        xref = "paper",
+        yref = "paper",
+        text = "<b>Select sample:</b>",
+        showarrow = FALSE,
+        xanchor = "left",
+        yanchor = "top"
+      )
+    ),
+    legend = list(title = list(text = "Pairing")),
+    margin = list(t = 110)
+  )
+
+fig_pair
+
+```
+
+#### Multiple productive chains by sample
+```{r}
+#| label: multichain-plot-dropdown
+#| warning: false
+#| message: false
+
+multi_chain_long <- pairing_all %>%
+  pivot_longer(
+    cols = c("multi_alpha", "multi_beta", "multi_gamma", "multi_delta"),
+    names_to = "type",
+    values_to = "flag"
+  ) %>%
+  mutate(
+    type = recode(
+      type,
+      multi_alpha = "Multiple TRA",
+      multi_beta  = "Multiple TRB",
+      multi_gamma = "Multiple TRG",
+      multi_delta = "Multiple TRD"
+    ),
+    flag = factor(flag, levels = c(FALSE, TRUE), labels = c("No", "Yes"))
+  ) %>%
+  count(sample, type, flag, name = "n")
+
+samples_multi <- sort(unique(multi_chain_long$sample))
+type_levels   <- unique(multi_chain_long$type)
+flag_levels   <- levels(multi_chain_long$flag)
+
+multi_chain_complete <- tidyr::expand_grid(
+  sample = samples_multi,
+  type   = type_levels,
+  flag   = flag_levels
+) %>%
+  left_join(multi_chain_long, by = c("sample", "type", "flag")) %>%
+  mutate(n = ifelse(is.na(n), 0, n))
+
+# keep a saved static all-samples version for export
+n_samples_multi <- dplyr::n_distinct(multi_chain_complete$sample)
+facet_ncol <- min(4, max(1, n_samples_multi))
+facet_nrow <- ceiling(n_samples_multi / facet_ncol)
+
+plot_width  <- max(14, facet_ncol * 3.8)
+plot_height <- max(16, facet_nrow * 5.5)
+
+p_multi_by <- ggplot(multi_chain_complete, aes(x = type, y = n, fill = flag)) +
+  geom_col(position = "stack") +
+  facet_wrap(~ sample, scales = "free_y", ncol = facet_ncol) +
+  labs(
+    title = "Multiple Productive Chains",
+    subtitle = "Post-QC multiple-chain flags by sample.",
+    x = NULL,
+    y = "Cells",
+    fill = "Flag"
+  ) +
+  theme_scratch_pub(params$base_size) +
+  theme(
+    axis.text.x = element_text(size = params$base_size - 4, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = params$base_size - 2),
+    axis.title.y = element_text(size = params$base_size + 1, face = "bold"),
+    strip.text = element_text(size = params$base_size, face = "bold"),
+    plot.margin = margin(15, 15, 15, 15)
+  )
+
+save_plot_safe(
+  p_multi_by,
+  glue("multiple_chains_by_sample.{params$figure_format}"),
+  width = plot_width,
+  height = plot_height
+)
+
+flag_colors <- c("No" = "#F8766D", "Yes" = "#00BFC4")
+
+fig_multi <- plotly::plot_ly()
+
+for (i in seq_along(samples_multi)) {
+  s <- samples_multi[i]
+  df_s <- multi_chain_complete %>% dplyr::filter(sample == s)
+
+  fig_multi <- fig_multi %>%
+    plotly::add_bars(
+      data = df_s,
+      x = ~type,
+      y = ~n,
+      color = ~flag,
+      colors = flag_colors,
+      text = ~paste0(
+        "Sample: ", s,
+        "<br>Type: ", type,
+        "<br>Flag: ", flag,
+        "<br>Cells: ", scales::comma(n)
+      ),
+      hoverinfo = "text",
+      visible = if (i == 1) TRUE else FALSE,
+      showlegend = if (i == 1) TRUE else FALSE
+    )
+}
+
+n_traces_per_sample <- length(flag_levels)
+
+buttons_multi <- lapply(seq_along(samples_multi), function(i) {
+  vis <- rep(FALSE, length(samples_multi) * n_traces_per_sample)
+  idx <- ((i - 1) * n_traces_per_sample + 1):(i * n_traces_per_sample)
+  vis[idx] <- TRUE
+
+  list(
+    method = "update",
+    args = list(
+      list(visible = vis, showlegend = vis),
+      list(
+        title = list(text = paste0("Multiple productive chains: ", samples_multi[i]))
+      )
+    ),
+    label = samples_multi[i]
+  )
+})
+
+fig_multi <- fig_multi %>%
+  plotly::layout(
+    title = list(text = paste0("Multiple productive chains: ", samples_multi[1])),
+    barmode = "stack",
+    xaxis = list(title = ""),
+    yaxis = list(title = "Cells"),
+    updatemenus = list(
+      list(
+        type = "dropdown",
+        active = 0,
+        x = 0.02,
+        y = 1.15,
+        xanchor = "left",
+        yanchor = "top",
+        buttons = buttons_multi
+      )
+    ),
+    annotations = list(
+      list(
+        x = 0.0,
+        y = 1.19,
+        xref = "paper",
+        yref = "paper",
+        text = "<b>Select sample:</b>",
+        showarrow = FALSE,
+        xanchor = "left",
+        yanchor = "top"
+      )
+    ),
+    legend = list(title = list(text = "Flag")),
+    margin = list(t = 110)
+  )
+
+fig_multi
+```
+
+
+### CDR3 properties
+
+::: {.callout-note}
+These plots assess whether post-QC CDR3 amino acid lengths are biologically plausible and reasonably stable across samples.
+:::
+
+```{r}
+#| label: cdr3-length
+p_len_all <- ggplot(cdr3_len_all, aes(x = len, fill = chain_grp)) +
+  geom_histogram(position = "identity", alpha = 0.7, bins = 40) +
+  labs(
+    title = "CDR3 Length Distribution",
+    subtitle = "Post-QC pooled across all samples.",
+    x = "CDR3 amino acid length",
+    y = "Count",
+    fill = "Chain"
+  ) +
+  theme_scratch_pub(params$base_size)
+
+p_len_all
+save_plot_safe(p_len_all, glue("cdr3_length_hist_all.{params$figure_format}"))
+```
+
+#### CDR3 length distribution by sample
+
+```{r}
+#| label: cdr3-length-dropdown
+#| warning: false
+#| message: false
+
+n_samples_facet <- dplyr::n_distinct(cdr3_len_all$sample)
+facet_ncol <- min(4, max(1, n_samples_facet))
+facet_nrow <- ceiling(n_samples_facet / facet_ncol)
+
+plot_width  <- max(14, facet_ncol * 3.8)
+plot_height <- max(16, facet_nrow * 5.5)
+
+# keep static all-samples faceted histogram for export
+p_len_facet <- ggplot(cdr3_len_all, aes(x = len, fill = chain_grp)) +
+  geom_histogram(position = "identity", alpha = 0.7, bins = 40) +
+  facet_wrap(~ sample, scales = "free_y", ncol = facet_ncol) +
+  labs(
+    title = "CDR3 Length Distribution by Sample",
+    subtitle = "Post-QC distribution faceted by sample.",
+    x = "CDR3 amino acid length",
+    y = "Count",
+    fill = "Chain"
+  ) +
+  theme_scratch_pub(params$base_size) +
+  theme(
+    axis.text.x = element_text(size = params$base_size - 4, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = params$base_size - 2),
+    strip.text = element_text(size = params$base_size, face = "bold"),
+    plot.margin = margin(15, 15, 15, 15)
+  )
+
+save_plot_safe(
+  p_len_facet,
+  glue("cdr3_length_hist_by_sample.{params$figure_format}"),
+  width = plot_width,
+  height = plot_height
+)
+
+# keep static boxplot for export
+cdr3_box <- ggplot(cdr3_len_all, aes(x = sample, y = len, fill = chain_grp)) +
+  geom_boxplot(outlier.size = 0.4, alpha = 0.8) +
+  labs(
+    title = "CDR3 Length by Sample",
+    x = NULL,
+    y = "CDR3 amino acid length",
+    fill = "Chain"
+  ) +
+  theme_scratch_pub(params$base_size) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+save_plot_safe(
+  cdr3_box,
+  glue("cdr3_length_boxplot_by_sample.{params$figure_format}"),
+  width = 14,
+  height = 6
+)
+
+samples_cdr3 <- sort(unique(cdr3_len_all$sample))
+chain_levels <- unique(cdr3_len_all$chain_grp)
+
+# consistent colors
+chain_colors <- c(
+  "TRA" = "#F8766D",
+  "TRB" = "#00BFC4",
+  "TRG" = "#7CAE00",
+  "TRD" = "#C77CFF",
+  "Other" = "#999999"
+)
+
+for (nm in chain_levels) {
+  if (!nm %in% names(chain_colors)) {
+    chain_colors[[nm]] <- "#999999"
+  }
+}
+
+# build one histogram per sample
+hist_plots <- lapply(samples_cdr3, function(s) {
+  df_s <- cdr3_len_all %>% dplyr::filter(sample == s)
+
+  p_one <- ggplot(df_s, aes(x = len, fill = chain_grp)) +
+    geom_histogram(position = "identity", alpha = 0.7, bins = 40) +
+    labs(
+      title = paste0("CDR3 length distribution: ", s),
+      x = "CDR3 amino acid length",
+      y = "Count",
+      fill = "Chain"
+    ) +
+    scale_fill_manual(values = chain_colors, drop = FALSE) +
+    theme_scratch_pub(params$base_size)
+
+  plotly::ggplotly(p_one, tooltip = c("x", "y", "fill")) %>%
+    plotly::layout(height = 520)
+})
+
+# dropdown selector
+fig_cdr3 <- hist_plots[[1]]
+
+buttons_cdr3 <- lapply(seq_along(samples_cdr3), function(i) {
+  list(
+    method = "restyle",
+    args = list("visible", TRUE),
+    label = samples_cdr3[i],
+    execute = FALSE
+  )
+})
+
+# use htmlwidgets onRender to switch full plot objects via dropdown is harder than bars;
+# instead use subplot traces approach below
+
+fig_cdr3 <- plotly::plot_ly()
+
+trace_counts <- integer(length(samples_cdr3))
+
+for (i in seq_along(samples_cdr3)) {
+  s <- samples_cdr3[i]
+  df_s <- cdr3_len_all %>% dplyr::filter(sample == s)
+
+  for (ch in chain_levels) {
+    df_ch <- df_s %>% dplyr::filter(chain_grp == ch)
+
+    fig_cdr3 <- fig_cdr3 %>%
+      plotly::add_histogram(
+        data = df_ch,
+        x = ~len,
+        name = ch,
+        marker = list(color = unname(chain_colors[ch])),
+        opacity = 0.7,
+        nbinsx = 40,
+        visible = if (i == 1) TRUE else FALSE,
+        showlegend = if (i == 1) TRUE else FALSE,
+        hovertemplate = paste0(
+          "Sample: ", s,
+          "<br>Chain: ", ch,
+          "<br>CDR3 length: %{x}",
+          "<br>Count: %{y}<extra></extra>"
+        )
+      )
+  }
+
+  trace_counts[i] <- length(chain_levels)
+}
+
+buttons_cdr3 <- lapply(seq_along(samples_cdr3), function(i) {
+  vis <- rep(FALSE, sum(trace_counts))
+  start_idx <- sum(trace_counts[seq_len(i - 1)]) + 1
+  end_idx   <- sum(trace_counts[seq_len(i)])
+  vis[start_idx:end_idx] <- TRUE
+
+  list(
+    method = "update",
+    args = list(
+      list(visible = vis, showlegend = vis),
+      list(
+        title = list(text = paste0("CDR3 length distribution: ", samples_cdr3[i]))
+      )
+    ),
+    label = samples_cdr3[i]
+  )
+})
+
+fig_cdr3 <- fig_cdr3 %>%
+  plotly::layout(
+    title = list(text = paste0("CDR3 length distribution: ", samples_cdr3[1])),
+    barmode = "overlay",
+    xaxis = list(title = "CDR3 amino acid length"),
+    yaxis = list(title = "Count"),
+    updatemenus = list(
+      list(
+        type = "dropdown",
+        active = 0,
+        x = 0.02,
+        y = 1.15,
+        xanchor = "left",
+        yanchor = "top",
+        buttons = buttons_cdr3
+      )
+    ),
+    annotations = list(
+      list(
+        x = 0.0,
+        y = 1.19,
+        xref = "paper",
+        yref = "paper",
+        text = "<b>Select sample:</b>",
+        showarrow = FALSE,
+        xanchor = "left",
+        yanchor = "top"
+      )
+    ),
+    legend = list(title = list(text = "Chain")),
+    margin = list(t = 110)
+  )
+
+fig_cdr3
+
+```
+
+#### Cohort-wide CDR3 length boxplot
+
+```{r}
+#| label: cdr3-boxplot-display
+plotly::plot_ly(
+  data = cdr3_len_all,
+  x = ~sample,
+  y = ~len,
+  color = ~chain_grp,
+  colors = c("TRA" = "#F8766D", "TRB" = "#00BFC4", "TRG" = "#7CAE00", "TRD" = "#C77CFF", "Other" = "#999999"),
+  type = "box",
+  boxpoints = "outliers",
+  hovertemplate = paste(
+    "Sample: %{x}<br>",
+    "CDR3 length: %{y}<br>",
+    "Chain: %{color}<extra></extra>"
+  )
+) %>%
+  plotly::layout(
+    title = list(text = "CDR3 Length by Sample"),
+    xaxis = list(title = ""),
+    yaxis = list(title = "CDR3 amino acid length")
+  )
+
+
+```
+
+
+### Gene usage
+
+::: {.callout-note}
+These heatmaps summarize post-QC V and J gene segment usage across samples and can highlight biological enrichment or sample-specific receptor bias.
+:::
+
+```{r}
+#| label: v-gene-heatmap
+if (!is.null(v_usage) && nrow(v_usage) > 0) {
+  v_mat <- v_usage %>%
+    select(sample, v_gene, freq) %>%
+    pivot_wider(names_from = sample, values_from = freq, values_fill = 0) %>%
+    as.data.frame()
+
+  rownames(v_mat) <- v_mat$v_gene
+  v_mat$v_gene <- NULL
+  v_mat <- as.matrix(v_mat)
+
+  max_v <- max(v_mat, na.rm = TRUE)
+  if (!is.finite(max_v) || max_v <= 0) max_v <- 1
+
+  ht_v <- Heatmap(
+    v_mat,
+    name = "Freq",
+    col = colorRamp2(
+      c(0, max_v / 2, max_v),
+      c("white", "gold", "firebrick")
+    ),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    row_names_gp = grid::gpar(fontsize = 8),
+    column_names_gp = grid::gpar(fontsize = 7),
+    column_names_rot = 45,
+    column_title = "Top V gene usage across samples",
+    column_title_gp = grid::gpar(fontsize = 12, fontface = "bold"),
+    heatmap_legend_param = list(title = "Frequency")
+  )
+
+  draw(ht_v, padding = grid::unit(c(5, 5, 5, 12), "mm"))
+}
+
+# #| label: v-gene-heatmap
+# if (!is.null(v_usage) && nrow(v_usage) > 0) {
+#   v_mat <- v_usage %>%
+#     select(sample, v_gene, freq) %>%
+#     pivot_wider(names_from = sample, values_from = freq, values_fill = 0) %>%
+#     as.data.frame()
+# 
+#   rownames(v_mat) <- v_mat$v_gene
+#   v_mat$v_gene <- NULL
+#   v_mat <- as.matrix(v_mat)
+# 
+#   ht_v <- Heatmap(
+#     v_mat,
+#     name = "Freq",
+#     col = colorRamp2(
+#       c(0, max(v_mat, na.rm = TRUE) / 2, max(v_mat, na.rm = TRUE)),
+#       c("white", "gold", "firebrick")
+#     ),
+#     cluster_rows = TRUE,
+#     cluster_columns = TRUE,
+#     row_names_side = "left",
+#     column_title = "Top V gene usage across samples",
+#     heatmap_legend_param = list(title = "Frequency")
+#   )
+# 
+#   draw(ht_v)
+# }
+```
+
+```{r}
+#| label: j-gene-heatmap
+if (!is.null(j_usage) && nrow(j_usage) > 0) {
+  j_mat <- j_usage %>%
+    select(sample, j_gene, freq) %>%
+    pivot_wider(names_from = sample, values_from = freq, values_fill = 0) %>%
+    as.data.frame()
+
+  rownames(j_mat) <- j_mat$j_gene
+  j_mat$j_gene <- NULL
+  j_mat <- as.matrix(j_mat)
+
+  max_j <- max(j_mat, na.rm = TRUE)
+  if (!is.finite(max_j) || max_j <= 0) max_j <- 1
+
+  ht_j <- Heatmap(
+    j_mat,
+    name = "Freq",
+    col = colorRamp2(
+      c(0, max_j / 2, max_j),
+      c("white", "skyblue", "navy")
+    ),
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    row_names_side = "left",
+    row_names_gp = grid::gpar(fontsize = 8),
+    column_names_gp = grid::gpar(fontsize = 7),
+    column_names_rot = 45,
+    column_title = "Top J gene usage across samples",
+    column_title_gp = grid::gpar(fontsize = 12, fontface = "bold"),
+    heatmap_legend_param = list(title = "Frequency")
+  )
+
+  draw(ht_j, padding = grid::unit(c(5, 5, 5, 12), "mm"))
+}
+
+# #| label: j-gene-heatmap
+# if (!is.null(j_usage) && nrow(j_usage) > 0) {
+#   j_mat <- j_usage %>%
+#     select(sample, j_gene, freq) %>%
+#     pivot_wider(names_from = sample, values_from = freq, values_fill = 0) %>%
+#     as.data.frame()
+# 
+#   rownames(j_mat) <- j_mat$j_gene
+#   j_mat$j_gene <- NULL
+#   j_mat <- as.matrix(j_mat)
+# 
+#   ht_j <- Heatmap(
+#     j_mat,
+#     name = "Freq",
+#     col = colorRamp2(
+#       c(0, max(j_mat, na.rm = TRUE) / 2, max(j_mat, na.rm = TRUE)),
+#       c("white", "skyblue", "navy")
+#     ),
+#     cluster_rows = TRUE,
+#     cluster_columns = TRUE,
+#     row_names_side = "left",
+#     column_title = "Top J gene usage across samples",
+#     heatmap_legend_param = list(title = "Frequency")
+#   )
+# 
+#   draw(ht_j)
+# }
+```
+
+### Clonality
+
+::: {.callout-note}
+Clone rank-abundance summarizes whether the repertoire is broadly distributed or dominated by expanded clonotypes.
+:::
+
+
+```{r}
+#| label: clone-rank-plot
+#| fig-width: 16
+#| fig-height: !expr max(12, 7 + ceiling(dplyr::n_distinct(pairing_all$sample) / 6) * 0.8)
+
+# 1. Create the plotting table
+clone_rank_tbl_plot <- pairing_all %>%
+  filter(!is.na(clone_id), clone_id != "") %>%
+  count(sample, clone_id, name = "n_cells") %>%
+  group_by(sample) %>%
+  arrange(desc(n_cells), .by_group = TRUE) %>%
+  mutate(rank = row_number()) %>%
+  ungroup()
+
+save_table_safe(clone_rank_tbl_plot, "clone_rank_abundance.tsv")
+
+# 2. Build the plot
+if (nrow(clone_rank_tbl_plot) > 0) {
+  n_samples_clone <- dplyr::n_distinct(clone_rank_tbl_plot$sample)
+  legend_rows <- ceiling(n_samples_clone / 6)
+  
+  # Adjusted height calculation for a more compact look
+  plot_height <- max(12, 7 + legend_rows * 0.8)
+
+  p_clone_rank <- ggplot(clone_rank_tbl_plot, aes(x = rank, y = n_cells, color = sample)) +
+    geom_line(linewidth = 0.8, alpha = 0.8) + 
+    geom_point(size = 1.5, alpha = 0.8) +    
+    scale_x_log10() +
+    scale_y_log10() +
+    labs(
+      title = "Clone Rank-Abundance Curve",
+      subtitle = "All detected clonotypes are shown.",
+      x = "Clone rank (log10)",
+      y = "Cells per clone (log10)",
+      color = "Sample"
+    ) +
+    theme_scratch_pub(params$base_size) +
+    theme(
+      # LEGEND POSITION: Change "bottom" to "right" if you want it on the side
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.box = "horizontal",
+      
+      # AXIS TEXT (Tick labels: 1, 10, 100) - Increased to +4
+      axis.text = element_text(size = params$base_size + 4, color = "black"),
+      
+      # AXIS TITLES (Labels: Clone rank, Cells per clone) - Increased to +6
+      axis.title = element_text(size = params$base_size + 6, face = "bold"),
+      
+      # LEGEND TEXT (Sample IDs) - Increased to +2
+      legend.text = element_text(size = params$base_size + 2),
+      legend.title = element_text(size = params$base_size + 4, face = "bold"),
+      
+      plot.title = element_text(size = params$base_size + 8, face = "bold"),
+      plot.subtitle = element_text(size = params$base_size + 4),
+      
+      # Log scales look better without x-axis rotation
+      axis.text.x = element_text(angle = 0, hjust = 0.5),
+      panel.grid.major = element_line(linewidth = 0.5, color = "grey90")
+    ) +
+    guides(color = guide_legend(nrow = legend_rows, byrow = TRUE))
+
+  print(p_clone_rank)
+  save_plot_safe(
+    p_clone_rank,
+    glue("clone_rank_abundance.{params$figure_format}"),
+    width = 16,
+    height = plot_height
+  )
+} else {
+  cat("No clonotypes were available to build the clone rank-abundance curve.")
+}
+
+# #| label: clone-rank
+# 
+# 
+# clone_rank_tbl_plot <- pairing_all %>%
+#   filter(!is.na(clone_id), clone_id != "") %>%
+#   count(sample, clone_id, name = "n_cells") %>%
+#   group_by(sample) %>%
+#   arrange(desc(n_cells), .by_group = TRUE) %>%
+#   mutate(rank = row_number()) %>%
+#   ungroup()
+# 
+# save_table_safe(clone_rank_tbl_plot, "clone_rank_abundance.tsv")
+# 
+# if (nrow(clone_rank_tbl_plot) > 0) {
+#   p_clone_rank <- ggplot(clone_rank_tbl_plot, aes(x = rank, y = n_cells, color = sample)) +
+#     geom_line(linewidth = 0.9, alpha = 0.8) +
+#     geom_point(size = 1.2, alpha = 0.9) +
+#     scale_x_log10() +
+#     scale_y_log10() +
+#     labs(
+#       title = "Clone Rank-Abundance Curve",
+#       subtitle = "All detected clonotypes are shown.",
+#       x = "Clone rank (log10)",
+#       y = "Cells per clone (log10)",
+#       color = "Sample"
+#     ) +
+#     theme_scratch_pub(params$base_size)
+# 
+#   print(p_clone_rank)
+#   save_plot_safe(p_clone_rank, glue("clone_rank_abundance.{params$figure_format}"))
+# } else {
+#   cat("No clonotypes were available to build the clone rank-abundance curve.")
+# }
+# 
+# # if (!is.null(clone_rank_tbl) && nrow(clone_rank_tbl) > 0) {
+# #   p_clone_rank <- ggplot(clone_rank_tbl, aes(x = rank, y = n_cells, color = sample)) +
+# #     geom_line(linewidth = 0.9, alpha = 0.8) +
+# #     geom_point(size = 1.2, alpha = 0.9) +
+# #     scale_x_log10() +
+# #     scale_y_log10() +
+# #     labs(
+# #       title = "Clone Rank-Abundance Curve",
+# #       subtitle = glue("Only clones with at least {params$min_clone_size_plot} cells are shown."),
+# #       x = "Clone rank (log10)",
+# #       y = "Cells per clone (log10)",
+# #       color = "Sample"
+# #     ) +
+# #     theme_scratch_pub(params$base_size)
+# # 
+# #   p_clone_rank
+# #   save_plot_safe(p_clone_rank, glue("clone_rank_abundance.{params$figure_format}"))
+# # }
+```
+
+### Metadata-stratified summaries
+
+::: {.callout-note}
+These summaries are shown only when patient, condition, or timepoint metadata are available.
+:::
+
+```{r}
+#| label: patient-summary
+#| results: asis
+
+
+if (show_patient) {
+  patient_source <- sample_qc %>%
+    select(sample, patient_id, n_cells_total, n_unique_clones) %>%
+    distinct() %>%
+    left_join(
+      qc_retention %>% select(sample, contigs_before, contigs_after, retained_prop, retained_pct),
+      by = "sample"
+    )
+
+  patient_tbl <- patient_source %>%
+    filter(!is.na(patient_id), patient_id != "") %>%
+    group_by(patient_id) %>%
+    summarise(
+      n_samples = n_distinct(sample),
+      contigs_before = sum(contigs_before, na.rm = TRUE),
+      contigs_after = sum(contigs_after, na.rm = TRUE),
+      retained_prop = contigs_after / pmax(1, contigs_before),
+      retained_pct = 100 * retained_prop,
+      n_cells_total = sum(n_cells_total, na.rm = TRUE),
+      n_unique_clones = sum(n_unique_clones, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  print(
+    scroll_kable(
+      patient_tbl,
+      caption = "Patient-level VDJ QC summary.",
+      height = "260px"
+    )
+  )
+
+  p_patient <- patient_tbl %>%
+    mutate(patient_id = fct_reorder(patient_id, retained_prop)) %>%
+    ggplot(aes(x = patient_id, y = retained_pct)) +
+    geom_col(fill = "darkgreen") +
+    coord_flip() +
+    labs(
+      title = "QC Retention by Patient",
+      x = NULL,
+      y = "Retained (%)"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_patient)
+  save_plot_safe(p_patient, glue("retention_by_patient.{params$figure_format}"))
+
+  save_table_safe(patient_tbl, "patient_level_vdj_qc_summary.tsv")
+}
+
+```
+
+```{r}
+#| label: condition-summary
+#| results: asis
+
+if (show_condition) {
+  condition_source <- sample_qc %>%
+    select(sample, condition, n_cells_total) %>%
+    distinct() %>%
+    left_join(
+      qc_retention %>% select(sample, contigs_before, contigs_after, retained_prop, retained_pct),
+      by = "sample"
+    )
+
+  condition_tbl <- condition_source %>%
+    filter(!is.na(condition), condition != "") %>%
+    group_by(condition) %>%
+    summarise(
+      n_samples = n_distinct(sample),
+      contigs_before = sum(contigs_before, na.rm = TRUE),
+      contigs_after = sum(contigs_after, na.rm = TRUE),
+      retained_prop = contigs_after / pmax(1, contigs_before),
+      retained_pct = 100 * retained_prop,
+      n_cells_total = sum(n_cells_total, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  print(
+    scroll_kable(
+      condition_tbl,
+      caption = "Condition-level VDJ QC summary.",
+      height = "260px"
+    )
+  )
+
+  p_condition <- condition_tbl %>%
+    mutate(condition = fct_reorder(condition, retained_prop)) %>%
+    ggplot(aes(x = condition, y = retained_pct)) +
+    geom_col(fill = "purple4") +
+    coord_flip() +
+    labs(
+      title = "QC Retention by Condition",
+      x = NULL,
+      y = "Retained (%)"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_condition)
+  save_plot_safe(p_condition, glue("retention_by_condition.{params$figure_format}"))
+
+  save_table_safe(condition_tbl, "condition_level_vdj_qc_summary.tsv")
+}
+```
+
+```{r}
+#| label: timepoint-summary
+#| results: asis
+
+if (show_timepoint) {
+  time_source <- sample_qc %>%
+    select(sample, timepoint) %>%
+    distinct() %>%
+    left_join(
+      qc_retention %>% select(sample, contigs_before, contigs_after, retained_prop, retained_pct),
+      by = "sample"
+    )
+
+  time_tbl <- time_source %>%
+    filter(!is.na(timepoint), timepoint != "") %>%
+    group_by(timepoint) %>%
+    summarise(
+      n_samples = n_distinct(sample),
+      contigs_before = sum(contigs_before, na.rm = TRUE),
+      contigs_after = sum(contigs_after, na.rm = TRUE),
+      retained_prop = contigs_after / pmax(1, contigs_before),
+      retained_pct = 100 * retained_prop,
+      .groups = "drop"
+    )
+
+  print(
+    scroll_kable(
+      time_tbl,
+      caption = "Timepoint-level VDJ QC summary.",
+      height = "260px"
+    )
+  )
+
+  p_time <- time_tbl %>%
+    mutate(timepoint = fct_inorder(timepoint)) %>%
+    ggplot(aes(x = timepoint, y = retained_pct, group = 1)) +
+    geom_line(linewidth = 1, color = "steelblue4") +
+    geom_point(size = 3, color = "steelblue4") +
+    labs(
+      title = "QC Retention Across Timepoints",
+      x = "Timepoint",
+      y = "Retained (%)"
+    ) +
+    theme_scratch_pub(params$base_size)
+
+  print(p_time)
+  save_plot_safe(p_time, glue("retention_by_timepoint.{params$figure_format}"))
+
+  save_table_safe(time_tbl, "timepoint_level_vdj_qc_summary.tsv")
+}
+```
+
+## Warnings
+```{r}
+#| label: warnings
+warn_tbl <- tibble(
+  warning = c(
+    "Low contig retention",
+    "High multi-chain burden",
+    "Low paired fraction",
+    "Missing reads column",
+    "Missing UMIs column",
+    "Missing patient metadata",
+    "Missing condition metadata",
+    "Missing timepoint metadata"
+  ),
+  triggered = c(
+    n_contigs_after / max(1, n_contigs_before) < 0.5,
+    mean(pairing_all$multi_alpha | pairing_all$multi_beta | pairing_all$multi_gamma | pairing_all$multi_delta, na.rm = TRUE) > 0.1,
+    mean(pairing_all$pairing %in% c("Alpha+Beta","Gamma+Delta"), na.rm = TRUE) < 0.3,
+    all(is.na(contigs_all_post$reads)),
+    all(is.na(contigs_all_post$umis)),
+    !show_patient,
+    !show_condition,
+    !show_timepoint
+  ),
+  interpretation = c(
+    "Less than half of contigs were retained after QC. Inspect productive, high-confidence, and full-length filters as well as barcode/sample path resolution.",
+    "More than 10% of cells are multi-chain under the current settings. This may indicate biological dual-chain usage, technical artifacts, or doublets.",
+    "Paired-chain fraction is low after QC. Check assay recovery, allowed chain mode, and pairing requirements.",
+    "Read-support plots were skipped because no reads column was available.",
+    "UMI-support plots were skipped because no UMIs column was available.",
+    "Patient-level summaries were skipped because patient metadata were unavailable.",
+    "Condition-level summaries were skipped because condition metadata were unavailable.",
+    "Timepoint-level summaries were skipped because timepoint metadata were unavailable."
+  )
+) %>%
+  filter(triggered)
+
+if (nrow(warn_tbl) == 0) {
+  cat("No major automatic warnings were triggered under the current QC settings.")
+} else {
+  kable(warn_tbl %>% select(-triggered), caption = "Automatically generated QC warnings and notes.") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed"))
+}
+```
+
+## session info
+```{r}
+#| label: session-info
+writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.vdj_qc.txt"))
+sessionInfo()
+```
+
+

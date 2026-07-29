@@ -50,12 +50,18 @@ workflow SAMPLE {
 
     /////// =================== PLOT SAMPLE ===================  ///////
 
-    SAMPLE_PLOT (
-        file(params.samplesheet),
-        file(params.sample_stats_template),
-        sample_stats_agg,
-        SAMPLE_CALC_PIVOT.out.v_family_wide
-        )
+    // SAMPLE_PLOT renders metadata-stratified charts that need bulk samplesheet columns
+    // (patient / origin / timepoint). Single-cell mode (which supplies --sample_sheet, not
+    // --samplesheet) lacks those columns, so run this only in bulk mode. SC reporting is
+    // covered by REPERTOIRE / MASTER_SUMMARY. SAMPLE_PLOT's output feeds nothing downstream.
+    if (params.samplesheet) {
+        SAMPLE_PLOT (
+            file(params.samplesheet),
+            file(params.sample_stats_template),
+            sample_stats_agg,
+            SAMPLE_CALC_PIVOT.out.v_family_wide
+            )
+    }
 
     TCRDIST3_MATRIX(
         processed_samples,
@@ -111,5 +117,9 @@ workflow SAMPLE {
     VDJDB_VDJMATCH (processed_samples, VDJDB_GET.out.ref_db)
 
     emit:
-        sample_csv = SAMPLE_CALC.out.sample_csv
+        sample_csv       = SAMPLE_CALC.out.sample_csv
+        // Additive: expose tcrdist outputs so the single-cell modality can feed
+        // CLUSTER_TO_SC without a second TCRDIST3_MATRIX run. Bulk ignores these.
+        tcrdist_clone_df = TCRDIST3_MATRIX.out.clone_df
+        tcrdist_output   = TCRDIST3_MATRIX.out.tcrdist_output
 }

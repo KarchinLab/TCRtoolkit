@@ -199,6 +199,16 @@ if __name__ == "__main__":
     # If allele information is not specified (as indicated by *00), replace with *01
     df['v_b_gene'] = df['v_b_gene'].apply(lambda x: x.replace('*00', '*01'))
 
+    # Single-cell pseudobulk carries no CDR3 nucleotide sequence. tcrdist3 uses cdr3_b_nucseq
+    # as a clone grouping/index column, so an all-empty nucseq would drop every clone
+    # ("N of N were not captured" -> empty matrix). Beta-chain tcrdist distances are computed
+    # from cdr3_b_aa and V-gene-derived CDR1/CDR2, not the nucleotide sequence, so drop the
+    # column when it is empty. (Bulk / AIRR input has real nucseq and is unaffected.)
+    if 'cdr3_b_nucseq' in df.columns:
+        _ns = df['cdr3_b_nucseq'].astype('string').fillna('').str.strip()
+        if (_ns == '').all():
+            df = df.drop(columns=['cdr3_b_nucseq'])
+
     # --- 2. Calculate distance matrix ---
     # Levenshtein distance matrix
     if args.distance_metric == "levenshtein":
