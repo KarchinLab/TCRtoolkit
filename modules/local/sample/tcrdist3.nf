@@ -159,10 +159,15 @@ process TCRDIST3_HISTOGRAM_PLOT {
     plt.xlabel("Pairwise Distance")
     plt.ylabel("Frequency (log scale)")
     plt.yscale("log")
-    plt.ylim(0.9, max(10, ${y_max}))  # avoid zero on log scale
+    # A degenerate/empty histogram (too few cells to form any pairs) makes
+    # y_max 0 - log10(0) is -inf, and int(-inf) crashes. Floor it the same
+    # way ylim already does below, so the log scale always has something to
+    # scale against.
+    y_max_display = max(10, ${y_max})
+    plt.ylim(0.9, y_max_display)  # avoid zero on log scale
 
     # Standardized ticks at 10^0, 10^1, etc.
-    yticks = np.logspace(0, int(np.ceil(np.log10(${y_max}))), base=10)
+    yticks = np.logspace(0, int(np.ceil(np.log10(y_max_display))), base=10)
     plt.yticks(yticks)
     plt.gca().yaxis.set_major_locator(ticker.LogLocator(base=10.0, subs=(1.0,), numticks=10))
 

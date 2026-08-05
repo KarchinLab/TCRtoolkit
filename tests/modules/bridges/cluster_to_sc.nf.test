@@ -1,0 +1,49 @@
+nextflow_process {
+
+    name "Test CLUSTER_TO_SC"
+    script "modules/bridges/cluster_to_sc.nf"
+    process "CLUSTER_TO_SC"
+
+    test("Should map real GIANA clusters onto real TCELL_INTEGRATION cells") {
+
+        tag "singlecell"
+
+        when {
+            params {
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/seurat_tcells_with_TCR.rds")
+                input[1] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/tcr_export_cells_with_embedding.tsv")
+                input[2] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/PatientA_giana.txt")
+                input[3] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/NO_FILE_gliph2")
+                input[4] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/NO_FILE_tcrdist_clone")
+                input[5] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/NO_FILE_tcrdist_matrix")
+                input[6] = 24
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.enriched_seurat) {
+                assert path(get(0)).exists()
+            }
+            with(process.out.giana_export) {
+                def export_file = path(get(0))
+                assert export_file.exists()
+                def lines = export_file.readLines()
+                // PatientA_giana.txt lists real CDR3b clones from the fixture, so
+                // at least some cells should get a real giana_cluster assignment
+                // (not just an empty column) - confirms the join actually matched.
+                def header = lines[0].split("\t")
+                def clusterIdx = header.findIndexOf { it == "giana_cluster" }
+                assert clusterIdx >= 0
+                def assigned = lines[1..-1].count { it.split("\t", -1)[clusterIdx] != "" }
+                assert assigned > 0
+            }
+        }
+    }
+}

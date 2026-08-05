@@ -384,6 +384,11 @@ score_harmonizer_candidates <- function(combined, seu, seu_sample_col = "orig.id
   append_us <- function(x, s) paste(x, s, sep = "_")
   prepend_dash <- function(x, s) paste(s, x, sep = "-")
   append_dash <- function(x, s) paste(x, s, sep = "-")
+  # scRepertoire::combineTCR() unconditionally prepends "{sample}_" to its own
+  # barcode column regardless of the `ID` argument, so a real dataset's TCR
+  # barcodes routinely arrive already-prefixed - none of the "add a prefix"
+  # candidates above can undo that; this one strips it back off.
+  strip_sample <- function(x, s) sub(paste0("^", s, "_"), "", x)
 
   candidates <- list(
     list(name = "identity",        f = function(x, s) x),
@@ -392,7 +397,8 @@ score_harmonizer_candidates <- function(combined, seu, seu_sample_col = "orig.id
     list(name = "prepend_sample_", f = function(x, s) prepend_us(x, s)),
     list(name = "append_sample_",  f = function(x, s) append_us(x, s)),
     list(name = "prepend-sample",  f = function(x, s) prepend_dash(x, s)),
-    list(name = "append-sample",   f = function(x, s) append_dash(x, s))
+    list(name = "append-sample",   f = function(x, s) append_dash(x, s)),
+    list(name = "strip_sample_",   f = function(x, s) strip_sample(x, s))
   )
 
   score <- lapply(candidates, function(cn) {
@@ -434,6 +440,9 @@ harmonize_barcodes <- function(combined, seu, seu_sample_col = "orig.ident",
   append_us <- function(x, s) paste(x, s, sep = "_")
   prepend_dash <- function(x, s) paste(s, x, sep = "-")
   append_dash <- function(x, s) paste(x, s, sep = "-")
+  # See the matching comment in score_harmonizer_candidates() - combineTCR()
+  # already prepends "{sample}_" to its barcode column, so this undoes it.
+  strip_sample <- function(x, s) sub(paste0("^", s, "_"), "", x)
 
   cand <- list(
     list(name = "identity",            side = "tcr",    f = function(x, s) x),
@@ -443,6 +452,7 @@ harmonize_barcodes <- function(combined, seu, seu_sample_col = "orig.ident",
     list(name = "append_sample_",      side = "tcr",    f = function(x, s) append_us(x, s)),
     list(name = "prepend-sample",      side = "tcr",    f = function(x, s) prepend_dash(x, s)),
     list(name = "append-sample",       side = "tcr",    f = function(x, s) append_dash(x, s)),
+    list(name = "strip_sample_",       side = "tcr",    f = function(x, s) strip_sample(x, s)),
     list(name = "seurat_add_-1",       side = "seurat", f = function(x, s) add_minus1(x)),
     list(name = "seurat_remove_-1",    side = "seurat", f = function(x, s) remove_minus1(x)),
     list(name = "seurat_prepend_",     side = "seurat", f = function(x, s) prepend_us(x, s)),
@@ -485,6 +495,7 @@ harmonize_barcodes <- function(combined, seu, seu_sample_col = "orig.ident",
         "append_sample_"  = append_us(df$barcode, sid),
         "prepend-sample"  = prepend_dash(df$barcode, sid),
         "append-sample"   = append_dash(df$barcode, sid),
+        "strip_sample_"   = strip_sample(df$barcode, sid),
         df$barcode
       )
       df
@@ -686,6 +697,27 @@ contigs_all_post <- contigs_all_post %>%
     j_gene = if (!is.null(j_col_ctg)) as.character(.data[[j_col_ctg]]) else NA_character_,
     raw_clonotype_id = if (!is.null(clone_col_ctg)) as.character(.data[[clone_col_ctg]]) else NA_character_
   )
+
+# fread() (used by safe_read_table() above) auto-detects "True"/"False" string
+# columns as logical - scRepertoire::combineTCR() expects productive as a
+# string and silently misclassifies every contig if it isn't one.
+if ("productive" %in% colnames(contigs_all_post)) {
+  contigs_all_post$productive <- as.character(contigs_all_post$productive)
+}
+
+# scRepertoire::combineTCR() parses contig rows positionally, not by column
+# name. Cell Ranger's natural filtered_contig_annotations.csv column order
+# (barcode, is_cell, contig_id, high_confidence, length, chain, ...) makes it
+# silently produce zero cells for every sample - no error, just an empty
+# result that only surfaces much later as a confusing "column doesn't exist"
+# failure downstream. Reorder so the fields it actually needs come first.
+canonical_order <- c("barcode", "sample", "chain", "cdr3", "cdr3_nt",
+                      "v_gene", "j_gene", "d_gene", "c_gene",
+                      "productive", "raw_clonotype_id")
+front <- intersect(canonical_order, colnames(contigs_all_post))
+rest <- setdiff(colnames(contigs_all_post), front)
+contigs_all_post <- contigs_all_post[, c(front, rest)]
+
 head(contigs_all_post)
 
 ```
@@ -924,12 +956,12 @@ md <- seu@meta.data
 meta_key_audit <- data.frame(
   key = c("label", "sample", "patient", "condition", "timepoint", "batch"),
   column = c(
-    label_col_seu,
-    sample_col_seu,
-    patient_col_seu,
-    condition_col_seu,
-    timepoint_col_seu,
-    batch_col_seu
+    label_col_seu %||% NA_character_,
+    sample_col_seu %||% NA_character_,
+    patient_col_seu %||% NA_character_,
+    condition_col_seu %||% NA_character_,
+    timepoint_col_seu %||% NA_character_,
+    batch_col_seu %||% NA_character_
   ),
   n_unique = c(
     if (!is.null(label_col_seu)) length(unique(md[[label_col_seu]])) else NA_integer_,

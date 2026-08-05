@@ -27,15 +27,12 @@ workflow {
     // when --mode is omitted.
     def mode = (params.mode ?: 'bulk').toLowerCase()
 
-    switch (mode) {
-        case 'bulk':
-            TCRTOOLKIT()
-            break
-        case 'singlecell':
-            SINGLECELL_WORKFLOW()
-            break
-        default:
-            error "Unknown --mode '${mode}'. Valid options: bulk | singlecell"
+    if (mode == 'bulk') {
+        TCRTOOLKIT()
+    } else if (mode == 'singlecell') {
+        SINGLECELL_WORKFLOW()
+    } else {
+        error "Unknown --mode '${mode}'. Valid options: bulk | singlecell"
     }
 }
 

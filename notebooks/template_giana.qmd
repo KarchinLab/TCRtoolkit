@@ -18,41 +18,13 @@ notebook_results_dir = f"{project_dir}/notebook-analysis/"
 #| code-fold: true
 
 # 1. Load Packages
-from IPython.display import Image
-import os
-import datetime
-import sys
 import pandas as pd
-import math
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.colors import LinearSegmentedColormap
 import plotly.express as px
 import plotly.graph_objects as go
-import glob
 import itertools
-import h5py
-import igraph as ig
-import matplotlib.ticker as ticker
 import numpy as np
 import scipy.cluster.hierarchy as sch
 from IPython.display import display, Markdown
-from scipy.sparse import csr_matrix
-from scipy.stats import gaussian_kde
-from scipy.stats import entropy
-from scipy.stats import skew, wasserstein_distance
-from scipy.stats import pearsonr
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-from scipy import sparse
-from sklearn.preprocessing import normalize
-from scipy.stats import wilcoxon
-from scipy.stats import mannwhitneyu
-from itertools import combinations
-from scipy.spatial.distance import pdist
-from scipy.cluster.hierarchy import linkage, leaves_list
-import plotly.figure_factory as ff
-import re
 
 import warnings
 warnings.filterwarnings(
@@ -89,7 +61,6 @@ GIANA stands out from other TCR analysis tools for several key reasons:
 
 import pandas as pd
 import plotly.graph_objects as go
-import os
 from IPython.display import display, Markdown 
 
 def plot_giana_tables_per_patient(meta_df, giana_dir, subject_col, timepoint_col, min_unique_thresholds=[0, 1]):
@@ -172,8 +143,13 @@ def plot_giana_tables_per_patient(meta_df, giana_dir, subject_col, timepoint_col
             display(Markdown(f"*[WARNING] No GIANA file found for patient '{patient}' (expected: {giana_file}). Skipping.*\n\n"))
             continue
 
-        # Load this patient's GIANA output
-        giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+        # GIANA writes only "##" comment lines when it finds zero clusters,
+        # which leaves pandas nothing to parse after comment='#' strips them.
+        try:
+            giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+        except pd.errors.EmptyDataError:
+            display(Markdown(f"*[INFO] No GIANA clusters found for patient '{patient}'. Skipping.*\n\n"))
+            continue
 
         # Merge with all samples belonging to this patient
         patient_meta = meta_df[meta_df[subject_col] == patient][['sample', subject_col, timepoint_col]]
@@ -190,7 +166,7 @@ def plot_giana_tables_per_patient(meta_df, giana_dir, subject_col, timepoint_col
 
         # Aggregate cluster stats across all samples for this patient
         cluster_stats = df.groupby('cluster').agg(
-            Total_Counts=('counts', 'sum'),
+            Total_Counts=('duplicate_count', 'sum'),
             Unique_TCRs=('CDR3b', 'nunique')
         ).reset_index()
 
@@ -248,8 +224,13 @@ for patient in meta[subject_col].unique():
     if not os.path.exists(giana_file):
         continue
 
-    # Load this patient's GIANA output
-    giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+    # See the comment on the equivalent read above: GIANA writes only
+    # comment lines with zero clusters, which leaves nothing for pandas to
+    # parse once comment='#' strips them.
+    try:
+        giana_df = pd.read_csv(giana_file, comment='#', sep='\t')
+    except pd.errors.EmptyDataError:
+        continue
 
     # Merge with all samples belonging to this patient
     patient_meta = meta[meta[subject_col] == patient][['sample', subject_col, timepoint_col]]
@@ -261,7 +242,7 @@ for patient in meta[subject_col].unique():
 
     # 1. Aggregate cluster stats (All clusters, no min_unique threshold)
     cluster_stats = df.groupby('cluster').agg(
-        Total_Counts=('counts', 'sum'),
+        Total_Counts=('duplicate_count', 'sum'),
         Unique_TCRs=('CDR3b', 'nunique')
     ).reset_index()
 
@@ -310,8 +291,6 @@ However, simply identifying the existence of these top clusters is only the firs
 import os
 import pandas as pd
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-from upsetplot import from_contents, plot as upset_plot
 import warnings
 import itertools
 
@@ -324,18 +303,25 @@ for patient in meta[subject_col].unique():
     giana_file = os.path.join(giana_dir, f"{patient}_giana.txt")
     
     if os.path.exists(giana_file):
-        patient_df = pd.read_csv(giana_file, comment='#', sep='\t')
-        
-        # CRITICAL FIX: Make cluster IDs unique to the patient 
+        # See the comment on the first read in this notebook: GIANA writes
+        # only comment lines with zero clusters, which leaves nothing for
+        # pandas to parse once comment='#' strips them.
+        try:
+            patient_df = pd.read_csv(giana_file, comment='#', sep='\t')
+        except pd.errors.EmptyDataError:
+            print(f"*(No GIANA clusters found for: {giana_file})*")
+            continue
+
+        # CRITICAL FIX: Make cluster IDs unique to the patient
         # to prevent false merging across different GIANA runs
         patient_df['cluster'] = str(patient) + "_c" + patient_df['cluster'].astype(str)
-        
+
         all_giana_data.append(patient_df)
     else:
         print(f"*(No GIANA file found for: {giana_file})*")
 
 # Combine into a single master dataframe
-giana_df = pd.concat(all_giana_data, ignore_index=True)
+giana_df = pd.concat(all_giana_data, ignore_index=True) if all_giana_data else pd.DataFrame()
 
 # Merge metadata
 giana_df = giana_df.merge(meta[['sample', subject_col, timepoint_col, alias_col]], on='sample', how='left')
@@ -350,7 +336,7 @@ giana_df = giana_df.dropna(subset=[subject_col])
 
 # Level 2: Cluster Level (Innermost Ring)
 df_cluster = giana_df.groupby([alias_col, 'cluster']).agg(
-    total_counts=('counts', 'sum'),
+    total_counts=('duplicate_count', 'sum'),
     n_unique_tcrs=('CDR3b', 'nunique')
 ).reset_index()
 
@@ -360,7 +346,7 @@ df_cluster['label'] = df_cluster['cluster'].astype(str)
 
 # Level 1: Alias Level (Middle Ring)
 df_sample = giana_df.groupby(alias_col).agg(
-    total_counts=('counts', 'sum'),
+    total_counts=('duplicate_count', 'sum'),
     n_unique_tcrs=('CDR3b', 'nunique')
 ).reset_index()
 
@@ -369,7 +355,7 @@ df_sample['parent'] = 'All Samples'
 df_sample['label'] = df_sample[alias_col]
 
 # Level 0: Root Level (Center)
-total_counts_root = giana_df['counts'].sum()
+total_counts_root = giana_df['duplicate_count'].sum()
 unique_tcrs_root = giana_df['CDR3b'].nunique()
 
 df_root = pd.DataFrame({
@@ -418,7 +404,7 @@ fig.show()
 
 # Level 2: Alias Level (Outer Ring)
 df_alias_level = (giana_df.groupby(['cluster', alias_col])
-                   .agg(total_counts=('counts', 'sum'), n_unique_tcrs=('CDR3b', 'nunique'))
+                   .agg(total_counts=('duplicate_count', 'sum'), n_unique_tcrs=('CDR3b', 'nunique'))
                    .reset_index()
                    .assign(id=lambda x: x['cluster'].astype(str) + '_' + x[alias_col],
                            parent=lambda x: x['cluster'].astype(str),
@@ -426,7 +412,7 @@ df_alias_level = (giana_df.groupby(['cluster', alias_col])
 
 # Level 1: Cluster Level (Middle Ring)
 df_cluster_level = (giana_df.groupby('cluster')
-                    .agg(total_counts=('counts', 'sum'), n_unique_tcrs=('CDR3b', 'nunique'))
+                    .agg(total_counts=('duplicate_count', 'sum'), n_unique_tcrs=('CDR3b', 'nunique'))
                     .reset_index()
                     .assign(id=lambda x: x['cluster'].astype(str),
                             parent='All Clusters',
@@ -437,7 +423,7 @@ df_root = pd.DataFrame([{
     'id': 'All Clusters',
     'parent': '',
     'label': 'All Clusters',
-    'total_counts': giana_df['counts'].sum(),
+    'total_counts': giana_df['duplicate_count'].sum(),
     'n_unique_tcrs': giana_df['CDR3b'].nunique()
 }])
 
@@ -565,9 +551,9 @@ def create_patient_tabs_abundance_scatter(df):
         print(f"## {patient_id}\n")
         patient_df = df[df[subject_col] == patient_id]
 
-        sample_depths = patient_df.groupby(timepoint_col)['counts'].sum()
+        sample_depths = patient_df.groupby(timepoint_col)['duplicate_count'].sum()
         patient_pivot = patient_df.pivot_table(
-            index='cluster', columns=timepoint_col, values='counts', aggfunc='sum'
+            index='cluster', columns=timepoint_col, values='duplicate_count', aggfunc='sum'
         ).fillna(0)
 
         patient_cpm = patient_pivot.div(sample_depths, axis=1) * 1e6

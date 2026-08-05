@@ -49,19 +49,36 @@ workflow PATIENT {
         params.threshold_vgene
     )
 
-    // Capture GLIPH2 cluster details into a defaulted channel so the emit below is always
-    // valid; when use_gliph2 is false it stays empty. Bulk mode ignores these emits.
-    def gliph2_details = Channel.empty()
-    if(params.use_gliph2) {
+    // Each gliph2_* emit is a list of [patient, file] pairs - kept separate per
+    // output type (rather than mixed together) so downstream staging can map
+    // each pair back to its known target leaf-name (e.g. "all_motifs.txt")
+    // without having to parse it back out of the patient-prefixed filename.
+    //
+    // NOTE: this Nextflow version's strict-syntax workflow output collection
+    // requires emit values to be direct .out expressions - referencing a
+    // pre-computed local `def` variable in `emit:` fails at definition time
+    // with "Missing workflow output parameter", even outside any conditional.
+    // So the params.use_gliph2 ternary has to live in the emit line itself,
+    // referencing GLIPH2_TURBOGLIPH.out directly.
+    if (params.use_gliph2) {
         GLIPH2_TURBOGLIPH(
             PATIENT_CONCATENATE.out.patient_cdr3
         )
-        gliph2_details = GLIPH2_TURBOGLIPH.out.cluster_member_details_named
     }
 
     emit:
     // Additive outputs consumed only by the single-cell modality (CLUSTER_TO_SC).
     // GIANA_CALC's second positional output is the giana.txt cluster file.
     giana_clusters         = GIANA_CALC.out[1]
-    gliph2_cluster_details = gliph2_details
+    gliph2_cluster_details = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.cluster_member_details_named : channel.empty()
+
+    // .collect() flattens tuple(val, path) emissions by default (e.g.
+    // [patientA, fileA, patientB, fileB] instead of [[patientA, fileA], ...]),
+    // which corrupts the [patient, file] pair indexing used downstream in
+    // workflows/tcrtoolkit.nf - flat: false preserves the pair shape.
+    giana_files                   = GIANA_CALC.out.giana_output.collect()
+    gliph2_all_motifs             = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.all_motifs.collect(flat: false) : channel.value([])
+    gliph2_clone_network          = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.clone_network.collect(flat: false) : channel.value([])
+    gliph2_cluster_member_details = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.cluster_member_details.collect(flat: false) : channel.value([])
+    gliph2_global_similarities    = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.global_similarities.collect(flat: false) : channel.value([])
 }

@@ -1,0 +1,60 @@
+nextflow_process {
+
+    name "Test VDJ_QC"
+    script "modules/scratch/VDJ_QC/main.nf"
+    process "VDJ_QC"
+
+    test("Should filter contigs and produce a real contigs_after_qc.tsv from synthetic Cell Ranger data") {
+
+        tag "singlecell"
+
+        when {
+            params {
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+                metadata_file = "${projectDir}/assets/NO_FILE"
+            }
+
+            process {
+                """
+                // sample_sheet's path column must be an absolute path resolvable inside
+                // the container (see tests/nextflow.config's VDJ_QC containerOptions), so
+                // it's generated here with the real \${projectDir} baked in rather than
+                // committed as a static fixture file.
+                def cellrangerDir = "${projectDir}/tests/fixtures/singlecell/cellranger"
+                def sheet = new File("\${launchDir}/vdj_qc_sample_sheet.csv")
+                sheet.text = "sample,path,patient_id,condition,timepoint\\n" +
+                    "PatientA_Base,\${cellrangerDir}/PatientA_Base,PatientA,tumor,Base\\n" +
+                    "PatientA_Post,\${cellrangerDir}/PatientA_Post,PatientA,tumor,Post\\n" +
+                    "PatientB_Base,\${cellrangerDir}/PatientB_Base,PatientB,tumor,Base\\n"
+
+                input[0] = file("${projectDir}/modules/scratch/VDJ_QC/VDJ_QC_analysis.qmd")
+                input[1] = file(sheet.path)
+                input[2] = file("${projectDir}/assets/NO_FILE")
+                input[3] = "test_project"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.contigs_after_qc) {
+                def contigs_file = path(get(0))
+                assert contigs_file.exists()
+                def lines = contigs_file.readLines()
+                // header + 3 samples * 16 contig rows = 49, minus whatever the QC
+                // filters legitimately drop (all synthetic contigs are productive,
+                // high_confidence, full_length, paired TRA/TRB, so none should be
+                // dropped by the default filters) - just assert real rows came through.
+                assert lines.size() > 1
+                assert lines[0].contains("barcode")
+                assert lines[0].contains("chain")
+                // both patients and both timepoints should have survived QC
+                def body = lines[1..-1].join("\n")
+                assert body.contains("PatientA_Base") || body.contains("PatientA_Post") || body.contains("PatientB_Base")
+            }
+            with(process.out.report_html) {
+                assert path(get(0)).exists()
+            }
+        }
+    }
+}

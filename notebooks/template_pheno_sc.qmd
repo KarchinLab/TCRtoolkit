@@ -5,11 +5,10 @@
 
 project_dir=f"{project_dir}"
 
-# Define files 
+# Define files
 concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 
-concat_csv_pheno=f"{project_dir}/compare_phenotype/concatenated_cdr3.tsv"
-sample_table_pheno=f"{project_dir}/pipeline_info/samplesheet_phenotype.csv"
+concat_csv_pheno = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 
 #  Define dirs
 tcrpheno_dir = f"{project_dir}/tcrpheno/"
@@ -46,11 +45,31 @@ from scipy import stats
 from itertools import combinations
 from scipy.stats import mannwhitneyu
 from plotly.subplots import make_subplots
-from pathlib import Path
 import re
 
 meta = pd.read_csv(sample_table, sep=',')
 meta.drop(columns=['file'], inplace=True)
+
+# timepoint_order_col isn't a samplesheet column - compute and inject it here.
+# timepoint_order (an ordered comma-separated list, e.g. "Base,Week4,EOT") ranks
+# timepoints by position in that list; any timepoint not listed sorts after the
+# listed ones. When timepoint_order is empty, timepoints are ranked numerically
+# if every value parses as a number, otherwise alphabetically.
+if timepoint_order_col not in meta.columns:
+    unique_timepoints = meta[timepoint_col].dropna().unique().tolist()
+    if timepoint_order:
+        order_list = [t.strip() for t in timepoint_order.split(',')]
+        rank_map = {t: i for i, t in enumerate(order_list)}
+        unlisted = sorted(t for t in unique_timepoints if t not in rank_map)
+        for i, t in enumerate(unlisted):
+            rank_map[t] = len(order_list) + i
+    else:
+        try:
+            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=lambda x: float(x)))}
+        except (TypeError, ValueError):
+            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=str))}
+    meta[timepoint_order_col] = meta[timepoint_col].map(rank_map)
+
 meta_cols = meta.columns.tolist()
 
 concat_df = pd.read_csv(concat_csv, sep='\t')
@@ -58,14 +77,8 @@ concat_df = concat_df.merge(meta[['sample', subject_col, alias_col, timepoint_co
 
 # Phenotype files
 
-# Samplesheet
-metadata_pheno_df = pd.read_csv(sample_table_pheno, sep=',', header=0, index_col="file")
-metadata_pheno_df.index = metadata_pheno_df.index.map(lambda p: Path(p).name)
-metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_pseudobulk', '', regex=False)
-metadata_pheno_df.index = metadata_pheno_df.index.str.replace('_phenotype.tsv', '', regex=False)
-
 # Importing sample metadata (pheno-ps)
-clonotypes_pheno_df = pd.read_csv(concat_csv_pheno, sep='\t', header=0, index_col=0).reset_index()
+clonotypes_pheno_df = pd.read_csv(concat_csv_pheno, sep='\t', header=0)
 clonotypes_pheno_df['sample_phenotype'] = clonotypes_pheno_df['sample']
 # Add 'sample_phenotype' and 'phenotype'
 samples = sorted(meta['sample'].astype(str).unique(), key=len, reverse=True)
@@ -437,13 +450,13 @@ import sys
 warnings.filterwarnings("ignore")
 
 def create_patient_upset_figure(df, patient_id):
-    df_clean = df.dropna(subset=['phenotype', 'CDR3b']).copy()
+    df_clean = df.dropna(subset=['phenotype', 'junction_aa']).copy()
     phenotypes = sorted(df_clean['phenotype'].unique())
     if len(phenotypes) < 2:
         return None
 
     clones_by_pheno = {
-        p: list(df_clean[df_clean['phenotype'] == p]['CDR3b'].unique())
+        p: list(df_clean[df_clean['phenotype'] == p]['junction_aa'].unique())
         for p in phenotypes
     }
     upset_data = from_contents(clones_by_pheno)

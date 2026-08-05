@@ -22,7 +22,6 @@ concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 # Load Packages
 from IPython.display import Image, display, Markdown, HTML
 from matplotlib.colors import LinearSegmentedColormap
-from io import StringIO
 from scipy.sparse import csr_matrix
 from scipy.stats import gaussian_kde, fisher_exact
 from statsmodels.stats.multitest import multipletests
@@ -30,7 +29,6 @@ from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 
 import igraph as ig
-import logomaker
 
 import base64
 import datetime
@@ -44,20 +42,36 @@ import matplotlib.ticker as ticker
 import numpy as np
 import os
 import pandas as pd
-import pathlib
 import plotly.express as px
 import plotly.graph_objects as go
 import scipy.cluster.hierarchy as sch
 import seaborn as sns
-import shutil
 import sys
-import upsetplot
 import warnings
-from pathlib import Path
 import re
 
 ## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
+
+# timepoint_order_col isn't a samplesheet column - compute and inject it here.
+# timepoint_order (an ordered comma-separated list, e.g. "Base,Week4,EOT") ranks
+# timepoints by position in that list; any timepoint not listed sorts after the
+# listed ones. When timepoint_order is empty, timepoints are ranked numerically
+# if every value parses as a number, otherwise alphabetically.
+if timepoint_order_col not in meta.columns:
+    unique_timepoints = meta[timepoint_col].dropna().unique().tolist()
+    if timepoint_order:
+        order_list = [t.strip() for t in timepoint_order.split(',')]
+        rank_map = {t: i for i, t in enumerate(order_list)}
+        unlisted = sorted(t for t in unique_timepoints if t not in rank_map)
+        for i, t in enumerate(unlisted):
+            rank_map[t] = len(order_list) + i
+    else:
+        try:
+            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=lambda x: float(x)))}
+        except (TypeError, ValueError):
+            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=str))}
+    meta[timepoint_order_col] = meta[timepoint_col].map(rank_map)
 
 ## Reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_csv, sep='\t')
@@ -142,17 +156,17 @@ from statsmodels.stats.multitest import multipletests
 
 clonotypes_df = concat_df.copy()
 clonotypes_df = clonotypes_df.dropna(subset=[timepoint_col, 'origin'])
-clone_cols = ['CDR3b', 'TRBV', 'TRBJ']
+clone_cols = ['junction_aa', 'v_call', 'j_call']
 merge_cols = clone_cols + [subject_col, 'origin'] 
 
 clonotypes_df['timepoint_rank'] = clonotypes_df[timepoint_order_col]
 clonotypes_df = clonotypes_df.sort_values('timepoint_rank')
 
 # Grouping by subject, origin, and timepoint for accurate total counts
-sample_total_counts = clonotypes_df.groupby([subject_col, 'origin', timepoint_col])['counts'].sum().reset_index()
-sample_total_counts.rename(columns={'counts': 'total_counts'}, inplace=True)
+sample_total_counts = clonotypes_df.groupby([subject_col, 'origin', timepoint_col])['duplicate_count'].sum().reset_index()
+sample_total_counts.rename(columns={'duplicate_count': 'total_counts'}, inplace=True)
 clonotypes_df = pd.merge(clonotypes_df, sample_total_counts, on=[subject_col, 'origin', timepoint_col])
-clonotypes_df['frequency'] = clonotypes_df['counts'] / clonotypes_df['total_counts']
+clonotypes_df['frequency'] = clonotypes_df['duplicate_count'] / clonotypes_df['total_counts']
 
 # Helper to run fisher exact test on rows
 def run_fisher(row, alt_hyp):
@@ -179,8 +193,8 @@ for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin
         continue
 
     freq_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='frequency', fill_value=0)
-    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='counts', fill_value=0)
-    subject_total_counts = subject_df.groupby(timepoint_col)['counts'].sum()
+    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='duplicate_count', fill_value=0)
+    subject_total_counts = subject_df.groupby(timepoint_col)['duplicate_count'].sum()
 
     for t_pre, t_post in itertools.combinations(timepoints, 2):
         # 1. Vectorized DataFrame creation instead of iterrows
@@ -304,8 +318,8 @@ for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin
         continue
 
     freq_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='frequency', fill_value=0)
-    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='counts', fill_value=0)
-    subject_total_counts = subject_df.groupby(timepoint_col)['counts'].sum()
+    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='duplicate_count', fill_value=0)
+    subject_total_counts = subject_df.groupby(timepoint_col)['duplicate_count'].sum()
 
     for t_pre, t_post in itertools.combinations(timepoints, 2):
         # 1. Vectorize
@@ -500,7 +514,7 @@ else:
             sorted_tps += [t for t in valid_tps if t not in sorted_tps]
 
             # Set Index to CDR3b
-            matrix_df = orig_df.set_index('CDR3b')[sorted_tps]
+            matrix_df = orig_df.set_index('junction_aa')[sorted_tps]
 
             # Drop completely empty rows
             matrix_df = matrix_df.loc[~(matrix_df == 0).all(axis=1)]
@@ -708,7 +722,7 @@ def get_top_ids(df, direction):
             subset = group[group['fold_change'] < 1]
 
         # Sort by P-value (lowest first) -> Take top 15 Unique CDR3s
-        top_clones = subset.sort_values('p_value', ascending=True)['CDR3b'].drop_duplicates().head(15).tolist()
+        top_clones = subset.sort_values('p_value', ascending=True)['junction_aa'].drop_duplicates().head(15).tolist()
         id_map[name] = set(top_clones)
     return id_map
 
@@ -718,20 +732,17 @@ contracted_map = get_top_ids(stats_df, 'down')
 
 # --- 2. Prepare Master Frequency Data ---
 # Aggregate by CDR3 including 'origin' so we can split traces later
-agg_cols = [subject_col, 'origin', 'CDR3b', timepoint_col] if 'origin' in clonotypes_df.columns else [subject_col, 'CDR3b', timepoint_col]
+agg_cols = [subject_col, 'origin', 'junction_aa', timepoint_col] if 'origin' in clonotypes_df.columns else [subject_col, 'junction_aa', timepoint_col]
 cdr3_df = clonotypes_df.groupby(agg_cols)['frequency'].sum().reset_index()
 
 # Log Transform (with pseudocount)
 min_freq = cdr3_df[cdr3_df['frequency'] > 0]['frequency'].min()
 cdr3_df['log_freq'] = np.log10(cdr3_df['frequency'].replace(0, min_freq / 2))
 
-# Map Timepoints
-if 'timepoint_order' in locals():
-    cdr3_df['timepoint_rank'] = cdr3_df[timepoint_col].map(timepoint_order)
-else:
-    ordered_timepoints = sorted(cdr3_df[timepoint_col].unique())
-    timepoint_order_fallback = {t: i for i, t in enumerate(ordered_timepoints)}
-    cdr3_df['timepoint_rank'] = cdr3_df[timepoint_col].map(timepoint_order_fallback)
+# Map Timepoints - reuse the rank already computed onto clonotypes_df via meta,
+# rather than re-deriving a fresh (and previously always-alphabetical) mapping.
+time_order_map = clonotypes_df.drop_duplicates(timepoint_col).set_index(timepoint_col)[timepoint_order_col].to_dict()
+cdr3_df['timepoint_rank'] = cdr3_df[timepoint_col].map(time_order_map)
 
 # --- 3. The Plot Generator Function ---
 
@@ -748,7 +759,7 @@ def generate_plot_quarto_tabs(id_map, title_prefix, line_color):
     def get_status(row):
         subj = row[subject_col]
         orig = row['origin'] if 'origin' in row else None
-        seq = row['CDR3b']
+        seq = row['junction_aa']
         
         # Check map using the correct key format
         key = (subj, orig) if orig is not None else subj
@@ -801,7 +812,7 @@ def generate_plot_quarto_tabs(id_map, title_prefix, line_color):
             # Generate temporary figure to extract traces
             temp_fig = px.line(
                 orig_df, x=timepoint_col, y="log_freq", color="status",
-                line_group="CDR3b", hover_name="CDR3b",
+                line_group="junction_aa", hover_name="junction_aa",
                 color_discrete_map=color_map,
                 category_orders={timepoint_col: orig_tps}
             )

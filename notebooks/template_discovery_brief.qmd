@@ -60,6 +60,10 @@ sample_table='<path/to/sample_table.csv>'
 
 timepoint_col = 'timepoint'
 timepoint_order_col = 'timepoint_order'
+# Ordered comma-separated list of timepoint values, e.g. "Base,Week4,EOT" -
+# rank = position in the list. Empty string means: rank numerically if every
+# timepoint value parses as a number, otherwise alphabetically.
+timepoint_order = ''
 alias_col = 'alias'
 subject_col = 'subject_id'
 
@@ -143,6 +147,27 @@ print('Workflow command:      ' + workflow_cmd)
 print('Date and time:         ' + str(datetime.datetime.now()))
 
 meta = pd.read_csv(sample_table, sep=',')
+
+# timepoint_order_col isn't a samplesheet column - compute and inject it here.
+# timepoint_order (an ordered comma-separated list, e.g. "Base,Week4,EOT") ranks
+# timepoints by position in that list; any timepoint not listed sorts after the
+# listed ones. When timepoint_order is empty, timepoints are ranked numerically
+# if every value parses as a number, otherwise alphabetically.
+if timepoint_order_col not in meta.columns:
+    unique_timepoints = meta[timepoint_col].dropna().unique().tolist()
+    if timepoint_order:
+        order_list = [t.strip() for t in timepoint_order.split(',')]
+        rank_map = {t: i for i, t in enumerate(order_list)}
+        unlisted = sorted(t for t in unique_timepoints if t not in rank_map)
+        for i, t in enumerate(unlisted):
+            rank_map[t] = len(order_list) + i
+    else:
+        try:
+            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=lambda x: float(x)))}
+        except (TypeError, ValueError):
+            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=str))}
+    meta[timepoint_order_col] = meta[timepoint_col].map(rank_map)
+
 meta_cols = meta.columns.tolist()
 
 df = pd.read_csv(sample_stats_csv, sep=',')
@@ -475,20 +500,20 @@ def calculate_overlaps(df, meta):
     # Ensure patient mapping is available
     sample_to_patient = meta.set_index('sample')[subject_col].to_dict()
     df[subject_col] = df['sample'].map(sample_to_patient)
-    df = df.dropna(subset=[subject_col, 'CDR3b', 'counts'])
+    df = df.dropna(subset=[subject_col, 'junction_aa', 'duplicate_count'])
 
     samples = sorted(df['sample'].unique())
     patients = sorted(df[subject_col].unique())
-    clones = sorted(df['CDR3b'].unique())
-    
+    clones = sorted(df['junction_aa'].unique())
+
     clone_map = {c: i for i, c in enumerate(clones)}
     n_clones = len(clones)
 
     # --- 2. MORISITA (Sample-level, Frequency-based) ---
     sample_map = {s: i for i, s in enumerate(samples)}
     row_idx_s = df['sample'].map(sample_map).values
-    col_idx_s = df['CDR3b'].map(clone_map).values
-    values_s = df['counts'].values
+    col_idx_s = df['junction_aa'].map(clone_map).values
+    values_s = df['duplicate_count'].values
     
     mat_s = sparse.coo_matrix((values_s, (row_idx_s, col_idx_s)), shape=(len(samples), n_clones)).tocsr()
     
@@ -501,12 +526,12 @@ def calculate_overlaps(df, meta):
     morisita_df = pd.DataFrame(morisita, index=samples, columns=samples)
 
     # --- 3. JACCARD (Patient-level, Binary-based) ---
-    # Aggregate counts by patient/CDR3b to get unique clones per patient
-    patient_df = df.groupby([subject_col, 'CDR3b']).size().reset_index()
-    
+    # Aggregate counts by patient/junction_aa to get unique clones per patient
+    patient_df = df.groupby([subject_col, 'junction_aa']).size().reset_index()
+
     pat_map = {p: i for i, p in enumerate(patients)}
     row_idx_p = patient_df[subject_col].map(pat_map).values
-    col_idx_p = patient_df['CDR3b'].map(clone_map).values
+    col_idx_p = patient_df['junction_aa'].map(clone_map).values
     
     # Binary matrix: 1 if patient has clone, else 0
     mat_p_bin = sparse.coo_matrix((np.ones(len(patient_df)), (row_idx_p, col_idx_p)), 
@@ -644,8 +669,8 @@ def create_upset_tabs(df, patient_list):
         patient_df = df[df[subject_col] == patient_id]
         timepoints = sorted(patient_df[timepoint_col].unique())
         
-        # Extracting clones (CDR3b) by timepoint
-        clones_by_timepoint = {tp: set(patient_df[patient_df[timepoint_col] == tp]['CDR3b']) for tp in timepoints}
+        # Extracting clones (junction_aa) by timepoint
+        clones_by_timepoint = {tp: set(patient_df[patient_df[timepoint_col] == tp]['junction_aa']) for tp in timepoints}
 
         upset_data = upsetplot.from_contents(clones_by_timepoint)
 
@@ -740,11 +765,11 @@ for patient_id in upset_patients:
     patient_df = concat_df[concat_df[subject_col] == patient_id]
     
     # 1. Aggregate counts for each clone at each timepoint
-    # (Using 'counts' as the abundance metric based on your previous structures)
-    clone_tp_data = patient_df.groupby(['CDR3b', timepoint_col])['counts'].sum().reset_index()
+    # (Using 'duplicate_count' as the abundance metric based on your previous structures)
+    clone_tp_data = patient_df.groupby(['junction_aa', timepoint_col])['duplicate_count'].sum().reset_index()
     
     # 2. Calculate the number of timepoints and list them for each clone
-    clone_stats = clone_tp_data.groupby('CDR3b').agg(
+    clone_stats = clone_tp_data.groupby('junction_aa').agg(
         n_timepoints=(timepoint_col, 'nunique'),
         timepoints_present=(timepoint_col, lambda x: ', '.join(sorted(x.astype(str))))
     )
@@ -757,12 +782,12 @@ for patient_id in upset_patients:
         
     # 4. Pivot the data to get frequencies (counts) as separate columns per timepoint
     persistent_clones = persistent_stats.index
-    persistent_counts_df = clone_tp_data[clone_tp_data['CDR3b'].isin(persistent_clones)]
+    persistent_counts_df = clone_tp_data[clone_tp_data['junction_aa'].isin(persistent_clones)]
     
     wide_counts = persistent_counts_df.pivot(
-        index='CDR3b', 
+        index='junction_aa', 
         columns=timepoint_col, 
-        values='counts'
+        values='duplicate_count'
     ).fillna(0) # Fill missing timepoints with 0 counts
     
     # Prefix the timepoint columns so they are clearly identifiable as counts
@@ -874,17 +899,17 @@ from statsmodels.stats.multitest import multipletests
 
 clonotypes_df = concat_df.copy()
 clonotypes_df = clonotypes_df.dropna(subset=[timepoint_col, 'origin'])
-clone_cols = ['CDR3b', 'TRBV', 'TRBJ']
+clone_cols = ['junction_aa', 'v_call', 'j_call']
 merge_cols = clone_cols + [subject_col, 'origin'] 
 
 clonotypes_df['timepoint_rank'] = clonotypes_df[timepoint_order_col]
 clonotypes_df = clonotypes_df.sort_values('timepoint_rank')
 
 # Grouping by subject, origin, and timepoint for accurate total counts
-sample_total_counts = clonotypes_df.groupby([subject_col, 'origin', timepoint_col])['counts'].sum().reset_index()
-sample_total_counts.rename(columns={'counts': 'total_counts'}, inplace=True)
+sample_total_counts = clonotypes_df.groupby([subject_col, 'origin', timepoint_col])['duplicate_count'].sum().reset_index()
+sample_total_counts.rename(columns={'duplicate_count': 'total_counts'}, inplace=True)
 clonotypes_df = pd.merge(clonotypes_df, sample_total_counts, on=[subject_col, 'origin', timepoint_col])
-clonotypes_df['frequency'] = clonotypes_df['counts'] / clonotypes_df['total_counts']
+clonotypes_df['frequency'] = clonotypes_df['duplicate_count'] / clonotypes_df['total_counts']
 
 # Helper to run fisher exact test on rows
 def run_fisher(row, alt_hyp):
@@ -911,8 +936,8 @@ for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin
         continue
 
     freq_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='frequency', fill_value=0)
-    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='counts', fill_value=0)
-    subject_total_counts = subject_df.groupby(timepoint_col)['counts'].sum()
+    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='duplicate_count', fill_value=0)
+    subject_total_counts = subject_df.groupby(timepoint_col)['duplicate_count'].sum()
 
     for t_pre, t_post in itertools.combinations(timepoints, 2):
         # 1. Vectorized DataFrame creation instead of iterrows
@@ -1036,8 +1061,8 @@ for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin
         continue
 
     freq_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='frequency', fill_value=0)
-    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='counts', fill_value=0)
-    subject_total_counts = subject_df.groupby(timepoint_col)['counts'].sum()
+    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='duplicate_count', fill_value=0)
+    subject_total_counts = subject_df.groupby(timepoint_col)['duplicate_count'].sum()
 
     for t_pre, t_post in itertools.combinations(timepoints, 2):
         # 1. Vectorize
@@ -1149,7 +1174,7 @@ import pandas as pd
 
 # --- 1. Identify "New" vs "Pre-existing" via Cumulative History ---
 
-present_clones = clonotypes_df[clonotypes_df['counts'] > 0].copy()
+present_clones = clonotypes_df[clonotypes_df['duplicate_count'] > 0].copy()
 present_clones = present_clones.sort_values([subject_col, timepoint_order_col])
 
 dynamic_results = []
@@ -1161,7 +1186,7 @@ if 'detailed_comparisons_table' in locals() and not detailed_comparisons_table.e
         (detailed_comparisons_table['fold_change'] > fc_thold_up) &
         (pd.to_numeric(detailed_comparisons_table['q_value'], errors='coerce') < signif_thold)
     ]
-    expanded_set = set(zip(sig_exp[subject_col], sig_exp['origin'], sig_exp['t_post'], sig_exp['CDR3b']))
+    expanded_set = set(zip(sig_exp[subject_col], sig_exp['origin'], sig_exp['t_post'], sig_exp['junction_aa']))
 
 contracted_set = set()
 if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_table_cont.empty:
@@ -1169,7 +1194,7 @@ if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_ta
         (detailed_comparisons_table_cont['fold_change'] < fc_thold_down) &
         (pd.to_numeric(detailed_comparisons_table_cont['q_value'], errors='coerce') < signif_thold)
     ]
-    contracted_set = set(zip(sig_cont[subject_col], sig_cont['origin'], sig_cont['t_post'], sig_cont['CDR3b']))
+    contracted_set = set(zip(sig_cont[subject_col], sig_cont['origin'], sig_cont['t_post'], sig_cont['junction_aa']))
 
 
 # Iterate over both subject AND origin
@@ -1179,7 +1204,7 @@ for (subject, origin), subj_df in present_clones.groupby([subject_col, 'origin']
     
     for rank in timepoints:
         tp_name = subj_df[subj_df[timepoint_order_col] == rank][timepoint_col].iloc[0]
-        current_clones = subj_df[subj_df[timepoint_order_col] == rank]['CDR3b'].unique()
+        current_clones = subj_df[subj_df[timepoint_order_col] == rank]['junction_aa'].unique()
         
         for clone in current_clones:
             status = "Stable" # Default
@@ -1202,7 +1227,7 @@ for (subject, origin), subj_df in present_clones.groupby([subject_col, 'origin']
                 'origin': origin,       # Ensure origin is appended here!
                 timepoint_col: tp_name,
                 timepoint_order_col: rank,
-                'CDR3b': clone,
+                'junction_aa': clone,
                 'Status': status
             })
             
@@ -1356,19 +1381,19 @@ In this visualization, the total unique repertoire at each timepoint is broken d
 # --- Save Detailed Clone Categories with Info for further analysis ---
 
 # Merge the categorical statuses back with the original data to keep counts, frequencies, and gene usage
-export_cols = [subject_col, timepoint_col, 'CDR3b', 'TRBV', 'TRBJ', 'counts', 'frequency']
+export_cols = [subject_col, timepoint_col, 'junction_aa', 'v_call', 'j_call', 'duplicate_count', 'frequency']
 export_cols = [c for c in export_cols if c in present_clones.columns] # Safely keep only existing columns
 
 detailed_export_df = pd.merge(
     plot_df, # Contains subject, timepoint, timepoint_order, CDR3b, Status
     present_clones[export_cols],
-    on=[subject_col, timepoint_col, 'CDR3b'],
+    on=[subject_col, timepoint_col, 'junction_aa'],
     how='left'
 )
 
 # Sort it logically: By Patient -> Chronological Timepoint -> Status -> Largest Clones first
 detailed_export_df = detailed_export_df.sort_values(
-    by=[subject_col, timepoint_order_col, 'Status', 'counts'], 
+    by=[subject_col, timepoint_order_col, 'Status', 'duplicate_count'], 
     ascending=[True, True, True, False]
 )
 ```
@@ -1411,10 +1436,10 @@ if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_ta
 # Combine them
 if sig_stats_list:
     all_sig_stats = pd.concat(sig_stats_list, ignore_index=True)
-    stats_to_merge = all_sig_stats[[subject_col, 'origin', 't_post', 'CDR3b', 't_pre', 'freq_pre', 'freq_post', 'p_value']]
+    stats_to_merge = all_sig_stats[[subject_col, 'origin', 't_post', 'junction_aa', 't_pre', 'freq_pre', 'freq_post', 'p_value']]
 else:
     # Fallback if there are absolutely zero significant clones in the entire dataset
-    stats_to_merge = pd.DataFrame(columns=[subject_col, 'origin', 't_post', 'CDR3b', 't_pre', 'freq_pre', 'freq_post', 'p_value'])
+    stats_to_merge = pd.DataFrame(columns=[subject_col, 'origin', 't_post', 'junction_aa', 't_pre', 'freq_pre', 'freq_post', 'p_value'])
 
 # 4. Merge the plotting classifications with the exact statistical comparisons
 # Note: A clone might match multiple 't_pre' comparisons. This merge will mathematically branch 
@@ -1422,16 +1447,16 @@ else:
 merged_df = pd.merge(
     dynamic_clones_df,
     stats_to_merge,
-    on=[subject_col, 'origin', 't_post', 'CDR3b'],
+    on=[subject_col, 'origin', 't_post', 'junction_aa'],
     how='left'
 )
 
 # 5. Fetch actual frequencies for "New" clones (since they don't have a Fisher test row)
-current_freqs = clonotypes_df[[subject_col, 'origin', timepoint_col, 'CDR3b', 'frequency', 'TRBV', 'TRBJ']].rename(
+current_freqs = clonotypes_df[[subject_col, 'origin', timepoint_col, 'junction_aa', 'frequency', 'v_call', 'j_call']].rename(
     columns={timepoint_col: 't_post', 'frequency': 'current_frequency'}
 ).drop_duplicates()
 
-merged_df = pd.merge(merged_df, current_freqs, on=[subject_col, 'origin', 't_post', 'CDR3b'], how='left')
+merged_df = pd.merge(merged_df, current_freqs, on=[subject_col, 'origin', 't_post', 'junction_aa'], how='left')
 
 # Fill in the blanks for the "New" clones
 merged_df['freq_post'] = merged_df['freq_post'].fillna(merged_df['current_frequency'])
@@ -1441,7 +1466,7 @@ merged_df['t_pre'] = merged_df['t_pre'].fillna("Not Present Previously")
 
 # 6. Clean up and Rename Columns for the final export
 final_cols = [
-    subject_col, 'origin', 'CDR3b', 'TRBV', 'TRBJ', 
+    subject_col, 'origin', 'junction_aa', 'v_call', 'j_call', 
     'Status', 't_post', 't_pre', 'freq_post', 'freq_pre', 'p_value'
 ]
 export_df = merged_df[[c for c in final_cols if c in merged_df.columns]].copy()
@@ -1556,7 +1581,7 @@ if 'detailed_comparisons_table' in locals() and not detailed_comparisons_table.e
         (pd.to_numeric(detailed_comparisons_table['q_value'], errors='coerce') < signif_thold)
     ]
     # Store tuple of (subject, origin, t_pre, t_post, CDR3b)
-    sig_exp_lookup = set(zip(sig_exp[subject_col], sig_exp['origin'], sig_exp['t_pre'], sig_exp['t_post'], sig_exp['CDR3b']))
+    sig_exp_lookup = set(zip(sig_exp[subject_col], sig_exp['origin'], sig_exp['t_pre'], sig_exp['t_post'], sig_exp['junction_aa']))
 
 sig_cont_lookup = set()
 if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_table_cont.empty:
@@ -1564,7 +1589,7 @@ if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_ta
         (detailed_comparisons_table_cont['fold_change'] < fc_thold_down) &
         (pd.to_numeric(detailed_comparisons_table_cont['q_value'], errors='coerce') < signif_thold)
     ]
-    sig_cont_lookup = set(zip(sig_cont[subject_col], sig_cont['origin'], sig_cont['t_pre'], sig_cont['t_post'], sig_cont['CDR3b']))
+    sig_cont_lookup = set(zip(sig_cont[subject_col], sig_cont['origin'], sig_cont['t_pre'], sig_cont['t_post'], sig_cont['junction_aa']))
 
 # Define our color palette
 color_discrete_map = {
@@ -1600,7 +1625,7 @@ for subject, subj_df in clonotypes_df.groupby(subject_col):
                 continue
                 
             pivot = pair_df.pivot_table(
-                index=['CDR3b', 'TRBV', 'TRBJ'], 
+                index=['junction_aa', 'v_call', 'j_call'], 
                 columns=timepoint_col, 
                 values='frequency', 
                 fill_value=0
@@ -1629,7 +1654,7 @@ for subject, subj_df in clonotypes_df.groupby(subject_col):
             
             # Assign highlight status using our sets
             def assign_status(row):
-                key = (subject, origin, t1, t2, row['CDR3b'])
+                key = (subject, origin, t1, t2, row['junction_aa'])
                 if key in sig_exp_lookup:
                     return "Expanded"
                 elif key in sig_cont_lookup:
@@ -1651,8 +1676,8 @@ for subject, subj_df in clonotypes_df.groupby(subject_col):
                 color='Status',
                 color_discrete_map=color_discrete_map,
                 hover_data={
-                    'CDR3b': True,
-                    'TRBV': True,
+                    'junction_aa': True,
+                    'v_call': True,
                     t1: ':.6f', # Show the true frequency on hover (including actual 0s)
                     t2: ':.6f',
                     'freq_t1_plot': False,
@@ -1908,7 +1933,7 @@ else:
                 (detailed_export_df[subject_col] == patient) & 
                 (detailed_export_df['Status'] == 'Expanded')
             ]
-            expanded_tcr_set = set(patient_expanded_df['CDR3b'].tolist())
+            expanded_tcr_set = set(patient_expanded_df['junction_aa'].tolist())
 
             # 2. Iterate through connected components and keep only those with at least one expanded clone
             keep_vids = []
@@ -1988,12 +2013,9 @@ for _, row in meta.iterrows():
     filepath = row['file']
     
     if os.path.exists(convert_dir) and os.listdir(convert_dir):
-        base_name = os.path.basename(row['file'])
-        name_part, ext_part = os.path.splitext(base_name)
-        new_file_name = f"{name_part}_airr{ext_part}"
-        
-        # Update the path to point to convert_dir
-        target_file = os.path.join(convert_dir, new_file_name)
+        # Converted files are named by sample (e.g. "<sample>_airr.tsv"), not by
+        # the original raw input filename.
+        target_file = os.path.join(convert_dir, f"{row['sample']}_airr.tsv")
     else:
         target_file = row['file']
         
@@ -2200,8 +2222,7 @@ import numpy as np
 exp_df = detailed_export_df[detailed_export_df['Status'] == 'Expanded'].copy()
 
 rename_dict = {}
-if 'CDR3b' in exp_df.columns: rename_dict['CDR3b'] = 'cdr3aa'
-if subject_col in exp_df.columns and subject_col != subject_col: rename_dict[subject_col] = subject_col
+if 'junction_aa' in exp_df.columns: rename_dict['junction_aa'] = 'cdr3aa'
 exp_df = exp_df.rename(columns=rename_dict)
 
 expanded_annotated = pd.merge(
@@ -2349,18 +2370,18 @@ import pandas as pd
 def get_public_clones_df(concat_df, pgen_df):
     """Calculates and formats the full table of public (shared) clones."""
     # Create the "Wide" Matrix (One Column per Patient)
-    patient_map = concat_df.groupby(['CDR3b', subject_col])[alias_col].apply(
+    patient_map = concat_df.groupby(['junction_aa', subject_col])[alias_col].apply(
         lambda x: ', '.join(sorted(x.unique().astype(str)))
     ).unstack(fill_value='-')
     
     # Calculate Summary Stats (Total Patients)
-    stats_df = concat_df.groupby('CDR3b').agg(
+    stats_df = concat_df.groupby('junction_aa').agg(
         total_patients=(subject_col, 'nunique')
     ).reset_index()
 
     # Merge Everything Together
-    df = pd.merge(stats_df, pgen_df[['CDR3b', 'pgen']], on='CDR3b', how='inner')
-    df = pd.merge(df, patient_map, on='CDR3b', how='inner')
+    df = pd.merge(stats_df, pgen_df[['junction_aa', 'pgen']], on='junction_aa', how='inner')
+    df = pd.merge(df, patient_map, on='junction_aa', how='inner')
 
     # Filter for public clones (>1 patient) and Sort
     df = df[df['total_patients'] > 1].copy()
@@ -2369,7 +2390,7 @@ def get_public_clones_df(concat_df, pgen_df):
     # Formatting for Display/Export
     df['pgen'] = df['pgen'].apply(lambda x: f"{x:.2e}")
     df.rename(columns={
-        'CDR3b': 'CDR3b Sequence',
+        'junction_aa': 'CDR3b Sequence',
         'total_patients': 'No_Shared_Individuals',  # Updated column name
         'pgen': 'Pgen'
     }, inplace=True)
@@ -2454,10 +2475,10 @@ def plot_public_clones_upset(concat_df, subject_col, min_shared_patients=2):
     
     # --- DEFENSIVE FIX 1: Drop NaNs ---
     # Missing sequences cause duplicate MultiIndex entries, breaking Matplotlib text rendering
-    df_clean = concat_df.dropna(subset=[subject_col, 'CDR3b']).copy()
+    df_clean = concat_df.dropna(subset=[subject_col, 'junction_aa']).copy()
     
     # --- 1. Extract Unique Clones per Patient ---
-    patient_clones = df_clean.groupby(subject_col)['CDR3b'].unique().to_dict()
+    patient_clones = df_clean.groupby(subject_col)['junction_aa'].unique().to_dict()
     patient_contents = {str(patient): list(clones) for patient, clones in patient_clones.items()}
     
     # --- 2. Convert to UpSet Multi-Index Format ---
@@ -2526,6 +2547,4 @@ plot_public_clones_upset(concat_df, subject_col=subject_col, min_shared_patients
 ```
 **Figure 8. UpSet plot of public TCR clones**. This plot illustrates the intersection of unique CDR3b sequences shared among multiple individuals. The horizontal bars on the left indicate the total number of unique clones identified in each individual patient. In the central matrix, connected black dots denote the specific combination of patients sharing a subset of clones. The vertical bars at the top represent the intersection size, indicating the exact number of public clones shared exclusively by the patients marked in the corresponding column below.
 
-{{< include ./template_pheno_sc.qmd >}}
-
-{{< include ./template_pheno_bulk.qmd >}}
+{{< include ./template_pheno.qmd >}}

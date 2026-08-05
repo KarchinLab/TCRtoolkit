@@ -23,4 +23,45 @@ nextflow_pipeline {
         }
 
     }
+
+    test("Single-cell VDJ-only minimal example") {
+
+        tag "singlecell"
+        tag "vdj-only"
+
+        when {
+            params {
+                // sample_sheet's path column must be an absolute path resolvable inside
+                // the container (see tests/nextflow.config's VDJ_QC containerOptions), so
+                // it's generated here with the real projectDir baked in rather than
+                // committed as a static fixture file.
+                def cellrangerDir = "${projectDir}/tests/fixtures/singlecell/cellranger"
+                def sheet = new File("${launchDir}/vdj_only_sample_sheet.csv")
+                sheet.text = "sample,path,patient_id,condition,timepoint\n" +
+                    "PatientA_Base,${cellrangerDir}/PatientA_Base,PatientA,tumor,Base\n" +
+                    "PatientA_Post,${cellrangerDir}/PatientA_Post,PatientA,tumor,Post\n" +
+                    "PatientB_Base,${cellrangerDir}/PatientB_Base,PatientB,tumor,Base\n"
+
+                mode = "singlecell"
+                // Not actually dereferenced downstream (VDJ_QC reads per-sample paths
+                // from sample_sheet instead) but validated non-null - see workflows/singlecell.nf.
+                input_vdj_contigs = cellrangerDir
+                sample_sheet = sheet.path
+                outdir = "out-singlecell-vdjonly-test"
+                project_name = "singlecell_vdjonly_test"
+                // Tiny fixture (8 cells/sample) - default pseudobulk QC gate
+                // (25 clones / 50 cells) would drop every sample outright.
+                pseudobulk_qc_min_clones = 1
+                pseudobulk_qc_min_cells = 1
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
 }

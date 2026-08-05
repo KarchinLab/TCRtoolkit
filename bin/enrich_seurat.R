@@ -35,11 +35,18 @@ if (is.null(seurat_rds_path) || is.null(export_cells_path)) {
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+# scRepertoire's CTaa format is "A:<alpha_cdr3>|B:<beta_cdr3>" (pipe-delimited,
+# explicit chain labels) - not the semicolon-delimited, label-free, always-
+# alpha-then-beta format this used to assume. Match the "B:" segment by label
+# rather than position, and strip the label, so it still works if a cell only
+# has one chain or the chains are ordered differently.
 extract_beta_cdr3 <- function(ctaa) {
     sapply(ctaa, function(x) {
         if (is.na(x) || x == "" || x == "None") return(NA_character_)
-        parts <- strsplit(x, ";")[[1]]
-        if (length(parts) >= 2) toupper(trimws(parts[2])) else NA_character_
+        parts <- strsplit(x, "[|;]")[[1]]
+        beta_part <- parts[grepl("^B:", parts)]
+        if (length(beta_part) == 0) return(NA_character_)
+        toupper(trimws(sub("^B:", "", beta_part[1])))
     }, USE.NAMES = FALSE)
 }
 

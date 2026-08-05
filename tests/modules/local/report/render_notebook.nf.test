@@ -21,7 +21,8 @@ nextflow_process {
                 """
                 input[0] = [
                     file("${projectDir}/tests/fixtures/test.qmd"),
-                    file("${projectDir}/tests/fixtures")
+                    file("${projectDir}/tests/fixtures"),
+                    []
                 ]
                 input[1] = "TCRtoolkit"
                 input[2] = "nextflow run main.nf"
@@ -35,6 +36,90 @@ nextflow_process {
                 def html_file = path(get(0))
                 assert html_file.exists()
                 assert html_file.getFileName().toString().endsWith('.html')
+            }
+        }
+    }
+
+    test("Should stage files into a nested project_dir layout") {
+        // Verifies the staged_layout mechanism used by notebooks that read from a
+        // project_dir/<subdir>/<file> tree (e.g. template_discovery_brief.qmd)
+        // instead of bare relative filenames.
+
+        tag "notebook"
+        tag "staged_layout"
+
+        when {
+            params {
+                samplesheet = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+
+            process {
+                """
+                input[0] = [
+                    file("${projectDir}/tests/fixtures/test.qmd"),
+                    [file("${projectDir}/tests/fixtures/valid_samplesheet.csv")],
+                    [["myproj/sample/valid_samplesheet.csv", "valid_samplesheet.csv"]]
+                ]
+                input[1] = "TCRtoolkit"
+                input[2] = "nextflow run main.nf"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.report_html) {
+                def html_file = path(get(0))
+                assert html_file.exists()
+                assert html_file.getFileName().toString().endsWith('.html')
+                // The html output and the staged symlinks are both written into the
+                // task's work dir, so the staged path is a sibling of html_file.
+                def staged_file = html_file.getParent().resolve("myproj/sample/valid_samplesheet.csv")
+                assert staged_file.exists()
+                assert java.nio.file.Files.isSymbolicLink(staged_file)
+            }
+        }
+    }
+
+    test("Should stage a file under a renamed dest basename") {
+        // Verifies source and dest basenames can differ - e.g.
+        // template_discovery_brief.qmd includes a generic template_pheno.qmd,
+        // which gets symlinked from whichever real notebook applies
+        // (template_pheno_sc.qmd or template_pheno_bulk.qmd, here stood in for
+        // by valid_samplesheet.csv) to that shared destination basename.
+
+        tag "notebook"
+        tag "staged_layout"
+
+        when {
+            params {
+                samplesheet = "${projectDir}/tests/fixtures/valid_samplesheet.csv"
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+
+            process {
+                """
+                input[0] = [
+                    file("${projectDir}/tests/fixtures/test.qmd"),
+                    [file("${projectDir}/tests/fixtures/valid_samplesheet.csv")],
+                    [["template_pheno.qmd", "valid_samplesheet.csv"]]
+                ]
+                input[1] = "TCRtoolkit"
+                input[2] = "nextflow run main.nf"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.report_html) {
+                def html_file = path(get(0))
+                assert html_file.exists()
+                assert html_file.getFileName().toString().endsWith('.html')
+                def staged_file = html_file.getParent().resolve("template_pheno.qmd")
+                assert staged_file.exists()
+                assert java.nio.file.Files.isSymbolicLink(staged_file)
             }
         }
     }

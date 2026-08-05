@@ -1,0 +1,46 @@
+nextflow_process {
+
+    name "Test CONSENSUS_CLUSTERING"
+    script "modules/scratch/CONSENSUS_CLUSTERING/main.nf"
+    process "CONSENSUS_CLUSTERING"
+
+    test("Should build a consensus from real GIANA-enriched cells (GLIPH2/TCRdist absent)") {
+
+        tag "singlecell"
+
+        when {
+            params {
+                container = System.getenv("CONTAINER") ?: "syedsazaidi/scratch-tcr:latest"
+            }
+
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/enriched_seurat.rds")
+                input[1] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/tcr_export_cells_with_embedding.tsv")
+                input[2] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/NO_FILE_gliph2")
+                input[3] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/NO_FILE_tcrdist_clone")
+                input[4] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/giana_export_cells.tsv")
+                input[5] = file("${projectDir}/modules/scratch/CONSENSUS_CLUSTERING/Clonotype_Clustering_Consensus_Report.qmd")
+                input[6] = "test_project"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.seurat_with_consensus) {
+                assert path(get(0)).exists()
+            }
+            with(process.out.export_cells) {
+                def export_file = path(get(0))
+                assert export_file.exists()
+                def lines = export_file.readLines()
+                assert lines.size() == 181
+                assert lines[0].contains("giana_cluster")
+            }
+            with(process.out.report_html) {
+                assert path(get(0)).exists()
+            }
+        }
+    }
+}

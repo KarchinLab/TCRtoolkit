@@ -6,7 +6,7 @@ format:
     toc: true
     toc_depth: 3
     code-fold: true
-    embed-resources: false
+    embed-resources: true
     number-sections: true
     smooth-scroll: true
     grid:
@@ -47,6 +47,10 @@ sample_table='<path/to/sample_table.csv>'
 
 timepoint_col = 'timepoint'
 timepoint_order_col = 'timepoint_order'
+# Ordered comma-separated list of timepoint values, e.g. "Base,Week4,EOT" -
+# rank = position in the list. Empty string means: rank numerically if every
+# timepoint value parses as a number, otherwise alphabetically.
+timepoint_order = ''
 alias_col = 'alias'
 subject_col = 'subject_id'
 

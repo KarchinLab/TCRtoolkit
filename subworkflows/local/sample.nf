@@ -117,9 +117,22 @@ workflow SAMPLE {
     VDJDB_VDJMATCH (processed_samples, VDJDB_GET.out.ref_db)
 
     emit:
-        sample_csv       = SAMPLE_CALC.out.sample_csv
+        sample_csv        = SAMPLE_CALC.out.sample_csv
         // Additive: expose tcrdist outputs so the single-cell modality can feed
         // CLUSTER_TO_SC without a second TCRDIST3_MATRIX run. Bulk ignores these.
-        tcrdist_clone_df = TCRDIST3_MATRIX.out.clone_df
-        tcrdist_output   = TCRDIST3_MATRIX.out.tcrdist_output
+        tcrdist_clone_df  = TCRDIST3_MATRIX.out.clone_df
+        tcrdist_output    = TCRDIST3_MATRIX.out.tcrdist_output
+        v_family          = SAMPLE_CALC_PIVOT.out.v_family_wide
+        j_family          = SAMPLE_CALC_PIVOT.out.j_family_wide
+        tcrdist_files     = TCRDIST3_MATRIX.out.tcrdist_output.map { _sample_meta, dist -> dist }
+                                .mix( TCRDIST3_MATRIX.out.clone_df )
+                                .flatten()
+                                .collect()
+        olga_files        = OLGA_SAMPLE_MERGE.out.olga_pgen.map { _sample_meta, pgen -> pgen }
+                                .collect()
+        vdjdb_files       = VDJDB_VDJMATCH.out.vdjmatch_txt
+                                .mix( VDJDB_VDJMATCH.out.annot_summary )
+                                .collect()
+        convergence_files = CONVERGENCE.out.convergence_output.collect()
+        tcrpheno_files    = TCRPHENO.out.tcrpheno_output.map { _sample_meta, f -> f }.collect()
 }

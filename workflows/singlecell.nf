@@ -43,10 +43,13 @@ include { SAMPLE }               from '../subworkflows/local/sample.nf'
 include { PATIENT }              from '../subworkflows/local/patient.nf'
 include { COMPARE }              from '../subworkflows/local/compare.nf'
 
+// A workflow-local `def enabled = { x -> ... }` closure isn't visible from
+// inside nested if-blocks under this Nextflow version's strict-syntax parser
+// ("`enabled` is not defined") - a plain top-level function is.
+def enabled(x) { x == null || x == true }
 
 workflow SINGLECELL_WORKFLOW {
 
-    def enabled = { x -> x == null || x == true }
     def nofile  = file("${projectDir}/assets/NO_FILE")
 
     // ── Mandatory inputs (both routes) ────────────────────────────────────

@@ -1,0 +1,55 @@
+// KNOWN LIMITATION: this test currently fails, not on TCRtoolkit code but
+// inside the external CoNGA library baked into syedsazaidi/scratch-tcr
+// (conga.devel.find_gex_cluster_degs -> sc.pl.dotplot). Real execution against
+// this fixture gets through the vast majority of CoNGA's real pipeline
+// (clonotype reduction, graph-vs-graph clustering, correlation tables) -
+// confirming the actual TCRtoolkit<->CoNGA integration works - but CoNGA's
+// own internal DE-gene significance filtering finds zero genes from this
+// small (180-cell, 3-synthetic-state) dataset, and its own dotplot call then
+// crashes on the resulting empty gene list (matplotlib "left cannot be >=
+// right"). Iterating the fixture (clonotype count, then PCA feature count,
+// then DE signal strength) fixed two earlier real blockers in turn but
+// diminishing returns set in at this third, deeper one - real biological
+// data with genuine differential expression and more cells would very
+// likely not hit this. Left here as documented, not chased further.
+nextflow_process {
+
+    name "Test CONGA"
+    script "modules/scratch/CONGA/main.nf"
+    process "CONGA"
+
+    test("Should run real CoNGA analysis on real TCELL_INTEGRATION output") {
+
+        tag "singlecell"
+
+        when {
+            params {
+                container = System.getenv("CONTAINER") ?: "syedsazaidi/scratch-tcr:latest"
+            }
+
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/seurat_tcells_with_TCR.rds")
+                input[1] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/tcr_export_cells_with_embedding.tsv")
+                input[2] = file("${projectDir}/modules/scratch/CONGA/CoNGA_Report.qmd")
+                input[3] = "test_project"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.seurat_with_conga) {
+                assert path(get(0)).exists()
+            }
+            with(process.out.export_cells) {
+                def export_file = path(get(0))
+                assert export_file.exists()
+                assert export_file.readLines().size() > 1
+            }
+            with(process.out.report_html) {
+                assert path(get(0)).exists()
+            }
+        }
+    }
+}

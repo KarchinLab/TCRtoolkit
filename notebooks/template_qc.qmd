@@ -52,6 +52,10 @@ sample_table='<path/to/sample_table.csv>'
 
 timepoint_col = 'timepoint'
 timepoint_order_col = 'timepoint_order'
+# Ordered comma-separated list of timepoint values, e.g. "Base,Week4,EOT" -
+# rank = position in the list. Empty string means: rank numerically if every
+# timepoint value parses as a number, otherwise alphabetically.
+timepoint_order = ''
 alias_col = 'alias'
 subject_col = 'patient'
 
@@ -112,6 +116,27 @@ import plotly.figure_factory as ff
 import warnings
 
 meta = pd.read_csv(sample_table, sep=',')
+
+# timepoint_order_col isn't a samplesheet column - compute and inject it here.
+# timepoint_order (an ordered comma-separated list, e.g. "Base,Week4,EOT") ranks
+# timepoints by position in that list; any timepoint not listed sorts after the
+# listed ones. When timepoint_order is empty, timepoints are ranked numerically
+# if every value parses as a number, otherwise alphabetically.
+if timepoint_order_col not in meta.columns:
+    unique_timepoints = meta[timepoint_col].dropna().unique().tolist()
+    if timepoint_order:
+        order_list = [t.strip() for t in timepoint_order.split(',')]
+        rank_map = {t: i for i, t in enumerate(order_list)}
+        unlisted = sorted(t for t in unique_timepoints if t not in rank_map)
+        for i, t in enumerate(unlisted):
+            rank_map[t] = len(order_list) + i
+    else:
+        try:
+            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=lambda x: float(x)))}
+        except (TypeError, ValueError):
+            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=str))}
+    meta[timepoint_order_col] = meta[timepoint_col].map(rank_map)
+
 meta_cols = meta.columns.tolist()
 
 df = pd.read_csv(sample_stats_csv, sep=',')

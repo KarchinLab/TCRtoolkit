@@ -26,7 +26,7 @@ process PSEUDOBULK_QC_CALC {
     val   min_cells
 
     output:
-    tuple val(meta), path(sample_file), env(QC_PASS), env(N_CLONES), env(N_CELLS), emit: scored
+    tuple val(meta), path(sample_file), env('QC_PASS'), env('N_CLONES'), env('N_CELLS'), emit: scored
     path "qc_${meta.sample}.csv",      emit: qc_csv
     path "vfamily_${meta.sample}.csv", emit: v_family_csv
 

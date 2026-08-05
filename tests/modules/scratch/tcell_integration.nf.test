@@ -1,0 +1,48 @@
+nextflow_process {
+
+    name "Test TCELL_INTEGRATION"
+    script "modules/scratch/TCELL_INTEGRATION/main.nf"
+    process "TCELL_INTEGRATION"
+
+    test("Should integrate real synthetic GEX+VDJ data and produce an enriched Seurat object") {
+
+        tag "singlecell"
+
+        when {
+            params {
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+
+            process {
+                """
+                input[0] = file("${projectDir}/tests/fixtures/singlecell/gex/contigs_after_qc.tsv")
+                input[1] = file("${projectDir}/tests/fixtures/singlecell/gex/seurat_annotated.rds")
+                input[2] = file("${projectDir}/modules/scratch/TCELL_INTEGRATION/TCell_Integration_Report.qmd")
+                input[3] = "test_project"
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            with(process.out.export_cells) {
+                def export_file = path(get(0))
+                assert export_file.exists()
+                def lines = export_file.readLines()
+                // 180 synthetic cells went in; every one should carry a TCR
+                // (T-AB paired contigs were generated for all of them), so all
+                // should survive the T-cell subset/filter into the export table.
+                // 181 = header + 180 cells: every synthetic cell has paired T-AB
+                // contigs, so all should survive the T-cell subset/filter.
+                assert lines.size() == 181
+                assert lines[0].toLowerCase().contains("cell_id")
+            }
+            with(process.out.seurat_tcells_with_tcr) {
+                assert path(get(0)).exists()
+            }
+            with(process.out.report_html) {
+                assert path(get(0)).exists()
+            }
+        }
+    }
+}
