@@ -5,6 +5,7 @@ on:
   pull_request:
       branches:
       - 'main'
+      - 'v2'
   push:
       branches:
       - 'v2'
