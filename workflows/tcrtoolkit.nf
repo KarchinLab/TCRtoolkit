@@ -15,7 +15,7 @@ include { SAMPLE }              from '../subworkflows/local/sample'
 include { PATIENT }             from '../subworkflows/local/patient'
 include { COMPARE }             from '../subworkflows/local/compare'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
-include { ANNOTATE }            from '../subworkflows/local/annotate'
+include { ANNOTATE_INGEST; ANNOTATE } from '../subworkflows/local/annotate'
 include { REPORT }              from '../subworkflows/local/report'
 
 include { PSEUDOBULK_PHENOTYPE }from '../subworkflows/local/pseudobulk_phenotype'
@@ -81,14 +81,15 @@ workflow TCRTOOLKIT {
 
     // --- Main Analysis ---
     if (levels.intersect(['sample','patient','compare'])) {
-        ANNOTATE( sample_map_final )
+        ANNOTATE_INGEST( sample_map_final )
+        ANNOTATE( ANNOTATE_INGEST.out.processed_samples, ANNOTATE_INGEST.out.concat_cdr3 )
     }
 
     // Running sample level analysis
     if (levels.contains('sample')) {
         SAMPLE(
             ANNOTATE.out.processed_samples,
-            ANNOTATE.out.per_sample_stats,
+            ANNOTATE_INGEST.out.per_sample_stats,
             ANNOTATE.out.cdr3_pgen,
             ANNOTATE.out.olga_stats
         )

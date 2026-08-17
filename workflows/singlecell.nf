@@ -37,7 +37,7 @@ include { SC_SAMPLE_STATS }      from '../modules/bridges/sc_sample_stats.nf'
 include { BULK_TO_EXPORT }       from '../modules/bridges/bulk_to_export.nf'
 
 // ── Shared bulk engine (main/local — unchanged behavior) ──────────────────
-include { ANNOTATE_FROM_CONCAT } from '../subworkflows/local/annotate.nf'
+include { ANNOTATE } from '../subworkflows/local/annotate.nf'
 include { PSEUDOBULK_QC_SW }     from '../subworkflows/local/pseudobulk_qc.nf'
 include { SAMPLE }               from '../subworkflows/local/sample.nf'
 include { PATIENT }              from '../subworkflows/local/patient.nf'
@@ -102,12 +102,12 @@ workflow SINGLECELL_WORKFLOW {
     PSEUDOBULK_QC_SW( pseudobulk_map )
 
     // ── Step 4: OLGA annotation on QC-passed pseudobulk (shared engine) ───
-    ANNOTATE_FROM_CONCAT( PSEUDOBULK_QC_SW.out.sample_map, PSEUDOBULK_QC_SW.out.concat_cdr3 )
+    ANNOTATE( PSEUDOBULK_QC_SW.out.sample_map, PSEUDOBULK_QC_SW.out.concat_cdr3 )
 
-    def processed_samples  = ANNOTATE_FROM_CONCAT.out.processed_samples
-    def concat_cdr3_sorted = ANNOTATE_FROM_CONCAT.out.concat_cdr3_sorted
-    def cdr3_pgen          = ANNOTATE_FROM_CONCAT.out.cdr3_pgen
-    def olga_stats         = ANNOTATE_FROM_CONCAT.out.olga_stats
+    def processed_samples  = ANNOTATE.out.processed_samples
+    def concat_cdr3_sorted = ANNOTATE.out.concat_cdr3_sorted
+    def cdr3_pgen          = ANNOTATE.out.cdr3_pgen
+    def olga_stats         = ANNOTATE.out.olga_stats
 
     // ── Step 5: FULL shared bulk route (Option A — no truncation) ─────────
     // Synthesize the pre-filter-stats sidecar so SC data can use main's 4-arg SAMPLE.
