@@ -36,12 +36,9 @@ include { CLUSTER_TO_SC_SW }     from '../subworkflows/bridges/cluster_to_sc.nf'
 include { SC_SAMPLE_STATS }      from '../modules/bridges/sc_sample_stats.nf'
 include { BULK_TO_EXPORT }       from '../modules/bridges/bulk_to_export.nf'
 
-// ── Shared bulk engine (main/local — unchanged behavior) ──────────────────
-include { ANNOTATE } from '../subworkflows/local/annotate.nf'
-include { PSEUDOBULK_QC_SW }     from '../subworkflows/local/pseudobulk_qc.nf'
-include { SAMPLE }               from '../subworkflows/local/sample.nf'
-include { PATIENT }              from '../subworkflows/local/patient.nf'
-include { COMPARE }              from '../subworkflows/local/compare.nf'
+// ── Shared bulk-TCR analysis engine (main/local — unchanged behavior) ─────
+include { PSEUDOBULK_QC_SW }  from '../subworkflows/local/pseudobulk_qc.nf'
+include { BULKTCR_ANALYSIS }  from '../subworkflows/local/bulktcr_analysis.nf'
 
 // A workflow-local `def enabled = { x -> ... }` closure isn't visible from
 // inside nested if-blocks under this Nextflow version's strict-syntax parser
@@ -101,25 +98,24 @@ workflow SINGLECELL_WORKFLOW {
     // ── Step 3: tcrtoolkit pseudobulk QC gate (both routes) ───────────────
     PSEUDOBULK_QC_SW( pseudobulk_map )
 
-    // ── Step 4: OLGA annotation on QC-passed pseudobulk (shared engine) ───
-    ANNOTATE( PSEUDOBULK_QC_SW.out.sample_map, PSEUDOBULK_QC_SW.out.concat_cdr3 )
+    // ── Step 4+5: shared bulk-TCR analysis engine (Option A — no truncation) ──
+    // Synthesize the pre-filter-stats sidecar so SC data can use the shared engine's
+    // 4-arg SAMPLE step. Reports stay off (run_reports: false) — the shared bulk report
+    // templates assume bulk-samplesheet metadata (origin/timepoint) that single-cell-derived
+    // samplesheets don't reliably carry. Single-cell reporting is handled by REPERTOIRE +
+    // MASTER_SUMMARY (below).
+    SC_SAMPLE_STATS( PSEUDOBULK_QC_SW.out.sample_map )
 
-    def processed_samples  = ANNOTATE.out.processed_samples
-    def concat_cdr3_sorted = ANNOTATE.out.concat_cdr3_sorted
-    def cdr3_pgen          = ANNOTATE.out.cdr3_pgen
-    def olga_stats         = ANNOTATE.out.olga_stats
+    BULKTCR_ANALYSIS(
+        PSEUDOBULK_QC_SW.out.sample_map,
+        SC_SAMPLE_STATS.out.pre_filter_stats,
+        PSEUDOBULK_QC_SW.out.concat_cdr3,
+        ['sample', 'patient', 'compare'],
+        false,
+        channel.value([])
+    )
 
-    // ── Step 5: FULL shared bulk route (Option A — no truncation) ─────────
-    // Synthesize the pre-filter-stats sidecar so SC data can use main's 4-arg SAMPLE.
-    SC_SAMPLE_STATS( processed_samples )
-
-    SAMPLE( processed_samples, SC_SAMPLE_STATS.out.pre_filter_stats, cdr3_pgen, olga_stats )
-    PATIENT( processed_samples )
-    COMPARE( concat_cdr3_sorted, cdr3_pgen )
-
-    // Note: the shared bulk template_qc REPORT is intentionally NOT run here — it renders a
-    // bulk-samplesheet-metadata QC notebook that doesn't fit single-cell-derived data.
-    // Single-cell reporting is handled by REPERTOIRE + MASTER_SUMMARY (below).
+    def concat_cdr3_sorted = BULKTCR_ANALYSIS.out.concat_cdr3_sorted
 
     // ── Step 6: cell-level clustering — FULL-SC ONLY (needs the GEX/Seurat substrate) ──
     // Produces the enriched/consensus Seurat + export that REPERTOIRE / MASTER_SUMMARY use
@@ -133,10 +129,10 @@ workflow SINGLECELL_WORKFLOW {
         CLUSTER_TO_SC_SW(
             tcell_out.seurat_tcells_with_tcr,
             tcell_out.export_cells,
-            PATIENT.out.giana_clusters,
-            PATIENT.out.gliph2_cluster_details,
-            SAMPLE.out.tcrdist_clone_df,
-            SAMPLE.out.tcrdist_output.map { _meta, f -> f }
+            BULKTCR_ANALYSIS.out.giana_clusters,
+            BULKTCR_ANALYSIS.out.gliph2_cluster_details,
+            BULKTCR_ANALYSIS.out.tcrdist_clone_df,
+            BULKTCR_ANALYSIS.out.tcrdist_output.map { _meta, f -> f }
         )
         enriched_seurat = CLUSTER_TO_SC_SW.out.enriched_seurat
 
