@@ -104,8 +104,7 @@
                     "default": "airr",
                     "enum": [
                         "airr",
-                        "adaptive",
-                        "cellranger"
+                        "adaptive"
                     ],
                     "description": "Input data format."
                 },
@@ -140,10 +139,6 @@
                 "template_details_part2": {
                     "type": "string",
                     "description": "Path to details (part 2) notebook template."
-                },
-                "template_pheno_sc": {
-                    "type": "string",
-                    "description": "Path to single-cell phenotype notebook template."
                 },
                 "template_pheno_bulk": {
                     "type": "string",

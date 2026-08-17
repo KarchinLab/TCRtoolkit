@@ -42,12 +42,11 @@ nextflow run KarchinLab/TCRtoolkit \
 
 ## Input Formats
  
-`TCRtoolkit` accepts three input formats, specified via `--input_format`:
+`TCRtoolkit` accepts two input formats, specified via `--input_format`:
  
 | Format | Description |
 |---|---|
 | `adaptive` | Adaptive Biotechnologies output files |
-| `cellranger` | 10x Genomics CellRanger 'airr_rearrangement.tsv' output files (single-cell pseudo-bulk) |
 | `airr` | AIRR-compliant tab-separated files |
  
 ## Workflow Levels
@@ -77,7 +76,6 @@ After the pipeline finishes, `TCRtoolkit` generates interactive HTML reports usi
  
 Certain sub-reports are automatically appended based on input and workflow options:
  
-- `--input_format cellranger` → includes single-cell phenotype report
 - `--input_format adaptive` → includes bulk phenotype report
 - `--workflow_level sample,patient,compare` (Patient workflow enabled) → includes patient-level clonotype analysis
 - `--use_gliph2` → additionally includes GLIPH2 clustering report
@@ -88,10 +86,9 @@ Certain sub-reports are automatically appended based on input and workflow optio
 |---|---|---|
 | `--samplesheet` | — | Path or URL to sample sheet CSV |
 | `--outdir` | `out` | Output directory |
-| `--input_format` | `airr` | Input format: `airr`, `adaptive`, or `cellranger` |
+| `--input_format` | `airr` | Input format: `airr` or `adaptive` |
 | `--workflow_level` | `sample,compare` | Analysis level(s): `sample`, `patient`, `compare` |
 | `--use_gliph2` | `false` | Enable GLIPH2 CDR3 motif clustering |
-| `--sobject_gex` | — | Path to TSV file containing cell-barcode phenotypes for pseudo-bulk phenotyping |
 | `--max_memory` | `768.GB` | Maximum memory allocation |
 | `--max_cpus` | `192` | Maximum CPU allocation |
  
