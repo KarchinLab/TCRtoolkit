@@ -24,7 +24,7 @@ include {
  * Emits:
  *     sample_map  — [meta, file] for QC-passing samples only
  *     concat_cdr3 — concatenated CDR3 file rebuilt from passing samples
- *                   (consumed by ANNOTATE_FROM_CONCAT in full-SC mode)
+ *                   (consumed by ANNOTATE in full-SC mode)
  *     qc_summary  — per-sample QC table (includes dropped samples)
  *     v_family    — per-sample V gene-family usage table
  */
@@ -76,7 +76,7 @@ workflow PSEUDOBULK_QC_SW {
         }
     }
 
-    // Rebuild concatenated CDR3 from passing samples (for ANNOTATE_FROM_CONCAT)
+    // Rebuild concatenated CDR3 from passing samples (for ANNOTATE)
     concat_cdr3 = passed_map
         .map { meta, file -> file }
         .collectFile(name: 'concat_cdr3.tsv', keepHeader: true, skip: 1)

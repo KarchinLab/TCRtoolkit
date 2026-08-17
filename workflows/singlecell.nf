@@ -2,19 +2,19 @@
  * SINGLECELL_WORKFLOW — single-cell TCR modality (integrated).
  *
  * Unified spine (see IMPLEMENTATION_SPEC.md §1.3). Both routes converge after their
- * pseudobulk step into: PSEUDOBULK_QC → ANNOTATE_FROM_CONCAT → full shared bulk engine
+ * pseudobulk step into: PSEUDOBULK_QC → ANNOTATE → full shared bulk engine
  * (SAMPLE + PATIENT + COMPARE) → repertoire/summary.
  *
  *   Full SC   (--input_annotated_object provided):
  *     VDJ_QC → TCELL_INTEGRATION → SC_TO_CDR3 (phenotype pseudobulk)
- *            → PSEUDOBULK_QC → ANNOTATE_FROM_CONCAT
+ *            → PSEUDOBULK_QC → ANNOTATE
  *            → SAMPLE + PATIENT + COMPARE            (shared engine, full route)
  *            → CLUSTER_TO_SC → CONGA → CONSENSUS     (cell-level, GEX-only)
  *            → REPERTOIRE (cell-level) → MASTER_SUMMARY (full)
  *
  *   VDJ-only  (--input_annotated_object absent):
  *     VDJ_QC → VDJ_TO_BULK (pseudobulk from contigs)
- *            → PSEUDOBULK_QC → ANNOTATE_FROM_CONCAT
+ *            → PSEUDOBULK_QC → ANNOTATE
  *            → SAMPLE + PATIENT + COMPARE            (shared engine, full route)
  *            → BULK_TO_EXPORT (clonotype-level per-cell export)
  *            → REPERTOIRE (clonotype-level) → MASTER_SUMMARY (CoNGA-excluded)
