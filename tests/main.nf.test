@@ -2,6 +2,13 @@ nextflow_pipeline {
 
     name "Test Workflow main.nf"
     script "main.nf"
+    // -resume (controller-added, intentional - do not revert): lets Nextflow skip
+    // re-running processes whose inputs/script are unchanged across separate `nf-test test`
+    // invocations (nf-test's workDir, set in nf-test.config, is persistent rather than a
+    // fresh temp dir per run) - e.g. VDJDB_VDJMATCH, the slowest step in this suite, which
+    // no code change in this refactor touches. Local dev speedup only; harmless in CI,
+    // where there's no prior .nf-test/ workdir to resume from anyway.
+    options "-resume"
 
     test("Minimal example dataset") {
 
@@ -9,10 +16,17 @@ nextflow_pipeline {
 
         when {
             params {
-                samplesheet = "../../../tests/test_data/minimal-example/samplesheet.csv"
-                outdir = "out-minimal-example" 
-                input_format = "adaptive" 
-                max_memory = "8.GB" 
+                // DEV-ONLY (controller-added, intentional - do not revert): points at a 6-sample
+                // subset (2 single-timepoint patients + 2 Base/Post-paired patients, so 'sample',
+                // 'patient', and 'compare' all still get real coverage) instead of the full
+                // 35-sample fixture, to cut VDJDB_VDJMATCH invocations (the slowest step in this
+                // suite, ~23s each) from 35 down to 6 during iteration. MUST be swapped back to
+                // samplesheet.csv (the full fixture) for the final whole-branch review before
+                // this plan is considered done.
+                samplesheet = "../../../tests/test_data/minimal-example/samplesheet_dev.csv"
+                outdir = "out-minimal-example"
+                input_format = "adaptive"
+                max_memory = "8.GB"
                 max_cpus = 4
                 container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
             }
@@ -61,6 +75,28 @@ nextflow_pipeline {
 
         then {
             assert workflow.success
+        }
+
+    }
+
+    test("Bulk mode rejects cellranger input_format") {
+
+        tag "bulk"
+        tag "schema-validation"
+
+        when {
+            params {
+                samplesheet = "../../../tests/test_data/minimal-example/samplesheet.csv"
+                outdir = "out-bulk-cellranger-rejected"
+                input_format = "cellranger"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+        }
+
+        then {
+            assert !workflow.success
         }
 
     }
