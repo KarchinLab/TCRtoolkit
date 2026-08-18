@@ -39,22 +39,22 @@ workflow PSEUDOBULK_QC_SW {
 
     // Wrap the scalar thresholds as explicit value channels. Nextflow 24.10 does not
     // reliably auto-broadcast a bare value passed alongside a queue-channel input.
-    PSEUDOBULK_QC_CALC( sample_map, Channel.value(min_clones), Channel.value(min_cells) )
+    PSEUDOBULK_QC_CALC( sample_map, channel.value(min_clones), channel.value(min_cells) )
 
-    branched = PSEUDOBULK_QC_CALC.out.scored.branch { meta, file, qc_pass, nc, ce ->
+    branched = PSEUDOBULK_QC_CALC.out.scored.branch { _meta, _file, qc_pass, _nc, _ce ->
         pass: qc_pass == 'PASS'
         fail: true
     }
 
     // Log every dropped sample
-    branched.fail.view { meta, file, qc_pass, nc, ce ->
+    branched.fail.view { meta, _file, _qc_pass, nc, ce ->
         "[Pseudobulk QC] DROPPED '${meta.sample}': clones=${nc} (min ${min_clones}), cells=${ce} (min ${min_cells})"
     }
 
     // Optional hard-stop: abort the run if any sample fails QC
     if (gate_mode == 'hard_stop') {
         branched.fail
-            .map { meta, file, qc_pass, nc, ce -> "${meta.sample} (clones=${nc}, cells=${ce})" }
+            .map { meta, _file, _qc_pass, nc, ce -> "${meta.sample} (clones=${nc}, cells=${ce})" }
             .collect()
             .subscribe { failed ->
                 if (failed) {
@@ -66,7 +66,7 @@ workflow PSEUDOBULK_QC_SW {
     }
 
     // Passing samples only -> [meta, file]
-    passed_map = branched.pass.map { meta, file, qc_pass, nc, ce -> [meta, file] }
+    passed_map = branched.pass.map { meta, file, _qc_pass, _nc, _ce -> [meta, file] }
 
     // Warn (drop mode) if nothing survived the gate
     passed_map.count().subscribe { n ->
@@ -78,7 +78,7 @@ workflow PSEUDOBULK_QC_SW {
 
     // Rebuild concatenated CDR3 from passing samples (for ANNOTATE)
     concat_cdr3 = passed_map
-        .map { meta, file -> file }
+        .map { _meta, file -> file }
         .collectFile(name: 'concat_cdr3.tsv', keepHeader: true, skip: 1)
 
     // ── Reporting (non-redundant): QC summary + V gene-family usage ──────────

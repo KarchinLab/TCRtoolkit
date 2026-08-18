@@ -22,7 +22,7 @@ workflow MASTER_SUMMARY_SW {
     project_name
 
     main:
-    ch_notebook = Channel.fromPath(
+    ch_notebook = channel.fromPath(
         "${projectDir}/modules/scratch/MASTER_SUMMARY/Master_Summary_Report.qmd",
         checkIfExists: true
     )

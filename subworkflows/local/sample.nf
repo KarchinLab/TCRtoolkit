@@ -33,7 +33,9 @@ workflow SAMPLE {
     def sample_calc_input = processed_samples.join(per_sample_stats)
     SAMPLE_CALC( sample_calc_input )
 
-    def sample_stats_agg = SAMPLE_CALC.out.sample_csv
+    // Published as a side effect (storeDir) - the aggregated CSV itself isn't consumed
+    // further downstream; bulktcr_analysis.nf computes its own in-memory copy for reports.
+    SAMPLE_CALC.out.sample_csv
         .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
 
     def v_family_agg = SAMPLE_CALC.out.v_family_csv

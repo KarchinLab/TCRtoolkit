@@ -86,7 +86,7 @@ workflow BULKTCR_ANALYSIS {
 
         ch_discovery_report = sample_stats_agg
             .combine(ANNOTATE.out.concat_cdr3_sorted)
-            .combine(COMPARE.out.shared_cdr3)
+            .combine(COMPARE.out)
             .combine(SAMPLE.out.tcrdist_files.map { l -> [l] })
             .combine(SAMPLE.out.vdjdb_files.map { l -> [l] })
             .combine(convert_files.map { l -> [l] })
@@ -144,7 +144,7 @@ workflow BULKTCR_ANALYSIS {
 
         def details_part2_base = sample_stats_agg
             .combine(ANNOTATE.out.concat_cdr3_sorted)
-            .combine(COMPARE.out.shared_cdr3)
+            .combine(COMPARE.out)
 
         def run_patient_clustering = levels.contains('patient')
         def patient_clustering_notebook = run_patient_clustering
@@ -238,5 +238,5 @@ workflow BULKTCR_ANALYSIS {
     gliph2_cluster_member_details  = levels.contains('patient') ? PATIENT.out.gliph2_cluster_member_details  : channel.value([])
     gliph2_global_similarities     = levels.contains('patient') ? PATIENT.out.gliph2_global_similarities     : channel.value([])
 
-    shared_cdr3 = levels.contains('compare') ? COMPARE.out.shared_cdr3 : channel.empty()
+    shared_cdr3 = levels.contains('compare') ? COMPARE.out : channel.empty()
 }

@@ -10,7 +10,7 @@ workflow REPERTOIRE_SW {
     project_name
 
     main:
-    ch_notebook = Channel.fromPath(
+    ch_notebook = channel.fromPath(
         "${projectDir}/modules/scratch/REPERTOIRE/Repertoire_Report.qmd",
         checkIfExists: true
     )

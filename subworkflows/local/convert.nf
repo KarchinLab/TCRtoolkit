@@ -25,11 +25,8 @@ workflow CONVERT {
             file(params.airr_schema),
             file(params.imgt_lookup)
         )
-        sample_map_converted = CONVERT_ADAPTIVE.out.adaptive_convert
-    } else {
-        sample_map_converted = sample_map
     }
 
     emit:
-    sample_map_converted
+    input_format == 'adaptive' ? CONVERT_ADAPTIVE.out.adaptive_convert : sample_map
 }

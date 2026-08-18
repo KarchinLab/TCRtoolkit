@@ -62,24 +62,24 @@ workflow SINGLECELL_WORKFLOW {
                  "TCELL_INTEGRATION / CLUSTER_TO_SC / CONGA will be skipped."
     }
 
-    ch_sample_sheet  = Channel.fromPath(params.sample_sheet, checkIfExists: true)
-    ch_project_name  = Channel.value(params.project_name)
+    ch_sample_sheet  = channel.fromPath(params.sample_sheet, checkIfExists: true)
+    ch_project_name  = channel.value(params.project_name)
     ch_annotated_obj = vdjOnly
-        ? Channel.fromPath("${projectDir}/assets/NO_FILE")
-        : Channel.fromPath(params.input_annotated_object, checkIfExists: true)
+        ? channel.fromPath("${projectDir}/assets/NO_FILE")
+        : channel.fromPath(params.input_annotated_object, checkIfExists: true)
 
     // ── Step 1: VDJ QC (both routes) ──────────────────────────────────────
     vdj_qc_out = VDJ_QC_SW( ch_sample_sheet, ch_project_name, ch_annotated_obj )
 
     // VDJ QC tables/figures kept for the Master Summary (full-SC route)
-    def vdj_qc_per_sample_compact         = vdj_qc_out.qc_tables.flatten().filter { it.name == 'vdj_qc_per_sample_compact.tsv'      }.ifEmpty(nofile)
-    def vdj_qc_before_after_summary       = vdj_qc_out.qc_tables.flatten().filter { it.name == 'qc_contigs_before_after_summary.tsv' }.ifEmpty(nofile)
-    def vdj_qc_sample_sheet_resolved      = vdj_qc_out.qc_tables.flatten().filter { it.name == 'sample_sheet_resolved.tsv'           }.ifEmpty(nofile)
-    def vdj_qc_clone_rank_abundance       = vdj_qc_out.qc_tables.flatten().filter { it.name == 'clone_rank_abundance.tsv'            }.ifEmpty(nofile)
-    def vdj_qc_before_after_retention_fig = vdj_qc_out.qc_figures.flatten().filter { it.name == 'qc_before_after_retention.png'      }.ifEmpty(nofile)
-    def vdj_qc_pairing_bar_fig            = vdj_qc_out.qc_figures.flatten().filter { it.name == 'pairing_bar_by_sample.png'          }.ifEmpty(nofile)
-    def vdj_qc_clone_rank_abundance_fig   = vdj_qc_out.qc_figures.flatten().filter { it.name == 'clone_rank_abundance.png'           }.ifEmpty(nofile)
-    def vdj_qc_multiple_chains_fig        = vdj_qc_out.qc_figures.flatten().filter { it.name == 'multiple_chains_by_sample.png'      }.ifEmpty(nofile)
+    def vdj_qc_per_sample_compact         = vdj_qc_out.qc_tables.flatten().filter { f -> f.name == 'vdj_qc_per_sample_compact.tsv'      }.ifEmpty(nofile)
+    def vdj_qc_before_after_summary       = vdj_qc_out.qc_tables.flatten().filter { f -> f.name == 'qc_contigs_before_after_summary.tsv' }.ifEmpty(nofile)
+    def vdj_qc_sample_sheet_resolved      = vdj_qc_out.qc_tables.flatten().filter { f -> f.name == 'sample_sheet_resolved.tsv'           }.ifEmpty(nofile)
+    def vdj_qc_clone_rank_abundance       = vdj_qc_out.qc_tables.flatten().filter { f -> f.name == 'clone_rank_abundance.tsv'            }.ifEmpty(nofile)
+    def vdj_qc_before_after_retention_fig = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'qc_before_after_retention.png'      }.ifEmpty(nofile)
+    def vdj_qc_pairing_bar_fig            = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'pairing_bar_by_sample.png'          }.ifEmpty(nofile)
+    def vdj_qc_clone_rank_abundance_fig   = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'clone_rank_abundance.png'           }.ifEmpty(nofile)
+    def vdj_qc_multiple_chains_fig        = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'multiple_chains_by_sample.png'      }.ifEmpty(nofile)
 
     // ── Step 2: pseudobulk → clonotype table (route-specific source) ──────
     def sc_samplesheet = nofile
@@ -121,8 +121,8 @@ workflow SINGLECELL_WORKFLOW {
     // Produces the enriched/consensus Seurat + export that REPERTOIRE / MASTER_SUMMARY use
     // when a GEX object is present. In VDJ-only mode this whole block is skipped and a
     // clonotype-level export is synthesized instead (below).
-    conga_report     = Channel.empty()
-    consensus_report = Channel.empty()
+    conga_report     = channel.empty()
+    consensus_report = channel.empty()
 
     if (!vdjOnly) {
         // Reuse tcrdist3 outputs computed inside SAMPLE (no second run).
@@ -159,21 +159,21 @@ workflow SINGLECELL_WORKFLOW {
         // VDJ-only: no Seurat. Build a clonotype-level per-cell export from the pseudobulk
         // so REPERTOIRE / MASTER_SUMMARY run without a GEX object (CoNGA/consensus skipped).
         BULK_TO_EXPORT( concat_cdr3_sorted, sc_samplesheet )
-        rep_seurat = Channel.fromPath("${projectDir}/assets/NO_FILE")
+        rep_seurat = channel.fromPath("${projectDir}/assets/NO_FILE")
         rep_export = BULK_TO_EXPORT.out.export_cells
     }
 
     // ── Step 7: REPERTOIRE + MASTER_SUMMARY — BOTH routes ─────────────────
     // Cell-level + full with a GEX object; clonotype-level repertoire and a CoNGA-excluded
     // summary without one (only CoNGA and the cell-cluster mapping are truly GEX-gated).
-    repertoire_report = Channel.empty()
+    repertoire_report = channel.empty()
     if (enabled(params.run_repertoire)) {
         REPERTOIRE_SW( rep_seurat, rep_export, ch_project_name )
         repertoire_report = REPERTOIRE_SW.out.report_html
     }
 
     if (enabled(params.run_master_summary)) {
-        master_barrier = Channel.empty()
+        master_barrier = channel.empty()
             .mix(conga_report, consensus_report, repertoire_report)
             .collect()
             .ifEmpty([nofile])

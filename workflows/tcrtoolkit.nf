@@ -50,7 +50,7 @@ workflow TCRTOOLKIT {
 
     if (input_format == 'adaptive') {
         CONVERT(INPUT_CHECK.out.sample_map, input_format)
-        sample_map_final = CONVERT.out.sample_map_converted
+        sample_map_final = CONVERT.out
     } else {
         sample_map_final = INPUT_CHECK.out.sample_map
     }
@@ -59,7 +59,7 @@ workflow TCRTOOLKIT {
     // (adaptive); template_discovery_brief.qmd's VDJdb section otherwise reads the raw
     // input directly, which already has AIRR-standard frequency columns.
     def convert_files = (input_format == 'adaptive')
-        ? CONVERT.out.sample_map_converted.map { _meta, f -> f }.collect()
+        ? CONVERT.out.map { _meta, f -> f }.collect()
         : channel.value([])
 
     // --- Main Analysis ---

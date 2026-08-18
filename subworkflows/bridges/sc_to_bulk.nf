@@ -23,7 +23,7 @@ workflow SC_TO_BULK_SW {
         params.condition_col,
         params.timepoint_col,
         params.batch_col
-    ].findAll { it }.join(',')
+    ].findAll { col -> col }.join(',')
 
     // TCELL_INTEGRATION always exports a standardized 'sample' column;
     // params.sample_col is the Seurat metadata name, not the export column name.

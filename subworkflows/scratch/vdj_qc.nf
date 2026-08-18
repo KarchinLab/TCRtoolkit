@@ -10,7 +10,7 @@ workflow VDJ_QC_SW {
     ch_input_annotated_object
 
     main:
-    ch_notebook = Channel.fromPath(
+    ch_notebook = channel.fromPath(
         "${projectDir}/modules/scratch/VDJ_QC/VDJ_QC_analysis.qmd",
         checkIfExists: true
     )

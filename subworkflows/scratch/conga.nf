@@ -10,7 +10,7 @@ workflow CONGA_SW {
     project_name
 
     main:
-    ch_notebook = Channel.fromPath(
+    ch_notebook = channel.fromPath(
         "${projectDir}/modules/scratch/CONGA/CoNGA_Report.qmd",
         checkIfExists: true
     )
