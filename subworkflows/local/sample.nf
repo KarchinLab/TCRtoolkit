@@ -6,7 +6,6 @@
 */
 
 include { SAMPLE_CALC; SAMPLE_CALC_PIVOT } from '../../modules/local/sample/sample_calc'
-include { SAMPLE_PLOT } from '../../modules/local/sample/sample_plot'
 include { TCRDIST3_MATRIX; TCRDIST3_HISTOGRAM_CALC; TCRDIST3_HISTOGRAM_PLOT} from '../../modules/local/sample/tcrdist3'
 include { OLGA_SAMPLE_MERGE; OLGA_HISTOGRAM_CALC; OLGA_HISTOGRAM_PLOT } from '../../modules/local/olga'
 include { CONVERGENCE } from '../../modules/local/sample/convergence'
@@ -47,21 +46,6 @@ workflow SAMPLE {
         .collectFile(name: "j_family_long.csv", keepHeader: true, skip: 1, sort: true)
 
     SAMPLE_CALC_PIVOT( v_family_agg, d_family_agg, j_family_agg )
-
-    /////// =================== PLOT SAMPLE ===================  ///////
-
-    // SAMPLE_PLOT renders metadata-stratified charts that need bulk samplesheet columns
-    // (patient / origin / timepoint). Single-cell mode (which supplies --sample_sheet, not
-    // --samplesheet) lacks those columns, so run this only in bulk mode. SC reporting is
-    // covered by REPERTOIRE / MASTER_SUMMARY. SAMPLE_PLOT's output feeds nothing downstream.
-    if (params.samplesheet) {
-        SAMPLE_PLOT (
-            file(params.samplesheet),
-            file(params.sample_stats_template),
-            sample_stats_agg,
-            SAMPLE_CALC_PIVOT.out.v_family_wide
-            )
-    }
 
     TCRDIST3_MATRIX(
         processed_samples,

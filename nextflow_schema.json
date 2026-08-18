@@ -116,14 +116,6 @@
                     "type": "string",
                     "description": "Path to imgt lookup table."
                 },
-                "sample_stats_template": {
-                    "type": "string",
-                    "description": "Path to sample notebook template."
-                },
-                "compare_stats_template": {
-                    "type": "string",
-                    "description": "Path to compare notebook template."
-                },
                 "template_qc": {
                     "type": "string",
                     "description": "Path to QC notebook template."
@@ -160,22 +152,6 @@
             "fa_icon": "fas fa-chart-bar",
             "description": "Parameters for plotting and metadata columns.",
             "properties": {
-                "samplechart_x_col": {
-                    "type": "string",
-                    "default": "timepoint"
-                },
-                "samplechart_color_col": {
-                    "type": "string",
-                    "default": "origin"
-                },
-                "vgene_subject_col": {
-                    "type": "string",
-                    "default": "patient"
-                },
-                "vgene_x_cols": {
-                    "type": "string",
-                    "default": "origin,timepoint"
-                },
                 "subject_col": {
                     "type": "string",
                     "default": "patient",
@@ -243,9 +219,6 @@
                 "use_gliph2": {
                     "type": "boolean",
                     "default": true
-                },
-                "gliph2_report_template": {
-                    "type": "string"
                 },
                 "ref_files": {
                     "type": "string"

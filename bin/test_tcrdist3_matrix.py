@@ -1,3 +1,7 @@
+"""Manual dev check for tcrdist3_matrix.py's TRBV name conversion.
+Not wired into nf-test or CI - run directly: python bin/test_tcrdist3_matrix.py
+"""
+
 import unittest
 import tcrdist3_matrix as t3m
 

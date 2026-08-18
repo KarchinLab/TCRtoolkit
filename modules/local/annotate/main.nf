@@ -63,25 +63,6 @@ EOF
     """
 }
 
-process ANNOTATE_CONCATENATE {
-    label 'process_low'
-
-    input:
-    path samplesheet_utf8
-    path all_sample_files
-
-    output:
-    path "concatenated_cdr3.tsv", emit: concat_cdr3
-
-    script:
-    """
-    # Concatenate input Adaptive files and process metadata
-    # Note: 'all_sample_files' is used as an implicit dependency to control scheduling.
-    : $all_sample_files
-    compare_concatenate.py "${samplesheet_utf8}"
-    """
-}
-
 process ANNOTATE_SORT_CDR3 {
     label 'process_medium'
 

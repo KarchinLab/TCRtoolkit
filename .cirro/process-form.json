@@ -63,30 +63,6 @@
                 "description": "p_depth (GLIPH2)",
                 "title": "p_depth",
                 "type": "string"
-            },
-            "samplechart_x_col": {
-                "default": "timepoint",
-                "description": "Metadata column for x axis of sample-level plots for Sample workflow notebook",
-                "title": "Sample plot X axis column",
-                "type": "string"
-            },
-            "samplechart_color_col": {
-                "default": "origin",
-                "description": "Metadata column for legend color of sample-level plots for Sample workflow notebook",
-                "title": "Sample plot X axis column",
-                "type": "string"
-            },
-            "vgene_subject_col": {
-                "default": "patient",
-                "description": "Metadata column for grouping of samples for V gene plots for Sample workflow notebook",
-                "title": "V gene plot subject column",
-                "type": "string"
-            },
-            "vgene_x_cols": {
-                "default": "timepoint,origin",
-                "description": "Comma-separated list of metadata columns for x axis of V gene plot (eg. timepoint,origin or timepoint)",
-                "title": "V gene plot X axis columns",
-                "type": "string"
             }
         }
     },

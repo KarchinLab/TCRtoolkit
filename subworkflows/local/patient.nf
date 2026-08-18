@@ -32,16 +32,6 @@ workflow PATIENT {
 
     PATIENT_CALC( PATIENT_CONCATENATE.out.patient_cdr3 )
 
-    // TODO: disabling plotting until notebook updated
-    // COMPARE_PLOT( samplesheet_resolved,
-    //             COMPARE_CALC.out.jaccard_mat,
-    //             COMPARE_CALC.out.sorensen_mat,
-    //             COMPARE_CALC.out.morisita_mat,
-    //             file(params.compare_stats_template),
-    //             params.project_name,
-    //             all_sample_files
-    //             )
-
     GIANA_CALC(
         PATIENT_CONCATENATE.out.patient_cdr3,
         params.threshold,
