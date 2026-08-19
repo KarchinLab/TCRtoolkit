@@ -37,7 +37,7 @@ process VDJ_QC {
           -P metadata_file="${params.metadata_file}" \
           -P input_annotated_object="${input_annotated_object}" \
           -P outdir="VDJ_QC" \
-          -P chain_mode="auto" \
+          -P chain_mode="${params.vdj_chain_mode}" \
           -P require_productive=${params.vdj_require_productive} \
           -P require_high_conf=${params.vdj_require_high_conf} \
           -P require_full_length=${params.vdj_require_full_length} \
