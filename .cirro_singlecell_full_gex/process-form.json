@@ -1,0 +1,73 @@
+{
+    "form": {
+        "title": "TCRtoolkit Single-Cell Analysis (Full SC, GEX supplied)",
+        "description": "Runs the full single-cell TCR pipeline with a GEX/Seurat object: integrates VDJ contigs onto the annotated cells, pseudobulks per-sample clonotypes through the shared bulk-TCR engine (sample/patient/compare), then maps clusters back onto cells for CoNGA/consensus clustering and cell-level repertoire/summary reports. Provide a samplesheet with 'sample' and 'path' columns (path pointing to each sample's Cell Ranger VDJ outs/ directory), plus optional 'patient_id', 'condition', and 'timepoint' metadata columns.",
+        "properties": {
+            "input_annotated_object": {
+                "default": "",
+                "description": "S3 path to the annotated GEX Seurat object (.rds) to integrate VDJ contigs onto.",
+                "title": "Annotated GEX object (Seurat RDS)",
+                "type": "string"
+            },
+            "project_name": {
+                "default": "",
+                "description": "Name used to label outputs and reports for this run.",
+                "title": "Project name",
+                "type": "string"
+            },
+            "pseudobulk_by_phenotype": {
+                "default": false,
+                "description": "Additionally pseudobulk per cell-type/phenotype (sample__phenotype units) alongside the default per-sample pooling.",
+                "title": "Pseudobulk by phenotype",
+                "type": "boolean"
+            },
+            "pseudobulk_qc_min_clones": {
+                "default": 25,
+                "description": "Minimum number of clones a pseudobulked sample must have to pass the QC gate.",
+                "title": "Pseudobulk QC: min clones",
+                "type": "integer"
+            },
+            "pseudobulk_qc_min_cells": {
+                "default": 50,
+                "description": "Minimum number of cells a pseudobulked sample must have to pass the QC gate.",
+                "title": "Pseudobulk QC: min cells",
+                "type": "integer"
+            },
+            "pseudobulk_qc_mode": {
+                "default": "drop",
+                "description": "'drop' skips samples that fail the QC gate; 'hard_stop' aborts the whole run if any sample fails.",
+                "title": "Pseudobulk QC mode",
+                "type": "string",
+                "enum": [
+                    "drop",
+                    "hard_stop"
+                ]
+            },
+            "run_conga": {
+                "default": true,
+                "description": "Run CoNGA (GEX + TCR joint clustering). Requires the GEX object.",
+                "title": "Run CoNGA",
+                "type": "boolean"
+            },
+            "run_consensus": {
+                "default": true,
+                "description": "Run consensus clustering across clustering methods.",
+                "title": "Run consensus clustering",
+                "type": "boolean"
+            },
+            "run_repertoire": {
+                "default": true,
+                "description": "Render the cell-level repertoire report.",
+                "title": "Run repertoire report",
+                "type": "boolean"
+            },
+            "run_master_summary": {
+                "default": true,
+                "description": "Render the master summary report.",
+                "title": "Run master summary report",
+                "type": "boolean"
+            }
+        }
+    },
+    "ui": {}
+}

@@ -1,7 +1,0 @@
-{
-    "input_format": "cellranger",
-    "convert_lvl": true,
-    "sample_lvl": false,
-    "compare_lvl": false,
-    "outdir": "$.params.dataset.s3|/data/"
-}
