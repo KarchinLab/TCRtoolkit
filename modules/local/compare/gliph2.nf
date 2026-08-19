@@ -6,6 +6,11 @@ process GLIPH2_TURBOGLIPH {
 
     input:
     tuple val(patient), path(concat_cdr3)
+    val local_min_pvalue
+    val simulation_depth
+    val kmer_min_depth
+    val local_min_OVE
+    val all_aa_interchangeable
 
     output:
     // all_motifs/clone_network/cluster_member_details/global_similarities are
@@ -24,6 +29,11 @@ process GLIPH2_TURBOGLIPH {
     path "${patient}_cluster_member_details.txt", emit: 'cluster_member_details_named'
 
     script:
+    // turboGliph::gliph2() is R code interpolated into this heredoc - Groovy's boolean
+    // stringifies as lowercase true/false, which isn't a valid R symbol (R needs
+    // TRUE/FALSE), so convert explicitly rather than interpolating all_aa_interchangeable
+    // directly.
+    def all_aa_interchangeable_r = all_aa_interchangeable ? 'TRUE' : 'FALSE'
     """
     mkdir -p ${patient}
 
@@ -46,11 +56,11 @@ process GLIPH2_TURBOGLIPH {
         turboGliph::gliph2(
             cdr3_sequences = df,
             result_folder = "./${patient}",
-            lcminp = ${params.local_min_pvalue},
-            sim_depth = ${params.simulation_depth},
-            kmer_mindepth = ${params.kmer_min_depth},
-            lcminove = ${params.local_min_OVE},
-            all_aa_interchangeable = FALSE,
+            lcminp = ${local_min_pvalue},
+            sim_depth = ${simulation_depth},
+            kmer_mindepth = ${kmer_min_depth},
+            lcminove = ${local_min_OVE},
+            all_aa_interchangeable = ${all_aa_interchangeable_r},
             n_cores = ${task.cpus}
         )
         TRUE

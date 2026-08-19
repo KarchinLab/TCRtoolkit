@@ -237,8 +237,9 @@
                     "default": "c(1000, 100, 10)"
                 },
                 "all_aa_interchangeable": {
-                    "type": "string",
-                    "default": "1"
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Treat all amino acids as interchangeable when scoring GLIPH2 motif significance."
                 }
             }
         },

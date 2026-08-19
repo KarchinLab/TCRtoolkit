@@ -52,7 +52,12 @@ workflow PATIENT {
     // referencing GLIPH2_TURBOGLIPH.out directly.
     if (params.use_gliph2) {
         GLIPH2_TURBOGLIPH(
-            PATIENT_CONCATENATE.out.patient_cdr3
+            PATIENT_CONCATENATE.out.patient_cdr3,
+            params.local_min_pvalue,
+            params.simulation_depth,
+            params.kmer_min_depth,
+            params.local_min_OVE,
+            params.all_aa_interchangeable
         )
     }
 
