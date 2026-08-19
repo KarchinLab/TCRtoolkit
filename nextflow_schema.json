@@ -220,20 +220,9 @@
                     "type": "boolean",
                     "default": true
                 },
-                "ref_files": {
-                    "type": "string"
-                },
                 "local_min_pvalue": {
                     "type": "string",
                     "default": "0.001"
-                },
-                "p_depth": {
-                    "type": "string",
-                    "default": "1000"
-                },
-                "global_convergence_cutoff": {
-                    "type": "string",
-                    "default": "1"
                 },
                 "simulation_depth": {
                     "type": "string",
@@ -246,10 +235,6 @@
                 "local_min_OVE": {
                     "type": "string",
                     "default": "c(1000, 100, 10)"
-                },
-                "algorithm": {
-                    "type": "string",
-                    "default": "GLIPH2"
                 },
                 "all_aa_interchangeable": {
                     "type": "string",

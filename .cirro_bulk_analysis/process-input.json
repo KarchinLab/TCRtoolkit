@@ -10,6 +10,5 @@
     "kmer_min_depth": "$.params.dataset.paramJson.kmer_min_depth",
     "local_min_OVE": "$.params.dataset.paramJson.local_min_OVE",
     "local_min_pvalue": "$.params.dataset.paramJson.local_min_pvalue",
-    "outdir": "$.params.dataset.s3|/data/",
-    "p_depth": "$.params.dataset.paramJson.p_depth"
+    "outdir": "$.params.dataset.s3|/data/"
 }

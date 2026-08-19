@@ -57,12 +57,6 @@
                 "description": "minimum p-value for determining cluster significance (GLIPH2)",
                 "title": "local_min_pvalue",
                 "type": "string"
-            },
-            "p_depth": {
-                "default": "1000",
-                "description": "p_depth (GLIPH2)",
-                "title": "p_depth",
-                "type": "string"
             }
         }
     },
