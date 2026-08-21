@@ -12,6 +12,14 @@ process VDJ_QC {
         path(sample_sheet)
         path (input_annotated_object)
         val(project_name)
+        // Cirro/S3-backed datasets can't stage a whole outs/ directory - only
+        // individual files (see .cirro_singlecell_*/preprocess.py). These are
+        // empty lists for local/on-prem runs (params.contigs_files etc. unset),
+        // in which case the stage_vdj_files.py step below is a no-op and
+        // sample_sheet's own path column (a real local directory) is used as-is.
+        path(contigs_files, stageAs: 'staged_vdj/contigs_input*/*')
+        path(clonotypes_files, stageAs: 'staged_vdj/clonotypes_input*/*')
+        path(metrics_files, stageAs: 'staged_vdj/metrics_input*/*')
 
 
     output:
@@ -30,8 +38,15 @@ process VDJ_QC {
         export QUARTO_PRINT_STACK=true
         export HOME="\$PWD"
 
+        stage_vdj_files.py \
+          --sample-sheet "${sample_sheet}" \
+          --contigs-dir staged_vdj/contigs_input \
+          --clonotypes-dir staged_vdj/clonotypes_input \
+          --metrics-dir staged_vdj/metrics_input \
+          --out-sample-sheet resolved_sample_sheet.csv
+
         quarto render ${notebook} \
-          -P sample_sheet="${sample_sheet}" \
+          -P sample_sheet="resolved_sample_sheet.csv" \
           -P sample_sheet_sample_col="sample" \
           -P sample_sheet_path_col="path" \
           -P metadata_file="${params.metadata_file}" \

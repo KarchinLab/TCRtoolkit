@@ -295,6 +295,21 @@
                     "format": "file-path",
                     "description": "Optional annotated GEX Seurat RDS. Present \u2192 full-SC route; absent \u2192 VDJ-only route."
                 },
+                "contigs_files": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's filtered_contig_annotations.csv. Empty for local/on-prem runs."
+                },
+                "clonotypes_files": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's clonotypes.csv. Empty for local/on-prem runs."
+                },
+                "metrics_files": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's metrics_summary.csv. Empty for local/on-prem runs."
+                },
                 "pseudobulk_by_phenotype": {
                     "type": "boolean",
                     "default": false,
