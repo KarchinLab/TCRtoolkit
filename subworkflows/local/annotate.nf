@@ -14,7 +14,7 @@ include { OLGA_CONCATENATE as ANNOTATE_OLGA_CONCATENATE; OLGA_CALCULATE as ANNOT
 
     Runs ANNOTATE_PROCESS per raw input sample and builds the concatenated CDR3 table +
     per-sample pre-filter-stats sidecar that ANNOTATE (below) needs. Called only from
-    TCRTOOLKIT, on samples fresh out of INPUT_CHECK/CONVERT.
+    TCRTOOLKIT_BULK, on samples fresh out of INPUT_CHECK/CONVERT.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 

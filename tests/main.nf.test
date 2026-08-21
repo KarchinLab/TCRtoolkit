@@ -44,7 +44,7 @@ nextflow_pipeline {
 
                 mode = "singlecell"
                 // Not actually dereferenced downstream (VDJ_QC reads per-sample paths
-                // from sample_sheet instead) but validated non-null - see workflows/singlecell.nf.
+                // from sample_sheet instead) but validated non-null - see workflows/tcrtoolkit_sc.nf.
                 input_vdj_contigs = cellrangerDir
                 sample_sheet = sheet.path
                 outdir = "out-singlecell-vdjonly-test"

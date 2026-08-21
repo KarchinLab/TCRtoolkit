@@ -18,10 +18,10 @@ include { BULKTCR_ANALYSIS }    from '../subworkflows/local/bulktcr_analysis'
 */
 
 
-workflow TCRTOOLKIT {
+workflow TCRTOOLKIT_BULK {
     VALIDATE_PARAMS()
 
-    println("Running TCRTOOLKIT workflow...")
+    println("Running TCRTOOLKIT_BULK workflow...")
 
     // Split the workflow_level parameter into a list of levels
     def levels = params.workflow_level.toLowerCase().tokenize(',')

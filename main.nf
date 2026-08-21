@@ -13,8 +13,8 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { TCRTOOLKIT }           from './workflows/tcrtoolkit.nf'
-include { SINGLECELL_WORKFLOW }  from './workflows/singlecell.nf'
+include { TCRTOOLKIT_BULK } from './workflows/tcrtoolkit_bulk.nf'
+include { TCRTOOLKIT_SC }   from './workflows/tcrtoolkit_sc.nf'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -28,9 +28,9 @@ workflow {
     def mode = (params.mode ?: 'bulk').toLowerCase()
 
     if (mode == 'bulk') {
-        TCRTOOLKIT()
+        TCRTOOLKIT_BULK()
     } else if (mode == 'singlecell') {
-        SINGLECELL_WORKFLOW()
+        TCRTOOLKIT_SC()
     } else {
         error "Unknown --mode '${mode}'. Valid options: bulk | singlecell"
     }

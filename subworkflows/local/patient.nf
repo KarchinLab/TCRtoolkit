@@ -70,7 +70,7 @@ workflow PATIENT {
     // .collect() flattens tuple(val, path) emissions by default (e.g.
     // [patientA, fileA, patientB, fileB] instead of [[patientA, fileA], ...]),
     // which corrupts the [patient, file] pair indexing used downstream in
-    // workflows/tcrtoolkit.nf - flat: false preserves the pair shape.
+    // workflows/tcrtoolkit_bulk.nf - flat: false preserves the pair shape.
     giana_files                   = GIANA_CALC.out.giana_output.collect()
     gliph2_all_motifs             = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.all_motifs.collect(flat: false) : channel.value([])
     gliph2_clone_network          = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.clone_network.collect(flat: false) : channel.value([])

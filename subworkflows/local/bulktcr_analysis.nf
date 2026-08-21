@@ -15,11 +15,11 @@ include { REPORT }   from './report'
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     BULKTCR_ANALYSIS
 
-    The single shared bulk-TCR analysis engine. Both TCRTOOLKIT (bulk mode) and
-    SINGLECELL_WORKFLOW (single-cell mode, on its pseudobulked data) invoke this
+    The single shared bulk-TCR analysis engine. Both TCRTOOLKIT_BULK (bulk mode) and
+    TCRTOOLKIT_SC (single-cell mode, on its pseudobulked data) invoke this
     subworkflow rather than importing ANNOTATE/SAMPLE/PATIENT/COMPARE individually.
 
-    `levels` preserves TCRTOOLKIT's --workflow_level partial-run feature (which of
+    `levels` preserves TCRTOOLKIT_BULK's --workflow_level partial-run feature (which of
     sample/patient/compare to run). `run_reports` gates the 4 bulk report notebooks:
     bulk's report templates assume samplesheet columns (origin/timepoint) that
     single-cell-derived samplesheets don't reliably carry, so SC callers pass

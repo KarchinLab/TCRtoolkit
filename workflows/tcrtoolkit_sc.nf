@@ -1,5 +1,5 @@
 /*
- * SINGLECELL_WORKFLOW — single-cell TCR modality (integrated).
+ * TCRTOOLKIT_SC — single-cell TCR modality (integrated).
  *
  * Unified spine (see IMPLEMENTATION_SPEC.md §1.3). Both routes converge after their
  * pseudobulk step into: PSEUDOBULK_QC → ANNOTATE → full shared bulk engine
@@ -45,7 +45,7 @@ include { BULKTCR_ANALYSIS }  from '../subworkflows/local/bulktcr_analysis.nf'
 // ("`enabled` is not defined") - a plain top-level function is.
 def enabled(x) { x == null || x == true }
 
-workflow SINGLECELL_WORKFLOW {
+workflow TCRTOOLKIT_SC {
 
     def nofile  = file("${projectDir}/assets/NO_FILE")
 
