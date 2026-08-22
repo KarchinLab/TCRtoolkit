@@ -13,7 +13,7 @@ workflow CONSENSUS_SW {
     project_name
 
     main:
-    ch_notebook = Channel.fromPath(
+    ch_notebook = channel.fromPath(
         "${projectDir}/modules/scratch/CONSENSUS_CLUSTERING/Clonotype_Clustering_Consensus_Report.qmd",
         checkIfExists: true
     )

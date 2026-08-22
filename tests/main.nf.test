@@ -10,9 +10,9 @@ nextflow_pipeline {
         when {
             params {
                 samplesheet = "../../../tests/test_data/minimal-example/samplesheet.csv"
-                outdir = "out-minimal-example" 
-                input_format = "adaptive" 
-                max_memory = "8.GB" 
+                outdir = "out-minimal-example"
+                input_format = "adaptive"
+                max_memory = "8.GB"
                 max_cpus = 4
                 container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
             }
@@ -44,7 +44,7 @@ nextflow_pipeline {
 
                 mode = "singlecell"
                 // Not actually dereferenced downstream (VDJ_QC reads per-sample paths
-                // from sample_sheet instead) but validated non-null - see workflows/singlecell.nf.
+                // from sample_sheet instead) but validated non-null - see workflows/tcrtoolkit_sc.nf.
                 input_vdj_contigs = cellrangerDir
                 sample_sheet = sheet.path
                 outdir = "out-singlecell-vdjonly-test"
@@ -61,6 +61,28 @@ nextflow_pipeline {
 
         then {
             assert workflow.success
+        }
+
+    }
+
+    test("Bulk mode rejects cellranger input_format") {
+
+        tag "bulk"
+        tag "schema-validation"
+
+        when {
+            params {
+                samplesheet = "../../../tests/test_data/minimal-example/samplesheet.csv"
+                outdir = "out-bulk-cellranger-rejected"
+                input_format = "cellranger"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+            }
+        }
+
+        then {
+            assert !workflow.success
         }
 
     }

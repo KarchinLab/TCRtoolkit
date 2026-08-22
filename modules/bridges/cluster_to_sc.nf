@@ -41,7 +41,7 @@ process CLUSTER_TO_SC {
 
     script:
     """
-    Rscript ${projectDir}/bin/enrich_seurat.R \\
+    enrich_seurat.R \\
         --seurat_rds     "${seurat_rds}" \\
         --export_cells   "${export_cells}" \\
         --tcrdist_radius ${tcrdist_radius}

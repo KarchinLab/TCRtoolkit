@@ -35,5 +35,5 @@ workflow COMPARE {
     )
 
     emit:
-        shared_cdr3 = TCRSHARING_CALC.out.shared_cdr3
+        TCRSHARING_CALC.out.shared_cdr3
 }

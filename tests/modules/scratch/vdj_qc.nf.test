@@ -31,6 +31,13 @@ nextflow_process {
                 input[1] = file(sheet.path)
                 input[2] = file("${projectDir}/assets/NO_FILE")
                 input[3] = "test_project"
+                // Local/on-prem run: contigs_files/clonotypes_files/metrics_files params are
+                // unset, so vdj_qc.nf's as_file_list() resolves each to a single-entry
+                // NO_FILE list (see subworkflows/scratch/vdj_qc.nf) - sample_sheet's own
+                // "path" column is used directly, matching this test's real intent.
+                input[4] = [file("${projectDir}/assets/NO_FILE")]
+                input[5] = [file("${projectDir}/assets/NO_FILE")]
+                input[6] = [file("${projectDir}/assets/NO_FILE")]
                 """
             }
         }

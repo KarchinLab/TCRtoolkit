@@ -10,7 +10,7 @@ workflow TCRI_SW {
     project_name
 
     main:
-    ch_notebook = Channel.fromPath(
+    ch_notebook = channel.fromPath(
         "${projectDir}/modules/scratch/TCRI/TCRi_Report.qmd",
         checkIfExists: true
     )

@@ -32,16 +32,6 @@ workflow PATIENT {
 
     PATIENT_CALC( PATIENT_CONCATENATE.out.patient_cdr3 )
 
-    // TODO: disabling plotting until notebook updated
-    // COMPARE_PLOT( samplesheet_resolved,
-    //             COMPARE_CALC.out.jaccard_mat,
-    //             COMPARE_CALC.out.sorensen_mat,
-    //             COMPARE_CALC.out.morisita_mat,
-    //             file(params.compare_stats_template),
-    //             params.project_name,
-    //             all_sample_files
-    //             )
-
     GIANA_CALC(
         PATIENT_CONCATENATE.out.patient_cdr3,
         params.threshold,
@@ -62,7 +52,12 @@ workflow PATIENT {
     // referencing GLIPH2_TURBOGLIPH.out directly.
     if (params.use_gliph2) {
         GLIPH2_TURBOGLIPH(
-            PATIENT_CONCATENATE.out.patient_cdr3
+            PATIENT_CONCATENATE.out.patient_cdr3,
+            params.local_min_pvalue,
+            params.simulation_depth,
+            params.kmer_min_depth,
+            params.local_min_OVE,
+            params.all_aa_interchangeable
         )
     }
 
@@ -75,7 +70,7 @@ workflow PATIENT {
     // .collect() flattens tuple(val, path) emissions by default (e.g.
     // [patientA, fileA, patientB, fileB] instead of [[patientA, fileA], ...]),
     // which corrupts the [patient, file] pair indexing used downstream in
-    // workflows/tcrtoolkit.nf - flat: false preserves the pair shape.
+    // workflows/tcrtoolkit_bulk.nf - flat: false preserves the pair shape.
     giana_files                   = GIANA_CALC.out.giana_output.collect()
     gliph2_all_motifs             = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.all_motifs.collect(flat: false) : channel.value([])
     gliph2_clone_network          = params.use_gliph2 ? GLIPH2_TURBOGLIPH.out.clone_network.collect(flat: false) : channel.value([])

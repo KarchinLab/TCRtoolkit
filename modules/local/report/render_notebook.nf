@@ -11,8 +11,8 @@ process RENDER_NOTEBOOK {
     // ["sample/sample_stats.csv", "sample_stats.csv"]) rather than just a dest
     // path, because source and dest basenames can legitimately differ - e.g.
     // template_discovery_brief.qmd includes a generic template_pheno.qmd, which
-    // is resolved to whichever real notebook applies (template_pheno_sc.qmd or
-    // template_pheno_bulk.qmd) and symlinked to that shared destination name.
+    // is resolved to the real notebook that applies (template_pheno_bulk.qmd)
+    // and symlinked to that shared destination name.
     tuple path(notebook), path(files), val(staged_layout)
     val project_name
     val workflow_cmd

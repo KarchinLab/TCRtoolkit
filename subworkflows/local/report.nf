@@ -27,5 +27,5 @@ workflow REPORT {
     )
 
     emit:
-        rendered_html = RENDER_NOTEBOOK.out
+        RENDER_NOTEBOOK.out
 }

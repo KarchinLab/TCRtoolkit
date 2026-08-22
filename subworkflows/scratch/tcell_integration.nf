@@ -10,7 +10,7 @@ workflow TCELL_INTEGRATION_SW {
     project_name
 
     main:
-    ch_notebook = Channel.fromPath(
+    ch_notebook = channel.fromPath(
         "${projectDir}/modules/scratch/TCELL_INTEGRATION/TCell_Integration_Report.qmd",
         checkIfExists: true
     )

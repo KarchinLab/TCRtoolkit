@@ -1,0 +1,14 @@
+{
+    "input_format": "airr",
+    "convert_lvl": false,
+    "sample_lvl": "$.params.dataset.paramJson.sample_lvl",
+    "patient_lvl": "$.params.dataset.paramJson.patient_lvl",
+    "compare_lvl": "$.params.dataset.paramJson.compare_lvl",
+    "olga_chunk_length": "$.params.dataset.paramJson.olga_chunk_length",
+    "matrix_sparsity": "sparse",
+    "distance_metric": "$.params.dataset.paramJson.distance_metric",
+    "kmer_min_depth": "$.params.dataset.paramJson.kmer_min_depth",
+    "local_min_OVE": "$.params.dataset.paramJson.local_min_OVE",
+    "local_min_pvalue": "$.params.dataset.paramJson.local_min_pvalue",
+    "outdir": "$.params.dataset.s3|/data/"
+}

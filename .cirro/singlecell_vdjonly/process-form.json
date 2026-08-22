@@ -1,0 +1,37 @@
+{
+    "form": {
+        "title": "TCRtoolkit Single-Cell Analysis (VDJ-only)",
+        "description": "Runs the single-cell TCR pipeline without a GEX/Seurat object: pseudobulks each sample's VDJ contigs into a clonotype table and analyzes it through the shared bulk-TCR engine (sample/patient/compare). Provide a samplesheet with 'sample' and 'path' columns (path pointing to each sample's Cell Ranger VDJ outs/ directory), plus optional 'patient_id', 'condition', and 'timepoint' metadata columns.",
+        "properties": {
+            "project_name": {
+                "default": "",
+                "description": "Name used to label outputs and reports for this run.",
+                "title": "Project name",
+                "type": "string"
+            },
+            "pseudobulk_qc_min_clones": {
+                "default": 25,
+                "description": "Minimum number of clones a pseudobulked sample must have to pass the QC gate.",
+                "title": "Pseudobulk QC: min clones",
+                "type": "integer"
+            },
+            "pseudobulk_qc_min_cells": {
+                "default": 50,
+                "description": "Minimum number of cells a pseudobulked sample must have to pass the QC gate.",
+                "title": "Pseudobulk QC: min cells",
+                "type": "integer"
+            },
+            "pseudobulk_qc_mode": {
+                "default": "drop",
+                "description": "'drop' skips samples that fail the QC gate; 'hard_stop' aborts the whole run if any sample fails.",
+                "title": "Pseudobulk QC mode",
+                "type": "string",
+                "enum": [
+                    "drop",
+                    "hard_stop"
+                ]
+            }
+        }
+    },
+    "ui": {}
+}
