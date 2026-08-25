@@ -62,6 +62,11 @@ workflow TCRTOOLKIT_BULK {
         ? CONVERT.out.map { _meta, f -> f }.collect()
         : channel.value([])
 
+    // Bulk reports are sample-centric. Compare- and patient-dependent sections are
+    // added only when those workflow levels are present. Change this once reports do
+    // not always require sample workflow.
+    def run_reports = levels.contains('sample')
+
     // --- Main Analysis ---
     if (levels.intersect(['sample','patient','compare'])) {
         ANNOTATE_INGEST( sample_map_final )
@@ -71,7 +76,7 @@ workflow TCRTOOLKIT_BULK {
             ANNOTATE_INGEST.out.per_sample_stats,
             ANNOTATE_INGEST.out.concat_cdr3,
             levels,
-            true,
+            run_reports,
             convert_files
         )
     }
