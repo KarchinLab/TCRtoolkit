@@ -712,11 +712,19 @@ if 'fold_change' in stats_df.columns:
 # Helper function to get Top 15 Unique CDR3s per patient & origin
 def get_top_ids(df, direction):
     id_map = {}
-    
+
+    # No significant expansion/contraction events were detected (e.g. small
+    # cohorts or test data): detailed_comparisons_table is an empty frame with
+    # no columns. Return an empty map so downstream plots still render, just
+    # without highlighted clones.
+    required_cols = {'fold_change', 'p_value', 'junction_aa'}
+    if df.empty or not required_cols.issubset(df.columns):
+        return id_map
+
     # Safely group by subject and origin if it exists
     group_cols = set([subject_col, 'origin']).intersection(df.columns)
     if len(group_cols) == 0:
-        raise ValueError("No valid grouping columns in the df. Available columns: " + ", ".join(df.columns))
+        return id_map
 
     for name, group in df.groupby(list(group_cols)):
         # name is either a tuple (subject, origin) or just subject
@@ -758,6 +766,10 @@ def generate_plot_quarto_tabs(id_map, title_prefix, line_color):
     
     # 1. Initialize the Quarto Tabset
     print("::: {.panel-tabset}\n")
+
+    if not id_map:
+        print("*No clonotypes met the significance thresholds for this direction; "
+              "showing background repertoire trajectories only.*\n")
 
     # Define Status Helper 
     def get_status(row):
