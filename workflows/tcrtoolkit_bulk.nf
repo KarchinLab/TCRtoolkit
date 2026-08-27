@@ -23,11 +23,21 @@ workflow TCRTOOLKIT_BULK {
 
     println("Running TCRTOOLKIT_BULK workflow...")
 
-    // Split the workflow_level parameter into a list of levels
-    def levels = params.workflow_level.toLowerCase().tokenize(',')
+    // Construct levels list from the run_sample, run_compare, and run_patient parameters
+    def levels = []
+    if (params.run_sample) levels << 'sample'
+    if (params.run_compare) levels << 'compare'
+    if (params.run_patient) levels << 'patient'
+    if (params.run_convert) levels << 'convert'
+
     def input_format = params.input_format.toLowerCase()
 
     // Validate
+    if (params.workflow_level) {
+        println("[WARN] workflow_level is set for deprecation, please use run_<level> flags. Overriding flags with workflow_level.")
+        levels = params.workflow_level.toLowerCase().tokenize(',')
+    }
+
     if (levels.contains('convert') && input_format != 'adaptive') {
         println("\u001B[33m[WARN]\u001B[0m To run Convert workflow, please specify a valid convertible --input_format (adaptive)")
         if (!levels.contains('sample') && !levels.contains('compare')) {
