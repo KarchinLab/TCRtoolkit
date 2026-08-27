@@ -1,0 +1,5 @@
+sample,alias,patient,timepoint,origin,file
+Patient16_Base,Patient16_Base,Patient16,Base,tumor,https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/PD1_Patient16_Base.tsv
+Patient16_Post,Patient16_Post,Patient16,Post,tumor,https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/PD1_Patient16_Post.tsv
+Patient17_Base,Patient17_Base,Patient17,Base,tumor,https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/PD1_Patient17_Base.tsv
+Patient17_Post,Patient17_Post,Patient17,Post,tumor,https://raw.githubusercontent.com/KarchinLab/TCRtoolkit/refs/heads/main/tests/test_data/minimal-example/PD1_Patient17_Post.tsv

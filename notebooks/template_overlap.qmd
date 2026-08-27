@@ -704,17 +704,21 @@ import pandas as pd
 
 # Prepare stats table
 stats_df = detailed_comparisons_table.copy()
-stats_df['p_value'] = pd.to_numeric(stats_df['p_value'], errors='coerce')
-stats_df['fold_change'] = pd.to_numeric(stats_df['fold_change'], errors='coerce')
+if 'p_value' in stats_df.columns:
+    stats_df['p_value'] = pd.to_numeric(stats_df['p_value'], errors='coerce')
+if 'fold_change' in stats_df.columns:
+    stats_df['fold_change'] = pd.to_numeric(stats_df['fold_change'], errors='coerce')
 
 # Helper function to get Top 15 Unique CDR3s per patient & origin
 def get_top_ids(df, direction):
     id_map = {}
     
     # Safely group by subject and origin if it exists
-    group_cols = [subject_col, 'origin'] if 'origin' in df.columns else [subject_col]
-    
-    for name, group in df.groupby(group_cols):
+    group_cols = set([subject_col, 'origin']).intersection(df.columns)
+    if len(group_cols) == 0:
+        raise ValueError("No valid grouping columns in the df. Available columns: " + ", ".join(df.columns))
+
+    for name, group in df.groupby(list(group_cols)):
         # name is either a tuple (subject, origin) or just subject
         if direction == 'up':
             subset = group[group['fold_change'] > 1]

@@ -3,6 +3,9 @@ nextflow_pipeline {
     name "Test Workflow main.nf"
     script "main.nf"
 
+    def bulkContainer = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+    def integrationModes = "../../../tests/test_data/integration-modes"
+
     test("Minimal example dataset") {
 
         tag "minimal-example"
@@ -14,7 +17,7 @@ nextflow_pipeline {
                 input_format = "adaptive"
                 max_memory = "8.GB"
                 max_cpus = 4
-                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+                container = bulkContainer
             }
         }
 
@@ -55,7 +58,7 @@ nextflow_pipeline {
                 pseudobulk_qc_min_cells = 1
                 max_memory = "8.GB"
                 max_cpus = 4
-                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+                container = bulkContainer
             }
         }
 
@@ -77,12 +80,334 @@ nextflow_pipeline {
                 input_format = "cellranger"
                 max_memory = "8.GB"
                 max_cpus = 4
-                container = System.getenv("CONTAINER") ?: "ghcr.io/karchinlab/tcrtoolkit:main"
+                container = bulkContainer
             }
         }
 
         then {
             assert !workflow.success
+        }
+
+    }
+
+    test("Bulk convert only") {
+
+        tag "bulk"
+        tag "convert-only"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_only.csv"
+                outdir = "out-bulk-convert-only"
+                input_format = "adaptive"
+                workflow_level = "convert"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk sample only") {
+
+        tag "bulk"
+        tag "sample-only"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_only.csv"
+                outdir = "out-bulk-sample-only"
+                input_format = "adaptive"
+                workflow_level = "sample"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk patient only") {
+
+        tag "bulk"
+        tag "patient-only"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-patient-only"
+                input_format = "adaptive"
+                workflow_level = "patient"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk compare only") {
+
+        tag "bulk"
+        tag "compare-only"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-compare-only"
+                input_format = "adaptive"
+                workflow_level = "compare"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk sample and convert") {
+
+        tag "bulk"
+        tag "sample-convert"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_only.csv"
+                outdir = "out-bulk-sample-convert"
+                input_format = "adaptive"
+                workflow_level = "convert,sample"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk sample and compare") {
+
+        tag "bulk"
+        tag "sample-compare"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-sample-compare"
+                input_format = "adaptive"
+                workflow_level = "sample,compare"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk sample, patient") {
+
+        tag "bulk"
+        tag "sample-patient"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-sample-patient"
+                input_format = "adaptive"
+                workflow_level = "sample,patient"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk patient and convert") {
+
+        tag "bulk"
+        tag "patient-convert"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-patient-convert"
+                input_format = "adaptive"
+                workflow_level = "convert,patient"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk compare and convert") {
+
+        tag "bulk"
+        tag "compare-convert"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-compare-convert"
+                input_format = "adaptive"
+                workflow_level = "convert,compare"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk sample, patient, compare") {
+
+        tag "bulk"
+        tag "sample-patient-compare"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-sample-patient-compare"
+                input_format = "adaptive"
+                workflow_level = "sample,patient,compare"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk sample, patient, convert") {
+
+        tag "bulk"
+        tag "sample-patient-convert"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-sample-patient-convert"
+                input_format = "adaptive"
+                workflow_level = "convert,sample,patient"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk sample, compare, convert") {
+
+        tag "bulk"
+        tag "sample-compare-convert"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-sample-compare-convert"
+                input_format = "adaptive"
+                workflow_level = "convert,sample,compare"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk patient, compare, convert") {
+
+        tag "bulk"
+        tag "patient-compare-convert"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-patient-compare-convert"
+                input_format = "adaptive"
+                workflow_level = "convert,patient,compare"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
+        }
+
+    }
+
+    test("Bulk sample, patient, compare, convert") {
+
+        tag "bulk"
+        tag "sample-patient-compare-convert"
+
+        when {
+            params {
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-bulk-sample-patient-compare-convert"
+                input_format = "adaptive"
+                workflow_level = "convert,sample,patient,compare"
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            assert workflow.success
         }
 
     }
