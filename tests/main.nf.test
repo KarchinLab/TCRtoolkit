@@ -166,7 +166,7 @@ nextflow_pipeline {
 
         when {
             params {
-                samplesheet = "${integrationModes}/bulk_sample_compare.csv"
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
                 outdir = "out-bulk-compare-only"
                 input_format = "adaptive"
                 workflow_level = "compare"
@@ -212,7 +212,7 @@ nextflow_pipeline {
 
         when {
             params {
-                samplesheet = "../../../tests/test_data/minimal-example/samplesheet.csv"
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
                 outdir = "out-bulk-sample-compare"
                 input_format = "adaptive"
                 workflow_level = "sample,compare"
@@ -281,7 +281,7 @@ nextflow_pipeline {
 
         when {
             params {
-                samplesheet = "${integrationModes}/bulk_sample_compare.csv"
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
                 outdir = "out-bulk-compare-convert"
                 input_format = "adaptive"
                 workflow_level = "convert,compare"
@@ -350,7 +350,7 @@ nextflow_pipeline {
 
         when {
             params {
-                samplesheet = "${integrationModes}/bulk_sample_compare.csv"
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
                 outdir = "out-bulk-sample-compare-convert"
                 input_format = "adaptive"
                 workflow_level = "convert,sample,compare"
