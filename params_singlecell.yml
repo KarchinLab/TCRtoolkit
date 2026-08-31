@@ -30,6 +30,10 @@ pseudobulk_qc_mode: "drop"                       # drop | hard_stop
 workflow_level: "sample,patient,compare"
 use_gliph2: true
 
+# Collapse duplicate clonotype rows before GIANA. PATIENT_CONCATENATE stacks a patient's
+# per-sample rows, so without this GIANA clusters duplicates rather than similar sequences.
+giana_dedup_clonotypes: true
+
 # ── Single-cell report toggles (full-SC route) ───────────────────────────────
 run_conga: true
 run_consensus: true

@@ -13,12 +13,43 @@ process GIANA_CALC {
     path "${patient}_giana.txt", emit: 'giana_output'
     // path "giana_EncodingMatrix.txt"
 
-    script:   
+    script:
+    def dedup_clonotypes = (params.giana_dedup_clonotypes ?: false) ? 'True' : 'False'
+  
     """
     python3 - <<EOF
     import pandas as pd
     df = pd.read_csv("${concat_cdr3}", sep="\t")
     df = df.rename(columns={"junction_aa": "CDR3b", "v_call": "TRBV"})
+
+    # PATIENT_CONCATENATE pools a patient's samples by stacking rows, so one clonotype seen
+    # in N samples arrives as N identical (CDR3b, TRBV, j_call) rows and GIANA reports those
+    # duplicates as clusters. On an 8-sample single-cell test set that was 76 of 77
+    # "clusters", and patients with a single sample produced no output at all.
+    #
+    # Off by default so existing bulk results are unchanged; the single-cell route enables it
+    # via params.giana_dedup_clonotypes. Bulk can opt in after review.
+    if ${dedup_clonotypes}:
+        key = [c for c in ("CDR3b", "TRBV", "j_call") if c in df.columns]
+        if key:
+            n_before = len(df)
+            agg = {}
+            if "duplicate_count" in df.columns:
+                agg["duplicate_count"] = "sum"
+            if "sample" in df.columns:
+                agg["sample"] = lambda s: ";".join(sorted(set(s.astype(str))))
+            for c in df.columns:
+                if c not in key and c not in agg:
+                    agg[c] = "first"
+            cols = list(df.columns)
+            df = df.groupby(key, as_index=False, sort=False).agg(agg)
+            if "duplicate_frequency_percent" in df.columns and "duplicate_count" in df.columns:
+                total = df["duplicate_count"].sum()
+                if total:
+                    df["duplicate_frequency_percent"] = 100.0 * df["duplicate_count"] / total
+            df = df[cols]
+            print(f"[GIANA] collapsed {n_before} rows -> {len(df)} unique clonotypes", flush=True)
+
     df.to_csv("concat_cdr3_renamed.tsv", sep="\t", index=False)
     EOF
     

@@ -164,11 +164,31 @@ if (length(clone_df_files) > 0) {
             mat_hdf5 <- paste0(sample_name, "_distance_matrix.hdf5")
             mat_csv  <- paste0(sample_name, "_distance_matrix.csv")
 
-            if (file.exists(mat_hdf5) && requireNamespace("rhdf5", quietly = TRUE)) {
-                data    <- rhdf5::h5read(mat_hdf5, "data")
-                indices <- rhdf5::h5read(mat_hdf5, "indices")
-                indptr  <- rhdf5::h5read(mat_hdf5, "indptr")
-                shape   <- as.integer(rhdf5::h5read(mat_hdf5, "shape"))
+            # The SC container ships hdf5r, not rhdf5, and TCRDIST3_MATRIX only writes a
+            # .csv matrix in dense mode - so requiring rhdf5 meant every sample fell through
+            # to the missing-CSV branch and TCRdist3 was silently dropped from the whole run
+            # ("all samples failed or had no distance matrix"). Read with whichever HDF5
+            # package is available.
+            h5_reader <- if (requireNamespace("rhdf5", quietly = TRUE)) "rhdf5"
+                         else if (requireNamespace("hdf5r", quietly = TRUE)) "hdf5r"
+                         else NA_character_
+
+            read_h5 <- function(path, keys) {
+                if (identical(h5_reader, "rhdf5")) {
+                    stats::setNames(lapply(keys, function(k) rhdf5::h5read(path, k)), keys)
+                } else {
+                    fh <- hdf5r::H5File$new(path, mode = "r")
+                    on.exit(fh$close_all(), add = TRUE)
+                    stats::setNames(lapply(keys, function(k) fh[[k]]$read()), keys)
+                }
+            }
+
+            if (file.exists(mat_hdf5) && !is.na(h5_reader)) {
+                h5      <- read_h5(mat_hdf5, c("data", "indices", "indptr", "shape"))
+                data    <- h5$data
+                indices <- h5$indices
+                indptr  <- h5$indptr
+                shape   <- as.integer(h5$shape)
                 mat <- Matrix::sparseMatrix(
                     i    = as.integer(indices) + 1L,
                     p    = as.integer(indptr),

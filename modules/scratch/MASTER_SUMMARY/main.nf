@@ -6,22 +6,26 @@ process MASTER_SUMMARY {
     publishDir "${params.outdir}/Master_Summary", mode: 'copy', overwrite: true
 
     input:
-      // stageAs unique names: several of these are optional and default to the shared NO_FILE
-      // placeholder in VDJ-only mode. Without distinct staged names, Nextflow errors on
-      // "input file name collision" when two inputs resolve to the same NO_FILE. The .qmd
-      // treats any 0-byte staged file as absent.
-      path seurat_rds,                     stageAs: 'in_seurat_rds'
-      path export_cells,                   stageAs: 'in_export_cells'
+      // Core per-cell inputs. stageAs with a real extension matters: the .qmd picks its
+      // reader from the extension, and knitr/quarto infer image type the same way.
+      path seurat_rds,        stageAs: 'in_seurat_rds.rds'
+      path export_cells,      stageAs: 'in_export_cells.tsv'
 
-      path vdj_qc_per_sample_compact,      stageAs: 'in_vdj_qc_per_sample_compact'
-      path vdj_qc_before_after_summary,    stageAs: 'in_vdj_qc_before_after_summary'
-      path vdj_qc_sample_sheet_resolved,   stageAs: 'in_vdj_qc_sample_sheet_resolved'
-      path vdj_qc_clone_rank_abundance,    stageAs: 'in_vdj_qc_clone_rank_abundance'
-
-      path vdj_qc_before_after_retention_fig, stageAs: 'in_vdj_qc_before_after_retention_fig'
-      path vdj_qc_pairing_bar_fig,            stageAs: 'in_vdj_qc_pairing_bar_fig'
-      path vdj_qc_clone_rank_abundance_fig,   stageAs: 'in_vdj_qc_clone_rank_abundance_fig'
-      path vdj_qc_multiple_chains_fig,        stageAs: 'in_vdj_qc_multiple_chains_fig'
+      // Each upstream module contributes its whole tables/ directory under
+      // intables/<module>/. This replaces the previous ~30 individually-wired file params:
+      // a module that did not run on this route simply stages nothing, the .qmd finds no
+      // files, and the affected sections render an explanatory note. Adding a new upstream
+      // table no longer requires another process input.
+      path vdj_qc_tables,     stageAs: 'intables/vdj_qc/*'
+      path pseudobulk_tables, stageAs: 'intables/pseudobulk/*'
+      path sample_tables,     stageAs: 'intables/sample/*'
+      path compare_tables,    stageAs: 'intables/compare/*'
+      path rollup_tables,     stageAs: 'intables/rollup/*'
+      path repertoire_tables, stageAs: 'intables/repertoire/*'
+      path tcell_tables,      stageAs: 'intables/tcell/*'
+      path conga_tables,      stageAs: 'intables/conga/*'
+      path consensus_tables,  stageAs: 'intables/consensus/*'
+      path tcri_tables,       stageAs: 'intables/tcri/*'
 
       path qmd
       val  barrier_done
@@ -29,33 +33,24 @@ process MASTER_SUMMARY {
 
     output:
       path "Master_Summary_Report.html", emit: report_html
-      path "Master_Summary_Report/tables/*", emit: tables, optional: true
+      path "Master_Summary_Report/tables/*",  emit: tables,  optional: true
       path "Master_Summary_Report/figures/*", emit: figures, optional: true
 
     script:
     """
-    mkdir -p Master_Summary_Report
-    mkdir -p Master_Summary_Report/data
-    mkdir -p Master_Summary_Report/tables
-    mkdir -p Master_Summary_Report/figures
+    mkdir -p Master_Summary_Report/tables Master_Summary_Report/figures
 
     quarto render ${qmd} \\
       -P project_name="${project_name}" \\
+      -P tables_dir="intables" \\
       -P seurat_rds="${seurat_rds}" \\
       -P export_cells_file="${export_cells}" \\
-      -P vdj_qc_per_sample_compact_file="${vdj_qc_per_sample_compact}" \\
-      -P vdj_qc_before_after_summary_file="${vdj_qc_before_after_summary}" \\
-      -P vdj_qc_sample_sheet_resolved_file="${vdj_qc_sample_sheet_resolved}" \\
-      -P vdj_qc_clone_rank_abundance_file="${vdj_qc_clone_rank_abundance}" \\
-      -P vdj_qc_before_after_retention_fig="${vdj_qc_before_after_retention_fig}" \\
-      -P vdj_qc_pairing_bar_fig="${vdj_qc_pairing_bar_fig}" \\
-      -P vdj_qc_clone_rank_abundance_fig="${vdj_qc_clone_rank_abundance_fig}" \\
-      -P vdj_qc_multiple_chains_fig="${vdj_qc_multiple_chains_fig}" \\
+      -P outdir="Master_Summary_Report" \\
       -P label_col="${params.label_col}" \\
       -P sample_col="${params.sample_col}" \\
       -P patient_col="${params.patient_col}" \\
       -P condition_col="${params.condition_col}" \\
       -P timepoint_col="${params.timepoint_col}" \\
-      -P outdir="Master_Summary_Report"
+      -P tcrdist_radius=${params.tcrdist_radius}
     """
 }
