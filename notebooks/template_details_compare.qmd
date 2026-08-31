@@ -1,5 +1,5 @@
 ---
-title: "Details"
+title: "Details — Comparison"
 format:
   html:
     theme: flatly
@@ -30,7 +30,8 @@ Thank you for using TCRtoolkit! This report is generated from the data you provi
 
 ::: {.callout-note collapse="true"}
 ## Notebook Analysis Scope
-This notebook provides a more detailed analysis of the samples being analyzed.
+This notebook provides a detailed cross-sample and longitudinal comparison analysis
+(clonal dynamics, repertoire overlap, and TCR publicity).
 :::
 
 ```{python}
@@ -107,4 +108,10 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 
 {{< include ./template_sharing.qmd >}}
 
-{{< include ./template_patient_clustering.qmd >}}
+## Patient-level TCR clustering (GIANA/GLIPH2)
+
+::: {.callout-note}
+Patient-level clonotype clustering (GIANA and GLIPH2) is reported separately in
+the **Patient Details** report (`template_details_patient.html`), which is
+generated when `patient` is included in `--workflow_level`.
+:::

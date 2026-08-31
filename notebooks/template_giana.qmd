@@ -18,6 +18,7 @@ notebook_results_dir = f"{project_dir}/notebook-analysis/"
 #| code-fold: true
 
 # 1. Load Packages
+import os
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go

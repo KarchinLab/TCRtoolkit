@@ -124,25 +124,21 @@
                     "type": "string",
                     "description": "Path to discovery brief notebook template."
                 },
-                "template_details_part1": {
+                "template_details_sample": {
                     "type": "string",
-                    "description": "Path to details (part 1) notebook template."
+                    "description": "Path to the sample-level details notebook template (rendered when the sample workflow_level is run)."
                 },
-                "template_details_part2": {
+                "template_details_compare": {
                     "type": "string",
-                    "description": "Path to details (part 2) notebook template."
+                    "description": "Path to the comparison-level details notebook template (rendered when the compare workflow_level is run)."
+                },
+                "template_details_patient": {
+                    "type": "string",
+                    "description": "Path to the patient-level details notebook template with GIANA/GLIPH2 clustering (rendered when the patient workflow_level is run)."
                 },
                 "template_pheno_bulk": {
                     "type": "string",
                     "description": "Path to bulk (TCRpheno) phenotype notebook template."
-                },
-                "template_patient_clustering_on": {
-                    "type": "string",
-                    "description": "Path to patient-level clustering (GIANA/GLIPH2) notebook template, used when patient workflow_level is run."
-                },
-                "template_patient_clustering_off": {
-                    "type": "string",
-                    "description": "Path to placeholder notebook template used when patient workflow_level is not run."
                 }
             }
         },
