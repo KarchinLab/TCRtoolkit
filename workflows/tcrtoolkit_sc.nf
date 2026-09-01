@@ -251,7 +251,12 @@ workflow TCRTOOLKIT_SC {
                  CLUSTER_ROLLUP.out.method_cluster_counts,
                  CLUSTER_ROLLUP.out.annotation_giana,
                  CLUSTER_ROLLUP.out.annotation_gliph2,
-                 CLUSTER_ROLLUP.out.annotation_tcrdist3)
+                 CLUSTER_ROLLUP.out.annotation_tcrdist3,
+                 CLUSTER_ROLLUP.out.giana_detail,
+                 CLUSTER_ROLLUP.out.gliph2_detail,
+                 CLUSTER_ROLLUP.out.tcrdist_detail,
+                 CLUSTER_ROLLUP.out.giana_vgene,
+                 CLUSTER_ROLLUP.out.gliph2_vgene)
             .collect().ifEmpty([])
 
         def pseudobulk_tables = channel.empty()

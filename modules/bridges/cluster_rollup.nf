@@ -38,6 +38,11 @@ process CLUSTER_ROLLUP {
       path "annotation_giana_summary.tsv",    emit: annotation_giana,     optional: true
       path "annotation_gliph2_summary.tsv",   emit: annotation_gliph2,    optional: true
       path "annotation_tcrdist3_summary.tsv", emit: annotation_tcrdist3,  optional: true
+      path "giana_cluster_detail.tsv",        emit: giana_detail,        optional: true
+      path "gliph2_motif_detail.tsv",         emit: gliph2_detail,       optional: true
+      path "tcrdist_cluster_detail.tsv",      emit: tcrdist_detail,      optional: true
+      path "giana_vgene_usage.tsv",           emit: giana_vgene,         optional: true
+      path "gliph2_vgene_usage.tsv",          emit: gliph2_vgene,        optional: true
 
     script:
     // nullglob so an empty staging directory expands to nothing rather than a literal

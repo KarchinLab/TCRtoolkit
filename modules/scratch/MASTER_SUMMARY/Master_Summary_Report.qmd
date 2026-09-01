@@ -286,6 +286,11 @@ method_counts  <- Tfirst(c("consensus", "rollup"), "method_cluster_counts.tsv")
 anno_giana     <- T("rollup", "annotation_giana_summary.tsv")
 anno_gliph2    <- T("rollup", "annotation_gliph2_summary.tsv")
 anno_tcrdist   <- T("rollup", "annotation_tcrdist3_summary.tsv")
+giana_detail   <- T("rollup", "giana_cluster_detail.tsv")
+gliph2_detail  <- T("rollup", "gliph2_motif_detail.tsv")
+tcrdist_detail <- T("rollup", "tcrdist_cluster_detail.tsv")
+giana_vgene    <- T("rollup", "giana_vgene_usage.tsv")
+gliph2_vgene   <- T("rollup", "gliph2_vgene_usage.tsv")
 
 # ── Repertoire ──
 rep_rollup     <- T("repertoire", "repertoire_summary_rollup.tsv")
@@ -780,6 +785,118 @@ seen in several samples of a patient arrived as duplicate rows and GIANA reporte
 duplicates as clusters — inflating cluster counts and producing no output at all for
 patients with a single sample.
 :::
+
+## Cluster composition
+
+Every cluster from each method, sized by membership. `n_unique_cdr3` separates real
+sequence similarity from duplicate detection: a cluster whose members are all the same
+CDR3β is the same clonotype seen in several samples, not a similarity group.
+
+```{r}
+#| label: cluster-sizes
+#| results: asis
+det <- list(GIANA = giana_detail, GLIPH2 = gliph2_detail, TCRdist3 = tcrdist_detail)
+det <- det[vapply(det, have, logical(1))]
+if (!length(det)) {
+  note("No cluster detail tables available.")
+} else {
+  rows <- lapply(names(det), function(nm) {
+    d <- det[[nm]]
+    data.frame(method = nm,
+               size   = as.numeric(d$n_members),
+               stringsAsFactors = FALSE)
+  })
+  d <- bind_rows(rows) %>%
+    count(method, size, name = "n_clusters") %>%
+    transmute(cat = size, val = n_clusters, grp = method,
+              hover = paste0(method, "<br>", n_clusters, " cluster(s) of size ", size))
+  save_table(d, "master_cluster_size_distribution.tsv")
+  gbar(d, "Cluster size distribution by method", "Members per cluster", "Clusters")
+}
+```
+
+```{r}
+#| label: gliph2-top-motifs
+if (!have(gliph2_detail)) {
+  note("No GLIPH2 motif detail available.")
+} else {
+  save_table(gliph2_detail, "master_gliph2_motif_detail.tsv")
+  d <- gliph2_detail %>%
+    slice_max(n_members, n = params$top_n_clusters, with_ties = FALSE) %>%
+    transmute(cat = paste0(cluster, "  (", patient, ")"),
+              val = n_members,
+              hover = paste0("motif ", cluster, "<br>patient ", patient,
+                             "<br>", n_members, " members, ", n_unique_cdr3,
+                             " distinct CDR3b<br>", n_samples, " sample(s)"))
+  hbar(d, paste0("Top ", params$top_n_clusters, " GLIPH2 motif clusters"),
+       "Members", colour = "#d95f02", height = 560)
+}
+```
+
+```{r}
+#| label: cross-sample-reach
+#| results: asis
+rows <- list()
+for (nm in names(det)) {
+  d <- det[[nm]]
+  if (!("n_samples" %in% names(d))) next
+  rows[[nm]] <- data.frame(
+    method = nm,
+    frac   = mean(as.numeric(d$n_samples) > 1, na.rm = TRUE),
+    n      = nrow(d), stringsAsFactors = FALSE)
+}
+if (!length(rows)) {
+  note("No per-cluster sample counts available.")
+} else {
+  d <- bind_rows(rows)
+  save_table(d, "master_cluster_cross_sample.tsv")
+  dd <- d %>% transmute(cat = method, val = frac,
+                        hover = paste0(method, "<br>",
+                                       percent(frac, accuracy = 0.1),
+                                       " of ", n, " clusters span >1 sample"))
+  hbar(dd, "Clusters spanning more than one sample", "Fraction of clusters",
+       height = 380, tickformat = ".0%")
+}
+```
+
+A cluster spanning several samples is the interesting case — the same or similar receptor
+recovered independently, rather than confined to one library.
+
+```{r}
+#| label: giana-cluster-table
+if (!have(giana_detail)) {
+  note("No GIANA cluster detail available.")
+} else {
+  save_table(giana_detail, "master_giana_cluster_detail.tsv")
+  itable(giana_detail, pageSize = 10)
+}
+```
+
+## V-gene usage within clusters
+
+Germline V-gene composition of the clustered clonotypes, per patient. A motif family
+dominated by one V gene is a stronger structural signal than one drawn from many.
+
+```{r}
+#| label: cluster-vgene
+#| results: asis
+vg <- list(GIANA = giana_vgene, GLIPH2 = gliph2_vgene)
+vg <- vg[vapply(vg, have, logical(1))]
+if (!length(vg)) {
+  note("No V-gene usage tables available for the clustering methods.")
+} else {
+  d <- bind_rows(lapply(names(vg), function(nm)
+        data.frame(method = nm, vg[[nm]], stringsAsFactors = FALSE))) %>%
+    group_by(method) %>%
+    slice_max(n_clonotypes, n = params$top_n_genes, with_ties = FALSE) %>%
+    ungroup()
+  save_table(d, "master_cluster_vgene_usage.tsv")
+  dd <- d %>% transmute(cat = vgene, val = n_clonotypes, grp = method,
+                        hover = paste0(method, "<br>", vgene, "<br>patient ", patient,
+                                       "<br>", n_clonotypes, " clonotypes"))
+  gbar(dd, "V-gene usage among clustered clonotypes", "", "Clonotypes", height = 520)
+}
+```
 
 ## Per-annotation clustering coverage
 

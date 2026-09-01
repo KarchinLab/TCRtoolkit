@@ -138,10 +138,11 @@ def tcrdist_clusters(matrix_paths, radius):
     except ImportError as exc:
         print(f"[cluster_rollup] WARN: scipy/numpy unavailable, skipping tcrdist clustering: {exc}",
               file=sys.stderr)
-        return 0, {}, 0
+        return 0, {}, 0, None
 
     per_sample = {}
     total_clustered = 0
+    detail_rows = []
 
     for p in matrix_paths:
         if not usable(p):
@@ -175,11 +176,61 @@ def tcrdist_clusters(matrix_paths, radius):
 
         n_comp, labels = connected_components(adj, directed=False)
         sizes = pd.Series(labels).value_counts()
-        n_real = int((sizes >= 2).sum())
-        per_sample[sample] = n_real
-        total_clustered += int(sizes[sizes >= 2].sum())
+        real = sizes[sizes >= 2]
+        per_sample[sample] = int(len(real))
+        total_clustered += int(real.sum())
+        for cid, n in real.items():
+            detail_rows.append({"sample": sample, "cluster": int(cid), "n_members": int(n)})
 
-    return sum(per_sample.values()), per_sample, total_clustered
+    detail = pd.DataFrame(detail_rows).sort_values("n_members", ascending=False) \
+             if detail_rows else None
+    return sum(per_sample.values()), per_sample, total_clustered, detail
+
+
+def write_detail(outdir, name, df, label):
+    """Detail tables feed the Master Summary's per-method figures."""
+    if df is None or not len(df):
+        return
+    df.to_csv(os.path.join(outdir, name), sep="\t", index=False)
+    print(f"[cluster_rollup] wrote {name} ({len(df)} {label})")
+
+
+def cluster_detail(df, cluster_col, cdr3, label):
+    """
+    One row per cluster: size, distinct sequences, and how many samples it spans.
+
+    Cluster identity is scoped by patient (the __group column). GIANA and GLIPH2 both
+    number/label clusters within a patient, so a bare id collides across patients.
+    """
+    key = cluster_key(df, cluster_col)
+    if key is None or cdr3 is None:
+        return None
+    d = pd.DataFrame({
+        "patient": df["__group"].astype(str),
+        "cluster": df[cluster_col].astype(str),
+        "_key":    key,
+        "cdr3":    cdr3,
+        "sample":  df["sample"].astype(str) if "sample" in df.columns else "NA",
+    }).dropna(subset=["cdr3"])
+    if not len(d):
+        return None
+    out = (d.groupby(["_key", "patient", "cluster"], as_index=False)
+             .agg(n_members=("cdr3", "size"),
+                  n_unique_cdr3=("cdr3", "nunique"),
+                  n_samples=("sample", "nunique")))
+    # A cluster whose members are all the same sequence is duplicate detection, not
+    # similarity - surfacing it makes that visible rather than implied.
+    out["is_similarity"] = out["n_unique_cdr3"] > 1
+    return out.drop(columns="_key").sort_values("n_members", ascending=False)
+
+
+def vgene_usage(df, vcol, label):
+    if vcol not in df.columns:
+        return None
+    d = (df.assign(patient=df["__group"].astype(str), vgene=df[vcol].astype(str))
+           .groupby(["patient", "vgene"], as_index=False)
+           .size().rename(columns={"size": "n_clonotypes"}))
+    return d.sort_values("n_clonotypes", ascending=False)
 
 
 def first_col(df, candidates):
@@ -287,6 +338,10 @@ def main():
         ])
         clustered["GIANA"] = cluster_series(giana, cdr3, "cluster")
         counts["GIANA"] = int(n_clusters)
+        write_detail(args.outdir, "giana_cluster_detail.tsv",
+                     cluster_detail(giana, "cluster", cdr3, "GIANA"), "clusters")
+        write_detail(args.outdir, "giana_vgene_usage.tsv",
+                     vgene_usage(giana, "TRBV", "GIANA"), "patient/V-gene rows")
 
     # ── GLIPH2 ───────────────────────────────────────────────────────────────
     if gliph is not None:
@@ -305,6 +360,10 @@ def main():
         ])
         clustered["GLIPH2"] = cluster_series(gliph, cdr3, "tag")
         counts["GLIPH2"] = int(n_clusters)
+        write_detail(args.outdir, "gliph2_motif_detail.tsv",
+                     cluster_detail(gliph, "tag", cdr3, "GLIPH2"), "motifs")
+        write_detail(args.outdir, "gliph2_vgene_usage.tsv",
+                     vgene_usage(gliph, "TRBV", "GLIPH2"), "patient/V-gene rows")
 
     # ── TCRdist3 ─────────────────────────────────────────────────────────────
     # clone_df carries no cluster labels (those come from thresholding the distance
@@ -322,9 +381,10 @@ def main():
         if export is not None and "tcrdist_cluster" in export.columns:
             n_tcrdist_clusters = int(export["tcrdist_cluster"].nunique(dropna=True))
         elif args.tcrdist_matrix:
-            n_tcrdist_clusters, per_sample, n_clustered_clones = tcrdist_clusters(
+            n_tcrdist_clusters, per_sample, n_clustered_clones, td_detail = tcrdist_clusters(
                 args.tcrdist_matrix, args.tcrdist_radius
             )
+            write_detail(args.outdir, "tcrdist_cluster_detail.tsv", td_detail, "clusters")
 
         rows = [
             ("Samples analysed", tcrd["__group"].nunique()),
