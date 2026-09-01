@@ -41,7 +41,9 @@ tmp
 
 ## Run artifacts — existing rules only match bare `work` and `results*`,
 ## so custom -w / --outdir names slip through.
-work*/
+# NB: not `work*/` - that also matches workflows/, the source directory.
+work/
+work_*/
 test_results*/
 test_v2port*/
 logs/

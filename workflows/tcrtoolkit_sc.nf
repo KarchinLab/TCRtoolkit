@@ -37,6 +37,7 @@ include { CLUSTER_TO_SC_SW }     from '../subworkflows/bridges/cluster_to_sc.nf'
 include { SC_SAMPLE_STATS }      from '../modules/bridges/sc_sample_stats.nf'
 include { BULK_TO_EXPORT }       from '../modules/bridges/bulk_to_export.nf'
 include { CLUSTER_ROLLUP }       from '../modules/bridges/cluster_rollup.nf'
+include { MERGE_VDJ_OBJECT }     from '../modules/bridges/merge_vdj_object.nf'
 
 // ── Shared bulk-TCR analysis engine (main/local — unchanged behavior) ─────
 include { PSEUDOBULK_QC_SW }  from '../subworkflows/local/pseudobulk_qc.nf'
@@ -95,6 +96,18 @@ workflow TCRTOOLKIT_SC {
     def vdj_qc_pairing_bar_fig            = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'pairing_bar_by_sample.png'          }.ifEmpty(nofile)
     def vdj_qc_clone_rank_abundance_fig   = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'clone_rank_abundance.png'           }.ifEmpty(nofile)
     def vdj_qc_multiple_chains_fig        = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'multiple_chains_by_sample.png'      }.ifEmpty(nofile)
+
+    // ── Step 1b: merged per-cell TCR object, pre- and post-QC ─────────────
+    // Real barcodes, all samples pooled. On the VDJ-only route this is the only per-cell
+    // object produced - BULK_TO_EXPORT's export is clonotype-level with synthesized cells.
+    if (enabled(params.run_merge_vdj_object)) {
+        MERGE_VDJ_OBJECT(
+            pickFile(vdj_qc_out.qc_tables, 'contigs_before_qc.tsv', nofile),
+            pickFile(vdj_qc_out.qc_tables, 'contigs_after_qc.tsv',  nofile),
+            channel.fromPath("${projectDir}/bin/merge_vdj_object.R", checkIfExists: true),
+            ch_project_name
+        )
+    }
 
     // ── Step 2: pseudobulk → clonotype table (route-specific source) ──────
     def sc_samplesheet = nofile
