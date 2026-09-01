@@ -13,9 +13,7 @@ process GIANA_CALC {
     path "${patient}_giana.txt", emit: 'giana_output'
     // path "giana_EncodingMatrix.txt"
 
-    script:
-    def dedup_clonotypes = (params.giana_dedup_clonotypes ?: false) ? 'True' : 'False'
-  
+    def dedup_clonotypes = (params.giana_dedup_clonotypes == true) ? 'True' : 'False'
     """
     python3 - <<EOF
     import pandas as pd
