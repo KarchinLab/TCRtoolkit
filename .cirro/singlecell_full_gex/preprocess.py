@@ -105,6 +105,33 @@ def prepare_sample_sheet(ds):
             ds.logger.warning(f"sample_sheet is missing required column '{colname}'. Populating with NaN.")
             sample_sheet[colname] = np.nan
 
+    try:
+        # The PATIENT step (GIANA + GLIPH2) pools samples by params.patient_col. If that column
+        # is absent every sample becomes its own patient and the clustering is silently wrong -
+        # no error, just useless results - so say so loudly here. samplesheet_from_params()'s
+        # fallback frame in particular carries only sample/path.
+        # ds.params may be a plain dict or a params object depending on cirro version, and a
+        # warning must never be the thing that breaks preprocessing - so degrade to the default.
+        try:
+            patient_col = dict(ds.params).get("patient_col") or "patient_id"
+        except Exception:
+            patient_col = "patient_id"
+        if patient_col not in sample_sheet.columns:
+            ds.logger.warning(
+                f"sample_sheet has no '{patient_col}' column. GIANA and GLIPH2 pool samples per "
+                "patient, so each sample will be treated as its own patient and cross-sample "
+                "clustering within a patient will be lost. Add the column to the dataset "
+                "samplesheet, or set 'Patient column' to one that exists."
+            )
+        elif sample_sheet[patient_col].isna().any():
+            missing = sample_sheet.loc[sample_sheet[patient_col].isna(), "sample"].tolist()
+            ds.logger.warning(f"Samples with no {patient_col}: {missing}. These will not pool with any patient.")
+        else:
+            n_pat = sample_sheet[patient_col].nunique()
+            ds.logger.info(f"{len(sample_sheet)} samples across {n_pat} patients (by '{patient_col}')")
+    except Exception as e:
+        ds.logger.warning(f"patient-column check skipped: {e}")
+
     sample_sheet.to_csv('sample_sheet.csv', index=None)
     ds.add_param('sample_sheet', 'sample_sheet.csv')
     ds.logger.info(sample_sheet.to_dict())

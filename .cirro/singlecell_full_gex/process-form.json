@@ -66,6 +66,30 @@
                 "description": "Render the master summary report.",
                 "title": "Run master summary report",
                 "type": "boolean"
+            },
+            "patient_col": {
+                "type": "string",
+                "title": "Patient column",
+                "description": "Sample-sheet column holding the patient/subject ID. GIANA and GLIPH2 pool samples per patient using this; if it is wrong, every sample is treated as its own patient.",
+                "default": "patient_id"
+            },
+            "run_tcri": {
+                "type": "boolean",
+                "title": "Run TCRi",
+                "description": "Immunogenicity scoring on the enriched Seurat object. Requires a GEX object. Adds roughly an hour of runtime.",
+                "default": true
+            },
+            "giana_dedup_clonotypes": {
+                "type": "boolean",
+                "title": "Deduplicate clonotypes before GIANA",
+                "description": "Collapse to one row per clonotype before GIANA. Patient pooling stacks per-sample rows, so without this GIANA clusters cross-sample duplicates rather than similar sequences.",
+                "default": true
+            },
+            "tcrdist_radius": {
+                "type": "integer",
+                "title": "TCRdist radius",
+                "description": "Distance threshold for TCRdist3 connected-component clustering.",
+                "default": 24
             }
         }
     },

@@ -30,6 +30,24 @@
                     "drop",
                     "hard_stop"
                 ]
+            },
+            "patient_col": {
+                "type": "string",
+                "title": "Patient column",
+                "description": "Sample-sheet column holding the patient/subject ID. GIANA and GLIPH2 pool samples per patient using this; if it is wrong, every sample is treated as its own patient.",
+                "default": "patient_id"
+            },
+            "giana_dedup_clonotypes": {
+                "type": "boolean",
+                "title": "Deduplicate clonotypes before GIANA",
+                "description": "Collapse to one row per clonotype before GIANA. Patient pooling stacks per-sample rows, so without this GIANA clusters cross-sample duplicates rather than similar sequences.",
+                "default": true
+            },
+            "tcrdist_radius": {
+                "type": "integer",
+                "title": "TCRdist radius",
+                "description": "Distance threshold for TCRdist3 connected-component clustering.",
+                "default": 24
             }
         }
     },
