@@ -113,5 +113,5 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 ::: {.callout-note}
 Patient-level clonotype clustering (GIANA and GLIPH2) is reported separately in
 the **Patient Details** report (`template_details_patient.html`), which is
-generated when `patient` is included in `--workflow_level`.
+generated when `sample` and `patient` are both included in `--workflow_level`.
 :::

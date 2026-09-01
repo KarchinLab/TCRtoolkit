@@ -130,11 +130,11 @@
                 },
                 "template_details_compare": {
                     "type": "string",
-                    "description": "Path to the comparison-level details notebook template (rendered when the compare workflow_level is run)."
+                    "description": "Path to the comparison-level details notebook template (rendered when the sample and compare workflow_levels are run)."
                 },
                 "template_details_patient": {
                     "type": "string",
-                    "description": "Path to the patient-level details notebook template with GIANA/GLIPH2 clustering (rendered when the patient workflow_level is run)."
+                    "description": "Path to the patient-level details notebook template with GIANA/GLIPH2 clustering (rendered when the sample and patient workflow_levels are run)."
                 },
                 "template_pheno_bulk": {
                     "type": "string",

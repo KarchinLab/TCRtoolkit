@@ -209,7 +209,8 @@ workflow BULKTCR_ANALYSIS {
         }
 
         // Patient-level details report (GIANA, plus GLIPH2 when --use_gliph2). Rendered
-        // whenever the patient stage ran; it does not depend on the compare stage.
+        // when the patient stage ran (this block already requires run_reports && sample);
+        // it does not additionally depend on the compare stage.
         if (levels.contains('patient')) {
             def patient_notebooks_dir = file(params.template_details_patient).parent
             def patient_include_files = [

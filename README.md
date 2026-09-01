@@ -70,15 +70,15 @@ After the pipeline finishes, `TCRtoolkit` generates interactive HTML reports usi
 | `template_qc.qmd` | `sample` | Quality control metrics and filtering summary |
 | `template_discovery_brief.qmd` | `sample` + `compare` | Highest-impact repertoire findings |
 | `template_details_sample.qmd` | `sample` | Detailed per-sample repertoire analysis |
-| `template_details_compare.qmd` | `compare` | Detailed cross-sample / longitudinal comparison analysis |
-| `template_details_patient.qmd` | `patient` | Patient-level clonotype clustering (GIANA, and GLIPH2 when `--use_gliph2`) |
+| `template_details_compare.qmd` | `sample` + `compare` | Detailed cross-sample / longitudinal comparison analysis |
+| `template_details_patient.qmd` | `sample` + `patient` | Patient-level clonotype clustering (GIANA, and GLIPH2 when `--use_gliph2`) |
  
 ### Conditional Report Sections
  
 Certain sub-reports are automatically appended based on input and workflow options:
  
 - `--input_format adaptive` → includes bulk phenotype report
-- `--workflow_level` includes `patient` → renders `template_details_patient.qmd` (patient-level clonotype analysis)
+- `--workflow_level` includes `sample` and `patient` → renders `template_details_patient.qmd` (patient-level clonotype analysis)
 - `--use_gliph2` → additionally includes GLIPH2 clustering in the patient details report
 
 ## Key Parameters
