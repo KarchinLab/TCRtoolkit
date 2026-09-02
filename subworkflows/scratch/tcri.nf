@@ -21,4 +21,8 @@ workflow TCRI_SW {
     report_html      = ch_tcri.report_html
     seurat_with_tcri = ch_tcri.seurat_with_tcri
     export_cells     = ch_tcri.export_cells
+    // Re-export the module's tables/figures so the Master Summary can pick up
+    // tcri_summary_rollup.tsv and annotation_tcri_summary.tsv.
+    tables           = ch_tcri.tables
+    figures          = ch_tcri.figures
 }

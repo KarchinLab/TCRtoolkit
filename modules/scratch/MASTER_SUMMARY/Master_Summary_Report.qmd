@@ -1,64 +1,35 @@
 ---
-title: "SCRATCH-TCR: Master Summary Report"
-author: "Syed Shujaat Ali Zaidi"
+title: "TCR-Toolkit-SCRATCH: Master Summary"
 format:
   html:
     toc: true
-    toc-depth: 3
+    toc-depth: 2
+    toc-location: left
     number-sections: true
     code-fold: true
     code-summary: "Show code"
     embed-resources: true
-    theme: defualt
-    df-print: paged
+    theme: cosmo
+    fig-width: 10
+    fig-height: 6
 execute:
   echo: false
   warning: false
   message: false
 params:
-  project_name: "SCRATCH-TCR Project"
+  project_name: "TCR-Toolkit-SCRATCH"
   outdir: "Master_Summary_Report"
 
-  vdj_qc_per_sample_compact_file: ""
-  vdj_qc_before_after_summary_file: ""
-  vdj_qc_sample_sheet_resolved_file: ""
-  vdj_qc_clone_rank_abundance_file: ""
+  # Root of the staged per-module table directories (tables_dir/<module>/<file>).
+  # Replaces the previous ~30 individually-wired file params: modules publish whole
+  # tables/ directories, so new upstream tables become available here without another
+  # round of process-input plumbing.
+  tables_dir: "intables"
 
-  vdj_qc_before_after_retention_fig: ""
-  vdj_qc_pairing_bar_fig: ""
-  vdj_qc_clone_rank_abundance_fig: ""
-  vdj_qc_multiple_chains_fig: ""
-  
-  # core inputs
-  seurat_rds: "data/seurat_with_consensus_clonotype_clusters.rds"
-  export_cells_file: "data/consensus_export_cells.tsv"
+  seurat_rds: ""
+  export_cells_file: ""
 
-  # optional module rollups
-  vdj_qc_summary_file: "data/vdj_qc_per_sample_compact.tsv"
-  tcell_integration_summary_file: "data/tcell_summary_rollup.tsv"
-  tcri_summary_file: "data/tcri_summary_rollup.tsv"
-  conga_summary_file: "data/conga_summary_rollup.tsv"
-  gliph2_summary_file: "data/gliph2_summary_rollup.tsv"
-  tcrdist3_summary_file: "data/tcrdist3_summary_rollup.tsv"
-  giana_summary_file: "data/giana_summary_rollup.tsv"
-  consensus_summary_file: "data/consensus_summary_rollup.tsv"
-  repertoire_summary_file: "data/repertoire_summary_rollup.tsv"
-
-  # optional richer inputs
-  diversity_by_sample_file: "data/diversity_by_sample.tsv"
-  clone_burden_file: "data/clone_burden_cells_by_sample.tsv"
-  sample_overlap_matrix_file: "data/sample_overlap_matrix.tsv"
-  method_presence_file: "data/method_presence_summary.tsv"
-  method_cluster_counts_file: "data/method_cluster_counts.tsv"
-  consensus_cluster_summary_file: "data/consensus_cluster_summary.tsv"
-  annotation_tcri_summary_file: "data/annotation_tcri_summary.tsv"
-  annotation_conga_summary_file: "data/annotation_conga_summary.tsv"
-  annotation_gliph2_summary_file: "data/annotation_gliph2_summary.tsv"
-  annotation_tcrdist3_summary_file: "data/annotation_tcrdist3_summary.tsv"
-  annotation_giana_summary_file: "data/annotation_giana_summary.tsv"
-  annotation_consensus_summary_file: "data/annotation_consensus_summary.tsv"
-
-  # mapping
+  # Column mapping / resolution
   label_col: ""
   sample_col: "sample"
   patient_col: "patient"
@@ -76,538 +47,1106 @@ params:
   clone_id_candidates: "clone_id;CTaa;clonotype;clone"
   clone_size_candidates: "clone_size;CloneSize;clone_n"
   consensus_cluster_candidates: "consensus_cluster;consensus;consensus_id"
-  
-  
-  figure_format: "png"
-  figure_width: 10
-  figure_height: 7
-  figure_dpi: 300
-  base_size: 12
 
+  tcrdist_radius: 24
   top_n_annotations: 20
-  top_n_consensus_clusters: 20
+  top_n_clusters: 20
+  top_n_genes: 25
+  base_size: 12
 ---
 
-# setup
 ```{r}
-#| label: setup-chunk
+#| label: setup
 suppressPackageStartupMessages({
-  library(Seurat)
-  library(SeuratObject)
   library(data.table)
   library(dplyr)
   library(tidyr)
   library(ggplot2)
   library(forcats)
   library(scales)
-  library(knitr)
-  library(kableExtra)
-  library(ComplexHeatmap)
-  library(circlize)
-  library(patchwork)
+  library(plotly)
+  library(reactable)
+  library(htmltools)
 })
 
-dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
-dir.create(file.path(params$outdir, "tables"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, "tables"),  recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(params$outdir, "figures"), recursive = TRUE, showWarnings = FALSE)
 
 `%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
 
-sanitize_param_string <- function(x) {
-  if (is.null(x) || length(x) == 0) return(NULL)
-  trimws(gsub("\\u00A0", " ", as.character(x)))
+# ── Input access ────────────────────────────────────────────────────────────
+# Every upstream module stages its tables under <tables_dir>/<module>/. A module that
+# did not run on this route simply has no directory, so T() returns NULL and the
+# corresponding section renders an explanatory note rather than silently nothing.
+T <- function(module, name) {
+  p <- file.path(params$tables_dir, module, name)
+  if (!file.exists(p) || file.size(p) == 0) return(NULL)
+  out <- tryCatch({
+    if (tolower(tools::file_ext(name)) == "csv") fread(p) else fread(p, sep = "\t")
+  }, error = function(e) NULL)
+  if (is.null(out) || nrow(out) == 0) return(NULL)
+  as.data.frame(out)
 }
 
-normalize_colnames <- function(df) {
-  colnames(df) <- trimws(gsub("\\u00A0", " ", colnames(df)))
-  df
+# `-P label_col=` (an empty params.label_col) reaches R as NULL, and nzchar(NULL) is
+# logical(0), which makes if() error rather than return FALSE. Normalise every incoming
+# string param to a length-1 character before testing it.
+as_str1 <- function(x) {
+  if (is.null(x) || length(x) == 0) return("")
+  x <- as.character(x)[1]
+  if (is.na(x)) "" else trimws(x)
 }
 
-split_candidate_string <- function(x) {
-  if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(character())
-  x <- gsub('"', "", as.character(x))
-  x <- trimws(unlist(strsplit(x, ";", fixed = TRUE)))
-  x[nzchar(x)]
+# First match wins across several modules. CONSENSUS computes method_presence /
+# method_cluster_counts over CoNGA and consensus labels as well, so its copies are
+# strictly richer than CLUSTER_ROLLUP's GIANA/GLIPH2/TCRdist-only fallback.
+# Count distinct values, ignoring NA and empty strings. VDJ_QC leaves patient_id blank
+# when no GEX object is supplied, so a naive n_distinct() on that column returns 1 for
+# "" rather than falling through to a source that actually carries the value.
+n_distinct_real <- function(x) {
+  if (is.null(x)) return(NA_integer_)
+  x <- trimws(as.character(x))
+  x <- x[!is.na(x) & nzchar(x)]
+  if (!length(x)) return(NA_integer_)
+  length(unique(x))
 }
 
-safe_read_table <- function(path) {
-  # Treat empty placeholder files (staged NO_FILE, 0 bytes) as absent.
-  if (is.null(path) || is.na(path) || path == "" || !file.exists(path)) return(NULL)
-  if (isTRUE(file.size(path) == 0)) return(NULL)
-  ext <- tolower(tools::file_ext(path))
-  if (ext %in% c("tsv", "tab", "txt")) fread(path, sep = "\t") else fread(path)
+# First source with a real value wins.
+coalesce_count <- function(...) {
+  for (v in list(...)) if (!is.na(v) && v > 0) return(as.character(v))
+  NA_character_
 }
 
-first_existing_col <- function(df, preferred, candidates = character()) {
-  df <- normalize_colnames(df)
-  preferred <- sanitize_param_string(preferred)
-
-  if (length(candidates) == 1 && is.character(candidates)) {
-    candidates <- split_candidate_string(candidates)
+Tfirst <- function(modules, name) {
+  for (m in modules) {
+    d <- T(m, name)
+    if (!is.null(d)) return(d)
   }
-  candidates <- trimws(gsub("\\u00A0", " ", as.character(candidates)))
-
-  if (!is.null(preferred) && preferred != "" && preferred %in% colnames(df)) return(preferred)
-
-  hits <- intersect(candidates, colnames(df))
-  if (length(hits) > 0) hits[[1]] else NULL
+  NULL
 }
 
-save_plot_safe <- function(plot_obj, filename,
-                           width = params$figure_width,
-                           height = params$figure_height,
-                           dpi = params$figure_dpi) {
-  ggsave(
-    filename = file.path(params$outdir, "figures", filename),
-    plot = plot_obj,
-    width = width,
-    height = height,
-    dpi = dpi,
-    bg = "white",
-    limitsize = FALSE
-  )
+have <- function(x) !is.null(x) && nrow(x) > 0
+
+note <- function(txt) knitr::asis_output(paste0("\n::: {.callout-note appearance=\"simple\"}\n",
+                                                txt, "\n:::\n\n"))
+
+save_table <- function(df, filename) {
+  if (have(df)) fwrite(df, file.path(params$outdir, "tables", filename), sep = "\t")
+  invisible(df)
 }
 
-save_table_safe <- function(df, filename) {
-  fwrite(df, file.path(params$outdir, "tables", filename), sep = "\t")
-}
-
-theme_scratch_pub <- function(base_size = 12) {
+theme_ms <- function(base_size = params$base_size) {
   theme_bw(base_size = base_size) +
     theme(
-      plot.title = element_text(face = "bold", size = base_size + 2, hjust = 0),
-      plot.subtitle = element_text(size = base_size, hjust = 0),
-      axis.title = element_text(face = "bold"),
-      axis.text = element_text(color = "black"),
+      plot.title      = element_text(face = "bold", size = base_size + 1, hjust = 0),
+      axis.title      = element_text(face = "bold"),
       panel.grid.minor = element_blank(),
       panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
       strip.background = element_rect(fill = "grey95", color = "grey80"),
-      strip.text = element_text(face = "bold"),
-      legend.title = element_text(face = "bold")
+      strip.text      = element_text(face = "bold"),
+      legend.title    = element_text(face = "bold")
     )
 }
 
-```
+# ── Interactive output helpers ──────────────────────────────────────────────
+# Figures are built with plot_ly() directly rather than ggplotly(). The container pairs
+# ggplot2 4.0.2 with plotly 4.10.4, and that plotly predates ggplot2's 4.x internals, so
+# ggplotly() dies with "subscript out of bounds" on most plots. Native plot_ly() calls do
+# not touch ggplot internals and are version-robust.
+#
+# Every figure supports: hover for exact values, drag to zoom, double-click to reset,
+# click legend entries to toggle series.
+pal <- c("#2c7fb8", "#d95f02", "#7570b3", "#1b9e77",
+         "#e7298a", "#66a61e", "#e6ab02", "#a6761d")
 
-# input loading
-```{r}
-seu <- if (file.exists(params$seurat_rds) && isTRUE(file.size(params$seurat_rds) > 0)) readRDS(params$seurat_rds) else NULL
-export_cells <- safe_read_table(params$export_cells_file)
-
-vdj_qc_per_sample_compact <- safe_read_table(params$vdj_qc_per_sample_compact_file)
-vdj_qc_before_after_summary <- safe_read_table(params$vdj_qc_before_after_summary_file)
-vdj_qc_sample_sheet_resolved <- safe_read_table(params$vdj_qc_sample_sheet_resolved_file)
-vdj_qc_clone_rank_abundance <- safe_read_table(params$vdj_qc_clone_rank_abundance_file)
-vdj_qc_summary <- safe_read_table(params$vdj_qc_summary_file)
-tcell_integration_summary <- safe_read_table(params$tcell_integration_summary_file)
-tcri_summary <- safe_read_table(params$tcri_summary_file)
-conga_summary <- safe_read_table(params$conga_summary_file)
-gliph2_summary <- safe_read_table(params$gliph2_summary_file)
-tcrdist3_summary <- safe_read_table(params$tcrdist3_summary_file)
-giana_summary <- safe_read_table(params$giana_summary_file)
-consensus_summary <- safe_read_table(params$consensus_summary_file)
-repertoire_summary <- safe_read_table(params$repertoire_summary_file)
-
-diversity_by_sample <- safe_read_table(params$diversity_by_sample_file)
-clone_burden <- safe_read_table(params$clone_burden_file)
-sample_overlap_matrix <- safe_read_table(params$sample_overlap_matrix_file)
-method_presence <- safe_read_table(params$method_presence_file)
-method_cluster_counts <- safe_read_table(params$method_cluster_counts_file)
-consensus_cluster_summary <- safe_read_table(params$consensus_cluster_summary_file)
-
-annotation_tcri_summary <- safe_read_table(params$annotation_tcri_summary_file)
-annotation_conga_summary <- safe_read_table(params$annotation_conga_summary_file)
-annotation_gliph2_summary <- safe_read_table(params$annotation_gliph2_summary_file)
-annotation_tcrdist3_summary <- safe_read_table(params$annotation_tcrdist3_summary_file)
-annotation_giana_summary <- safe_read_table(params$annotation_giana_summary_file)
-annotation_consensus_summary <- safe_read_table(params$annotation_consensus_summary_file)
-```
-
-# Resolving Columns
-```{r}
-if (is.null(export_cells) && !is.null(seu)) {
-  export_cells <- seu@meta.data %>% tibble::rownames_to_column("cell_id")
+pconf <- function(p) {
+  plotly::config(p, displaylogo = FALSE,
+                 modeBarButtonsToRemove = c("select2d", "lasso2d"),
+                 toImageButtonOptions = list(format = "png", scale = 2))
 }
 
-label_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$label_col, params$label_candidates) else NULL
-sample_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$sample_col, params$sample_candidates) else NULL
-patient_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$patient_col, params$patient_candidates) else NULL
-condition_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$condition_col, params$condition_candidates) else NULL
-timepoint_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$timepoint_col, params$timepoint_candidates) else NULL
-clone_id_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$clone_id_col, params$clone_id_candidates) else NULL
-clone_size_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$clone_size_col, params$clone_size_candidates) else NULL
-consensus_cluster_col <- if (!is.null(export_cells)) first_existing_col(export_cells, params$consensus_cluster_col, params$consensus_cluster_candidates) else NULL
+ttl <- function(t) list(text = t, x = 0, xanchor = "left",
+                        font = list(size = params$base_size + 4))
+
+# Horizontal bar. df: cat (chr), val (num), hover (chr)
+hbar <- function(df, title, xlab, colour = "#2c7fb8", height = 440, tickformat = NULL) {
+  df <- df[order(df$val), , drop = FALSE]
+  df$cat <- factor(df$cat, levels = unique(df$cat))
+  pconf(plotly::plot_ly(df, x = ~val, y = ~cat, type = "bar", orientation = "h",
+                        marker = list(color = colour),
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(title = ttl(title), height = height,
+                       margin = list(l = 140, t = 60),
+                       xaxis = list(title = xlab, tickformat = tickformat),
+                       yaxis = list(title = "")))
+}
+
+# Stacked horizontal bar. df: cat, val, grp, hover
+sbar <- function(df, title, xlab, height = 470, tickformat = ".0%") {
+  pconf(plotly::plot_ly(df, x = ~val, y = ~cat, color = ~grp, colors = pal,
+                        type = "bar", orientation = "h",
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(barmode = "stack", title = ttl(title), height = height,
+                       margin = list(l = 140, t = 60),
+                       xaxis = list(title = xlab, tickformat = tickformat),
+                       yaxis = list(title = ""),
+                       legend = list(orientation = "h", y = -0.15)))
+}
+
+# Grouped vertical bar. df: cat, val, grp, hover
+gbar <- function(df, title, xlab, ylab, height = 470) {
+  pconf(plotly::plot_ly(df, x = ~cat, y = ~val, color = ~grp, colors = pal,
+                        type = "bar",
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(barmode = "group", title = ttl(title), height = height,
+                       margin = list(t = 60),
+                       xaxis = list(title = xlab), yaxis = list(title = ylab),
+                       legend = list(orientation = "h", y = -0.2)))
+}
+
+# Box plot with points. df: grp, val, hover
+boxby <- function(df, title, ylab, height = 470, logy = FALSE, angle = 0) {
+  pconf(plotly::plot_ly(df, x = ~grp, y = ~val, color = ~grp, colors = pal,
+                        type = "box", boxpoints = "all", jitter = 0.4, pointpos = 0,
+                        marker = list(size = 4, opacity = 0.55),
+                        text = ~hover, hoverinfo = "text") %>%
+        plotly::layout(title = ttl(title), height = height, showlegend = FALSE,
+                       margin = list(t = 60, b = 110),
+                       xaxis = list(title = "", tickangle = angle),
+                       yaxis = list(title = ylab,
+                                    type = if (logy) "log" else "linear")))
+}
+
+# Scatter. df: x, y, grp, hover  (grp may be a constant)
+scat <- function(df, title, xlab, ylab, height = 470, size = 11) {
+  pconf(plotly::plot_ly(df, x = ~x, y = ~y, color = ~grp, colors = pal,
+                        type = "scatter", mode = "markers",
+                        marker = list(size = size, opacity = 0.85),
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(title = ttl(title), height = height, margin = list(t = 60),
+                       xaxis = list(title = xlab), yaxis = list(title = ylab)))
+}
+
+# Line/step. df: x, y, grp, hover
+lplot <- function(df, title, xlab, ylab, logx = TRUE, logy = TRUE, height = 470) {
+  pconf(plotly::plot_ly(df, x = ~x, y = ~y, color = ~grp, colors = pal,
+                        type = "scatter", mode = "lines",
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(title = ttl(title), height = height, margin = list(t = 60),
+                       xaxis = list(title = xlab, type = if (logx) "log" else "linear"),
+                       yaxis = list(title = ylab, type = if (logy) "log" else "linear")))
+}
+
+itable <- function(df, caption = NULL, pageSize = 10, ...) {
+  if (!have(df)) return(note("No data available."))
+  reactable(
+    df,
+    searchable = TRUE, sortable = TRUE, filterable = FALSE,
+    highlight = TRUE, compact = TRUE, striped = TRUE,
+    defaultPageSize = pageSize, showPageSizeOptions = TRUE,
+    pageSizeOptions = c(5, 10, 25, 50, 100),
+    defaultColDef = colDef(
+      format = colFormat(digits = 3),
+      minWidth = 90,
+      headerStyle = list(background = "#f7f7f8", fontWeight = 600)
+    ),
+    ...
+  )
+}
 ```
+
+```{r}
+#| label: load-all
+# ── VDJ QC ──
+vdj_compact    <- T("vdj_qc", "vdj_qc_per_sample_compact.tsv")
+vdj_retention  <- T("vdj_qc", "qc_contigs_before_after_summary.tsv")
+vdj_rank       <- T("vdj_qc", "clone_rank_abundance.tsv")
+vdj_pairing    <- T("vdj_qc", "pairing_status_all.tsv")
+vdj_cdr3len    <- T("vdj_qc", "cdr3_lengths_all.tsv")
+vdj_vusage     <- T("vdj_qc", "v_gene_usage.tsv")
+vdj_jusage     <- T("vdj_qc", "j_gene_usage.tsv")
+vdj_samplesheet<- T("vdj_qc", "sample_sheet_resolved.tsv")
+
+# ── Pseudobulk QC gate ──
+pb_qc          <- T("pseudobulk", "pseudobulk_qc_summary.csv")
+pb_vfam        <- T("pseudobulk", "pseudobulk_v_family.csv")
+
+# ── Shared bulk engine ──
+sample_stats   <- T("sample", "sample_stats.csv")
+sample_vfam    <- T("sample", "v_family.csv")
+sample_jfam    <- T("sample", "j_family.csv")
+sharing        <- T("compare", "cdr3_sharing.tsv")
+
+# ── Clustering rollups ──
+giana_roll     <- T("rollup", "giana_summary_rollup.tsv")
+gliph2_roll    <- T("rollup", "gliph2_summary_rollup.tsv")
+tcrdist_roll   <- T("rollup", "tcrdist3_summary_rollup.tsv")
+method_presence<- Tfirst(c("consensus", "rollup"), "method_presence_summary.tsv")
+method_counts  <- Tfirst(c("consensus", "rollup"), "method_cluster_counts.tsv")
+anno_giana     <- T("rollup", "annotation_giana_summary.tsv")
+anno_gliph2    <- T("rollup", "annotation_gliph2_summary.tsv")
+anno_tcrdist   <- T("rollup", "annotation_tcrdist3_summary.tsv")
+giana_detail   <- T("rollup", "giana_cluster_detail.tsv")
+gliph2_detail  <- T("rollup", "gliph2_motif_detail.tsv")
+tcrdist_detail <- T("rollup", "tcrdist_cluster_detail.tsv")
+giana_vgene    <- T("rollup", "giana_vgene_usage.tsv")
+gliph2_vgene   <- T("rollup", "gliph2_vgene_usage.tsv")
+
+# ── Repertoire ──
+rep_rollup     <- T("repertoire", "repertoire_summary_rollup.tsv")
+diversity      <- T("repertoire", "diversity_by_sample.tsv")
+div_patient    <- T("repertoire", "diversity_by_patient.tsv")
+clone_burden   <- T("repertoire", "clone_burden_cells_by_sample.tsv")
+overlap_mat    <- T("repertoire", "sample_overlap_matrix.tsv")
+top_shared     <- T("repertoire", "top_shared_clones.tsv")
+shareability   <- T("repertoire", "clone_shareability.tsv")
+pheno_flux     <- T("repertoire", "phenotypic_flux.tsv")
+
+# ── GEX-dependent ──
+tcell_roll     <- T("tcell", "tcell_summary_rollup.tsv")
+tcell_anno     <- T("tcell", "tcell_per_annotation_summary.tsv")
+tcell_topclone <- T("tcell", "tcell_top_clones.tsv")
+tcell_overlap  <- T("tcell", "barcode_overlap_by_sample.tsv")
+merged_vdj     <- T("mergedvdj", "post_qc_summary.tsv")
+conga_roll     <- T("conga", "conga_summary_rollup.tsv")
+conga_clusters <- T("conga", "conga_cluster_summary.tsv")
+anno_conga     <- T("conga", "annotation_conga_summary.tsv")
+cons_roll      <- T("consensus", "consensus_summary_rollup.tsv")
+tcri_roll      <- T("tcri", "tcri_summary_rollup.tsv")
+tcri_scores    <- T("tcri", "high_tcri_clone_summary.tsv")
+anno_tcri      <- T("tcri", "annotation_tcri_summary.tsv")
+cons_clusters  <- T("consensus", "consensus_cluster_summary.tsv")
+anno_cons      <- T("consensus", "annotation_consensus_summary.tsv")
+
+# ── Per-cell export ──
+export_cells <- NULL
+.ec <- as_str1(params$export_cells_file)
+if (nzchar(.ec) && file.exists(.ec) && file.size(.ec) > 0) {
+  export_cells <- tryCatch(as.data.frame(fread(.ec, sep = "\t")),
+                           error = function(e) NULL)
+}
+
+pick_col <- function(df, preferred, candidates) {
+  if (is.null(df) || !ncol(df)) return(NULL)
+  preferred <- as_str1(preferred)
+  cand <- trimws(unlist(strsplit(gsub('"', "", as_str1(candidates)), ";", fixed = TRUE)))
+  cand <- cand[nzchar(cand)]
+  if (nzchar(preferred) && preferred %in% names(df)) return(preferred)
+  hit <- intersect(cand, names(df))
+  if (length(hit)) hit[[1]] else NULL
+}
+sample_col  <- pick_col(export_cells, params$sample_col,  params$sample_candidates)
+patient_col <- pick_col(export_cells, params$patient_col, params$patient_candidates)
+label_col   <- pick_col(export_cells, params$label_col,   params$label_candidates)
+clone_col   <- pick_col(export_cells, params$clone_id_col, params$clone_id_candidates)
+cons_col    <- pick_col(export_cells, params$consensus_cluster_col, params$consensus_cluster_candidates)
+
+has_gex <- !is.null(tcell_roll) || !is.null(cons_roll) || !is.null(conga_roll) || !is.null(tcri_roll)
+route   <- if (has_gex) "Full single-cell (GEX + VDJ)" else "VDJ-only (no GEX object)"
+```
+
+::: {.callout-tip appearance="simple"}
+**All figures in this report are interactive.** Hover a point or bar for exact values, drag
+to zoom, double-click to reset, and click legend entries to show or hide series. Tables are
+sortable and searchable, with adjustable page size.
+:::
 
 # Overview
+
+What was analysed, and how the run was routed. The route is detected from whether a GEX
+annotated object was supplied: without one, the T-cell integration, CoNGA and consensus
+steps are skipped and the sections that depend on them say so explicitly.
+
 ```{r}
 #| label: overview
-#| results: asis
-overview_tbl <- tibble::tibble(
-  Metric = c(
-    "Project name",
-    "Cells in export table",
-    "Samples",
-    "Patients",
-    "Conditions",
-    "Timepoints",
-    "Unique clonotypes",
-    "Unique consensus clusters"
-  ),
+ov <- data.frame(
+  Metric = c("Project", "Analysis route", "Samples", "Patients",
+             "Cells / clonotype rows", "Unique clonotypes", "TCRdist radius"),
   Value = c(
     params$project_name,
-    if (!is.null(export_cells)) nrow(export_cells) else NA,
-    if (!is.null(export_cells) && !is.null(sample_col)) length(unique(na.omit(export_cells[[sample_col]]))) else NA,
-    if (!is.null(export_cells) && !is.null(patient_col)) length(unique(na.omit(export_cells[[patient_col]]))) else NA,
-    if (!is.null(export_cells) && !is.null(condition_col)) length(unique(na.omit(export_cells[[condition_col]]))) else NA,
-    if (!is.null(export_cells) && !is.null(timepoint_col)) length(unique(na.omit(export_cells[[timepoint_col]]))) else NA,
-    if (!is.null(export_cells) && !is.null(clone_id_col)) length(unique(na.omit(export_cells[[clone_id_col]]))) else NA,
-    if (!is.null(export_cells) && !is.null(consensus_cluster_col)) length(unique(na.omit(export_cells[[consensus_cluster_col]]))) else NA
-  )
+    route,
+    coalesce_count(
+      if (have(vdj_compact)) nrow(vdj_compact) else NA_integer_,
+      if (!is.null(export_cells) && !is.null(sample_col)) n_distinct_real(export_cells[[sample_col]]) else NA_integer_),
+    coalesce_count(
+      if (have(vdj_compact) && "patient_id" %in% names(vdj_compact)) n_distinct_real(vdj_compact$patient_id) else NA_integer_,
+      if (!is.null(export_cells) && !is.null(patient_col)) n_distinct_real(export_cells[[patient_col]]) else NA_integer_),
+    if (!is.null(export_cells)) format(nrow(export_cells), big.mark = ",") else NA,
+    if (!is.null(export_cells) && !is.null(clone_col)) format(dplyr::n_distinct(export_cells[[clone_col]]), big.mark = ",") else NA,
+    as.character(params$tcrdist_radius)
+  ),
+  stringsAsFactors = FALSE
 )
-
-save_table_safe(overview_tbl, "master_overview.tsv")
-
-print(
-  kableExtra::kbl(overview_tbl, caption = "Master project overview.") %>%
-    kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
-)
-
+save_table(ov, "master_overview.tsv")
+itable(ov, pageSize = 10)
 ```
 
-# Module Rollups
+## Receptor retention
+
+The full single-cell route pseudobulks from the **post-merge** export, so a receptor whose
+barcode never matched a GEX cell is absent from every downstream result — not only the
+cell-level steps, but GIANA, GLIPH2, TCRdist3 and the repertoire statistics too. Every
+receptor is nevertheless conserved in `bridge/merged_vdj_object/`, flagged with whether it
+reached the GEX analysis.
+
+At a high match rate this is immaterial. At a low one it silently removes a large share of
+the data, so the rate is reported here rather than left in a module table.
+
 ```{r}
-#| label: module-rollups
+#| label: receptor-retention
 #| results: asis
-rollup_list <- list(
-  VDJ_QC = vdj_qc_summary,
-  TCell_Integration = tcell_integration_summary,
-  TCRi = tcri_summary,
-  CoNGA = conga_summary,
-  GLIPH2 = gliph2_summary,
-  TCRdist3 = tcrdist3_summary,
-  GIANA = giana_summary,
-  Consensus = consensus_summary,
-  Repertoire = repertoire_summary
-)
+if (!have(tcell_overlap)) {
+  note(paste("No barcode overlap table — either the VDJ-only route (no GEX join is",
+             "performed, so every receptor is analysed) or T-cell integration did not run."))
+} else {
+  d <- tcell_overlap
+  nb <- intersect(c("tcr_barcodes","n_tcr"), names(d))
+  no <- intersect(c("overlap","matched","matched_keys"), names(d))
+  if (!length(nb) || !length(no)) {
+    note("Overlap table present but lacks the expected barcode/overlap columns.")
+  } else {
+    tot <- sum(as.numeric(d[[nb[1]]]), na.rm = TRUE)
+    hit <- sum(as.numeric(d[[no[1]]]), na.rm = TRUE)
+    rate <- if (tot > 0) hit / tot else NA_real_
+    save_table(d, "master_receptor_retention.tsv")
 
-rollup_presence <- tibble::tibble(
-  module = names(rollup_list),
-  available = vapply(rollup_list, function(x) !is.null(x), logical(1))
-)
+    if (!is.na(rate) && rate < 0.75) {
+      cat(sprintf(paste0("\n::: {.callout-warning appearance=\"simple\"}\n",
+                  "**%s of %s receptors (%.1f%%) matched a GEX cell.** The remaining %s are ",
+                  "excluded from every downstream result on this route. They are preserved in ",
+                  "`bridge/merged_vdj_object/` with `gex_matched = FALSE`. Below ~75%%, ",
+                  "consider whether barcode conventions are reconciling correctly — the ",
+                  "per-sample rates below will show if it is one sample or all of them.\n:::\n\n"),
+                  format(hit, big.mark=","), format(tot, big.mark=","), 100*rate,
+                  format(tot-hit, big.mark=",")))
+    } else {
+      cat(sprintf(paste0("\n::: {.callout-note appearance=\"simple\"}\n",
+                  "**%s of %s receptors (%.1f%%) matched a GEX cell.** The %s unmatched are ",
+                  "excluded from downstream results but preserved in ",
+                  "`bridge/merged_vdj_object/` with `gex_matched = FALSE`.\n:::\n\n"),
+                  format(hit, big.mark=","), format(tot, big.mark=","), 100*rate,
+                  format(tot-hit, big.mark=",")))
+    }
+  }
+}
+```
 
-save_table_safe(rollup_presence, "module_output_availability.tsv")
+```{r}
+#| label: retention-by-sample
+if (!have(tcell_overlap)) {
+  invisible(NULL)
+} else {
+  d  <- tcell_overlap
+  sc <- intersect(c("sample","Sample"), names(d))
+  rc <- intersect(c("overlap_rate","rate"), names(d))
+  nb <- intersect(c("tcr_barcodes","n_tcr"), names(d))
+  no <- intersect(c("overlap","matched","matched_keys"), names(d))
+  if (length(sc) && length(nb) && length(no)) {
+    r <- if (length(rc)) as.numeric(d[[rc[1]]]) else
+         as.numeric(d[[no[1]]]) / as.numeric(d[[nb[1]]])
+    dd <- data.frame(cat = as.character(d[[sc[1]]]), val = r,
+                     hover = paste0(d[[sc[1]]], "<br>",
+                                    format(as.numeric(d[[no[1]]]), big.mark=","), " of ",
+                                    format(as.numeric(d[[nb[1]]]), big.mark=","),
+                                    " matched<br>", percent(r, accuracy = 0.1)))
+    hbar(dd, "Receptors matching a GEX cell, by sample", "Match rate",
+         height = 400, tickformat = ".0%")
+  }
+}
+```
 
-print(
-  kableExtra::kbl(rollup_presence, caption = "Module output availability.") %>%
-    kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover","condensed"))
+## Module coverage
+
+Which analysis modules contributed output to this report. `FALSE` for the GEX-dependent
+modules is expected on the VDJ-only route and does not indicate a failure.
+
+```{r}
+#| label: module-availability
+mods <- list(
+  "VDJ QC"             = vdj_compact,
+  "Pseudobulk QC"      = pb_qc,
+  "Sample statistics"  = sample_stats,
+  "Clonotype sharing"  = sharing,
+  "GIANA"              = giana_roll,
+  "GLIPH2"             = gliph2_roll,
+  "TCRdist3"           = tcrdist_roll,
+  "Repertoire"         = rep_rollup,
+  "T-cell integration" = tcell_roll,
+  "CoNGA"              = conga_roll,
+  "Consensus"          = cons_roll,
+  "TCRi"               = tcri_roll
 )
+avail <- data.frame(module = names(mods),
+                    available = vapply(mods, have, logical(1)),
+                    row.names = NULL)
+save_table(avail, "module_output_availability.tsv")
+
+d <- avail %>%
+  mutate(status = ifelse(available, "present", "absent"),
+         cat = module, val = as.integer(available),
+         hover = paste0(module, ": ", status))
+hbar(d, "Module output availability", "", colour = "#2c7fb8", height = 460)
+```
+
+# Sample QC and the pseudobulk gate
+
+Before any clustering, every sample passes a QC gate on clonotype and cell counts. Samples
+falling below `pseudobulk_qc_min_clones` / `pseudobulk_qc_min_cells` are dropped from all
+downstream analysis, so this is the first place to look if a sample is missing later on.
+
+```{r}
+#| label: pseudobulk-gate
+if (!have(pb_qc)) {
+  note("No pseudobulk QC summary was staged for this run.")
+} else {
+  save_table(pb_qc, "master_pseudobulk_qc.tsv")
+  d <- pb_qc %>%
+    transmute(x = n_clones, y = n_cells, grp = as.character(pass),
+              hover = paste0(sample, "<br>clones: ", n_clones,
+                             "<br>cells: ", n_cells, "<br>", pass))
+  p <- scat(d, "Pseudobulk QC gate (dashed lines = thresholds)", "Clonotypes", "Cells")
+  p %>% plotly::layout(shapes = list(
+    list(type = "line", x0 = pb_qc$min_clones[1], x1 = pb_qc$min_clones[1],
+         y0 = 0, y1 = max(pb_qc$n_cells) * 1.05,
+         line = list(dash = "dash", color = "grey")),
+    list(type = "line", x0 = 0, x1 = max(pb_qc$n_clones) * 1.05,
+         y0 = pb_qc$min_cells[1], y1 = pb_qc$min_cells[1],
+         line = list(dash = "dash", color = "grey"))))
+}
+```
+
+```{r}
+#| label: pseudobulk-gate-table
+itable(pb_qc, pageSize = 10)
 ```
 
 # VDJ QC
+
+Contig-level quality control from Cell Ranger output: how many contigs survived filtering,
+how many cells carry a properly paired receptor, and the shape of the clone size
+distribution. Low pairing or heavy multi-chain burden here propagates into every downstream
+clustering result.
+
+## Per-sample summary
+
 ```{r}
-#| label: vdj-qc-section
+#| label: vdj-compact
+if (!have(vdj_compact)) note("VDJ QC did not contribute a per-sample summary.") else {
+  save_table(vdj_compact, "master_vdj_qc_per_sample.tsv")
+  itable(vdj_compact, pageSize = 10)
+}
+```
+
+## Contig retention
+
+Fraction of contigs surviving QC filtering, per sample. A sample retaining markedly less
+than its peers usually indicates a library or sequencing-depth problem rather than biology.
+
+```{r}
+#| label: vdj-retention
+if (!have(vdj_retention)) note("No contig retention table available.") else {
+  d <- vdj_retention
+  ycol <- intersect(c("retained_pct", "retained_prop", "pct_retained"), names(d))
+  if (!length(ycol)) note("Retention table present but has no recognisable retention column.") else {
+    v <- as.numeric(d[[ycol[1]]]); if (max(v, na.rm = TRUE) <= 1) v <- 100 * v
+    dd <- data.frame(cat = d$sample, val = v,
+                     hover = paste0(d$sample, "<br>retained: ", round(v, 1), "%"))
+    hbar(dd, "Contig retention after QC", "Retained (%)")
+  }
+}
+```
+
+## Chain pairing
+
+Share of cells by chain-pairing status. Only cells with a paired receptor contribute a
+usable clonotype, so this sets the effective ceiling on everything downstream.
+
+```{r}
+#| label: vdj-pairing
+if (!have(vdj_pairing) || !all(c("sample", "pairing") %in% names(vdj_pairing))) {
+  note("No pairing status table available.")
+} else {
+  d <- vdj_pairing %>%
+    count(sample, pairing, name = "cells") %>%
+    group_by(sample) %>% mutate(frac = cells / sum(cells)) %>% ungroup()
+  save_table(d, "master_pairing_by_sample.tsv")
+  dd <- d %>% transmute(cat = sample, val = frac, grp = pairing,
+                        hover = paste0(sample, "<br>", pairing, "<br>",
+                                       cells, " cells (", percent(frac, accuracy = 0.1), ")"))
+  sbar(dd, "Chain pairing status by sample", "Fraction of cells")
+}
+```
+
+## CDR3 length distribution
+
+CDR3β length distribution across all productive contigs. A healthy repertoire is centred
+near 14–15 amino acids; sharp spikes can indicate contamination or a dominant clone.
+
+```{r}
+#| label: cdr3-length
+if (!have(vdj_cdr3len)) note("No CDR3 length table available.") else {
+  d <- vdj_cdr3len
+  lc <- intersect(c("cdr3_length", "length"), names(d))
+  if (!length(lc)) note("CDR3 length table has no length column.") else {
+    d$.len <- suppressWarnings(as.integer(d[[lc[1]]]))
+    if ("chain" %in% names(d)) d <- d[d$chain %in% c("TRB", "TRA", "TRD", "TRG"), , drop = FALSE]
+    d <- d[!is.na(d$.len) & d$.len > 0 & d$.len < 40, , drop = FALSE]
+    if (!nrow(d)) note("No usable CDR3 lengths after filtering.") else {
+      dd <- if ("chain" %in% names(d)) count(d, .len, chain, name = "n") else
+              cbind(count(d, .len, name = "n"), chain = "all")
+      dd <- dd %>% transmute(cat = .len, val = n, grp = chain,
+                             hover = paste0(chain, "<br>length ", .len, "<br>",
+                                            format(n, big.mark = ","), " contigs"))
+      gbar(dd, "CDR3 length distribution", "CDR3 length (aa)", "Contigs")
+    }
+  }
+}
+```
+
+## V and J gene usage
+
+Germline gene usage per sample. Systematic shifts between samples can reflect real
+biology, but can equally flag a batch or primer effect worth ruling out.
+
+```{r}
+#| label: gene-usage
+usage_box <- function(d, gcol, title) {
+  if (!have(d)) return(NULL)
+  fc <- intersect(c("freq", "frequency", "prop", "n"), names(d))
+  if (!length(fc) || !(gcol %in% names(d))) return(NULL)
+  d$.f <- as.numeric(d[[fc[1]]])
+  top <- d %>% group_by(.data[[gcol]]) %>%
+    summarise(m = mean(.f, na.rm = TRUE), .groups = "drop") %>%
+    slice_max(m, n = params$top_n_genes, with_ties = FALSE) %>% pull(.data[[gcol]])
+  dd <- d[d[[gcol]] %in% top, , drop = FALSE]
+  ord <- dd %>% group_by(.data[[gcol]]) %>% summarise(m = median(.f), .groups = "drop") %>%
+    arrange(desc(m)) %>% pull(.data[[gcol]])
+  out <- data.frame(grp = factor(dd[[gcol]], levels = ord), val = dd$.f,
+                    hover = paste0(dd[[gcol]], "<br>", dd$sample, "<br>", signif(dd$.f, 3)))
+  boxby(out, title, "Usage frequency", height = 520, angle = -45)
+}
+pv <- usage_box(vdj_vusage, "v_gene", paste0("Top ", params$top_n_genes, " V genes"))
+if (is.null(pv)) note("No V gene usage table available.") else pv
+```
+
+```{r}
+#| label: j-usage
+pj <- usage_box(vdj_jusage, "j_gene", paste0("Top ", params$top_n_genes, " J genes"))
+if (is.null(pj)) note("No J gene usage table available.") else pj
+```
+
+# Repertoire diversity and clonal structure
+
+Diversity summarises how evenly the repertoire is distributed across clonotypes. Low
+Shannon entropy with high clonality indicates a repertoire dominated by a few expanded
+clones — typically the signal of interest in an antigen-driven response.
+
+## Diversity by sample
+
+```{r}
+#| label: diversity
+if (!have(diversity)) {
+  note("No diversity table available. This is produced by the Repertoire module.")
+} else {
+  save_table(diversity, "master_diversity_by_sample.tsv")
+  metrics <- intersect(c("shannon", "simpson", "inv_simpson", "richness"), names(diversity))
+  d <- diversity %>%
+    pivot_longer(all_of(metrics), names_to = "metric", values_to = "value") %>%
+    transmute(grp = metric, val = value,
+              hover = paste0(sample, "<br>", metric, ": ", signif(value, 4)))
+  boxby(d, "Repertoire diversity across samples", "Metric value")
+}
+```
+
+```{r}
+#| label: diversity-table
+itable(diversity, pageSize = 10)
+```
+
+## Sample statistics
+
+Clonality, productive fraction and convergence per sample, from the shared bulk engine.
+Convergent recombination — distinct nucleotide sequences encoding the same CDR3 amino acid
+sequence — is a useful independent marker of antigen-driven selection.
+
+```{r}
+#| label: sample-stats
+if (!have(sample_stats)) note("No sample statistics table available.") else {
+  save_table(sample_stats, "master_sample_stats.tsv")
+  itable(sample_stats, pageSize = 10)
+}
+```
+
+```{r}
+#| label: clonality-plot
+if (!have(sample_stats) || !("clonality" %in% names(sample_stats))) {
+  note("No clonality column in the sample statistics table.")
+} else {
+  d <- sample_stats %>%
+    transmute(cat = sample, val = clonality,
+              hover = paste0(sample, "<br>clonality: ", signif(clonality, 3),
+                             "<br>clonotypes: ", num_clones))
+  hbar(d, "Clonality by sample", "Clonality", colour = "#7570b3")
+}
+```
+
+## Clonal burden
+
+How much of each sample's cell mass sits in small versus expanded clones. A sample shifting
+mass into the large-clone bins is undergoing clonal expansion.
+
+```{r}
+#| label: clone-burden
+if (!have(clone_burden)) {
+  note("No clone burden table available. This is produced by the Repertoire module.")
+} else {
+  save_table(clone_burden, "master_clone_burden.tsv")
+  fc <- intersect(c("frac_cells", "frac_clones"), names(clone_burden))
+  if (!("clone_bin" %in% names(clone_burden)) || !length(fc)) {
+    note("Clone burden table lacks the expected clone_bin / fraction columns.")
+  } else {
+    d <- clone_burden
+    d$.f <- as.numeric(d[[fc[1]]])
+    dd <- d %>% transmute(cat = sample, val = .f, grp = clone_bin,
+                          hover = paste0(sample, "<br>", clone_bin, "<br>",
+                                         percent(.f, accuracy = 0.1)))
+    sbar(dd, "Clonal burden across samples", "Fraction of cells")
+  }
+}
+```
+
+## Clone rank abundance
+
+Clone size against rank. A steep head indicates a few dominant clones; a long flat tail
+indicates a diverse, largely unexpanded repertoire.
+
+```{r}
+#| label: rank-abundance
+ra <- if (have(vdj_rank)) vdj_rank else T("repertoire", "clone_rank_abundance.tsv")
+if (!have(ra)) note("No clone rank abundance table available.") else {
+  rc <- intersect(c("rank", "clone_rank"), names(ra))
+  nc <- intersect(c("n", "cells", "count", "clone_size", "size"), names(ra))
+  if (!length(rc) || !length(nc)) note("Rank abundance table lacks rank/size columns.") else {
+    d <- ra
+    d$.r <- as.numeric(d[[rc[1]]]); d$.n <- as.numeric(d[[nc[1]]])
+    d <- d[!is.na(d$.r) & !is.na(d$.n) & d$.n > 0 & d$.r > 0, , drop = FALSE]
+    grp <- if ("sample" %in% names(d)) as.character(d$sample) else "all"
+    dd <- data.frame(x = d$.r, y = d$.n, grp = grp,
+                     hover = paste0(grp, "<br>rank ", d$.r, "<br>", d$.n, " cells"))
+    lplot(dd, "Clone rank abundance (log-log)", "Clone rank", "Clone size")
+  }
+}
+```
+
+# Repertoire overlap and clonotype sharing
+
+Clonotypes seen in more than one sample. Within a patient this reflects genuine clonal
+persistence across timepoints or tissues; across patients it usually reflects public
+clonotypes with high generation probability rather than a shared response.
+
+## Sample overlap
+
+```{r}
+#| label: overlap-heatmap
+if (!have(overlap_mat)) {
+  note("No sample overlap matrix available. This is produced by the Repertoire module.")
+} else {
+  save_table(overlap_mat, "master_sample_overlap.tsv")
+  m <- overlap_mat
+  rn <- as.character(m[[1]]); m[[1]] <- NULL
+  mat <- as.matrix(m); rownames(mat) <- rn
+  plot_ly(
+    x = colnames(mat), y = rownames(mat), z = mat,
+    type = "heatmap", colors = colorRamp(c("white", "#fee391", "#cb181d")),
+    hovertemplate = "%{y} vs %{x}<br>overlap: %{z:.3f}<extra></extra>"
+  ) %>%
+    layout(title = "Sample repertoire overlap",
+           xaxis = list(title = "", tickangle = -45), yaxis = list(title = "")) %>%
+    config(displaylogo = FALSE)
+}
+```
+
+## Most shared clonotypes
+
+```{r}
+#| label: top-shared
+if (!have(top_shared)) note("No top shared clones table available.") else {
+  save_table(top_shared, "master_top_shared_clones.tsv")
+  itable(top_shared, pageSize = 10)
+}
+```
+
+## Sharing versus generation probability
+
+Each clonotype's sharing breadth against its OLGA generation probability. Clonotypes shared
+widely *and* easy to generate are likely public/convergent rather than response-specific —
+this plot is the quickest way to tell those apart.
+
+```{r}
+#| label: sharing-pgen
+if (!have(sharing)) note("No clonotype sharing table available (produced by COMPARE).") else {
+  d <- sharing
+  pg <- intersect(c("log10_pgen", "pgen"), names(d))
+  ns <- intersect(c("total_samples", "n_samples"), names(d))
+  if (!length(pg) || !length(ns)) note("Sharing table lacks pgen / sample-count columns.") else {
+    d$.p <- as.numeric(d[[pg[1]]]); d$.n <- as.integer(d[[ns[1]]])
+    if (pg[1] == "pgen") d$.p <- log10(pmax(d$.p, 1e-300))
+    d <- d[is.finite(d$.p) & !is.na(d$.n), , drop = FALSE]
+    dd <- data.frame(grp = factor(d$.n, levels = sort(unique(d$.n))), val = d$.p,
+                     hover = paste0(d$junction_aa, "<br>samples: ", d$.n,
+                                    "<br>log10 pgen: ", signif(d$.p, 4)))
+    boxby(dd, "Generation probability by sharing breadth", "log10 pgen")
+  }
+}
+```
+
+# Sequence clustering
+
+Three complementary approaches to grouping clonotypes by receptor similarity: **GIANA**
+(isometric distance on CDR3β + V gene), **GLIPH2** (shared local motif enrichment) and
+**TCRdist3** (pairwise TCR distance, thresholded at radius `r params$tcrdist_radius`).
+GIANA and GLIPH2 run per patient; TCRdist3 runs per sample.
+
+## Method coverage
+
+Fraction of cells whose clonotype was assigned to a cluster by each method, and how many
+clusters each produced. Large disagreements between methods are expected — they optimise
+for different notions of similarity — but a method at or near zero is worth investigating.
+
+```{r}
+#| label: method-coverage
+if (!have(method_presence)) {
+  note("No method coverage table available.")
+} else {
+  save_table(method_presence, "master_method_presence.tsv")
+  d <- method_presence %>%
+    transmute(cat = method, val = frac_cells,
+              hover = paste0(method, "<br>", percent(frac_cells, accuracy = 0.1), " of cells"))
+  hbar(d, "Cell coverage by method", "Fraction of cells", height = 380, tickformat = ".0%")
+}
+```
+
+```{r}
+#| label: method-cluster-counts
+if (!have(method_counts)) {
+  note("No cluster count table available.")
+} else {
+  save_table(method_counts, "master_method_cluster_counts.tsv")
+  d <- method_counts %>%
+    transmute(cat = method, val = n_clusters,
+              hover = paste0(method, "<br>", n_clusters, " clusters"))
+  hbar(d, "Clusters detected by method", "Clusters", colour = "#d95f02", height = 380)
+}
+```
+
+## Per-method summaries
+
+```{r}
+#| label: cluster-rollups
+rolls <- list(GIANA = giana_roll, GLIPH2 = gliph2_roll, TCRdist3 = tcrdist_roll)
+rolls <- rolls[vapply(rolls, have, logical(1))]
+if (!length(rolls)) note("No clustering rollups available.") else {
+  combined <- bind_rows(lapply(names(rolls), function(n)
+    data.frame(method = n, rolls[[n]], stringsAsFactors = FALSE)))
+  save_table(combined, "master_cluster_rollups.tsv")
+  itable(combined, pageSize = 15,
+         groupBy = "method",
+         columns = list(method = colDef(name = "Method")))
+}
+```
+
+::: {.callout-note appearance="simple"}
+GIANA receives one row per unique clonotype. Before this was enforced, the same clonotype
+seen in several samples of a patient arrived as duplicate rows and GIANA reported those
+duplicates as clusters — inflating cluster counts and producing no output at all for
+patients with a single sample.
+:::
+
+## Cluster composition
+
+Every cluster from each method, sized by membership. `n_unique_cdr3` separates real
+sequence similarity from duplicate detection: a cluster whose members are all the same
+CDR3β is the same clonotype seen in several samples, not a similarity group.
+
+```{r}
+#| label: cluster-sizes
 #| results: asis
-
-if (!is.null(vdj_qc_per_sample_compact) && nrow(vdj_qc_per_sample_compact) > 0) {
-  vdj_qc_per_sample_compact_master <- vdj_qc_per_sample_compact %>%
-    dplyr::select(
-      dplyr::any_of(c(
-        "sample",
-        "patient_id",
-        "timepoint",
-        "n_cells_total",
-        "n_cells_paired",
-        "pct_cells_paired",
-        "n_unique_clones"
-      ))
-    )
-
-  save_table_safe(vdj_qc_per_sample_compact, "master_vdj_qc_per_sample_compact.tsv")
-
-  print(
-    kableExtra::kbl(
-      vdj_qc_per_sample_compact_master,
-      caption = "VDJ QC per-sample compact summary."
-    ) %>%
-      kableExtra::kable_styling(
-        full_width = FALSE,
-        bootstrap_options = c("striped","hover","condensed"),
-        font_size = 11
-      ) %>%
-      kableExtra::scroll_box(width = "100%", height = "420px")
-  )
-}
-
-if (!is.null(vdj_qc_before_after_summary) && nrow(vdj_qc_before_after_summary) > 0) {
-  save_table_safe(vdj_qc_before_after_summary, "master_vdj_qc_before_after_summary.tsv")
-
-  print(
-    kableExtra::kbl(
-      vdj_qc_before_after_summary,
-      caption = "VDJ QC contigs before/after filtering summary."
-    ) %>%
-      kableExtra::kable_styling(
-        full_width = FALSE,
-        bootstrap_options = c("striped","hover","condensed"),
-        font_size = 11
-      ) %>%
-      kableExtra::scroll_box(width = "100%", height = "320px")
-  )
-}
-
-if (!is.null(vdj_qc_sample_sheet_resolved) && nrow(vdj_qc_sample_sheet_resolved) > 0) {
-  save_table_safe(vdj_qc_sample_sheet_resolved, "master_vdj_qc_sample_sheet_resolved.tsv")
-}
-
-if (!is.null(vdj_qc_clone_rank_abundance) && nrow(vdj_qc_clone_rank_abundance) > 0) {
-  top_clone_rank <- vdj_qc_clone_rank_abundance %>%
-    dplyr::group_by(sample) %>%
-    dplyr::slice_head(n = 10) %>%
-    dplyr::ungroup()
-
-  save_table_safe(top_clone_rank, "master_vdj_qc_clone_rank_abundance_top.tsv")
-
-  print(
-    kableExtra::kbl(
-      top_clone_rank,
-      caption = "Top ranked clonotypes by sample."
-    ) %>%
-      kableExtra::kable_styling(
-        full_width = FALSE,
-        bootstrap_options = c("striped","hover","condensed"),
-        font_size = 11
-      ) %>%
-      kableExtra::scroll_box(width = "100%", height = "320px")
-  )
-}
-
-fig_map <- list(
-  "QC retention before/after filtering" = params$vdj_qc_before_after_retention_fig,
-  "Pairing status by sample" = params$vdj_qc_pairing_bar_fig,
-  "Clone rank abundance" = params$vdj_qc_clone_rank_abundance_fig,
-  "Multiple chains by sample" = params$vdj_qc_multiple_chains_fig
-)
-
-valid_figs <- fig_map[
-  vapply(fig_map, function(x) !is.na(x) && nzchar(x) && file.exists(x) && isTRUE(file.size(x) > 0), logical(1))
-]
-
-if (length(valid_figs) > 0) {
-  cat("### Selected VDJ QC figures\n\n")
-
-  for (nm in names(valid_figs)) {
-    fp <- valid_figs[[nm]]
-    out_name <- basename(fp)
-    file.copy(fp, file.path(params$outdir, "figures", out_name), overwrite = TRUE)
-
-    cat("#### ", nm, "\n\n", sep = "")
-    print(knitr::include_graphics(fp))
-    cat("\n\n")
-  }
+det <- list(GIANA = giana_detail, GLIPH2 = gliph2_detail, TCRdist3 = tcrdist_detail)
+det <- det[vapply(det, have, logical(1))]
+if (!length(det)) {
+  note("No cluster detail tables available.")
+} else {
+  rows <- lapply(names(det), function(nm) {
+    d <- det[[nm]]
+    data.frame(method = nm,
+               size   = as.numeric(d$n_members),
+               stringsAsFactors = FALSE)
+  })
+  d <- bind_rows(rows) %>%
+    count(method, size, name = "n_clusters") %>%
+    transmute(cat = size, val = n_clusters, grp = method,
+              hover = paste0(method, "<br>", n_clusters, " cluster(s) of size ", size))
+  save_table(d, "master_cluster_size_distribution.tsv")
+  gbar(d, "Cluster size distribution by method", "Members per cluster", "Clusters")
 }
 ```
 
-
-# Diversity
 ```{r}
-if (!is.null(diversity_by_sample) && nrow(diversity_by_sample) > 0) {
-  div_long <- diversity_by_sample %>%
-    pivot_longer(cols = intersect(c("shannon","simpson","inv_simpson","richness"), colnames(diversity_by_sample)),
-                 names_to = "metric", values_to = "value")
-
-  p_div <- ggplot(div_long, aes(x = metric, y = value, fill = metric)) +
-    geom_boxplot(alpha = 0.85, outlier.size = 0.4) +
-    geom_jitter(width = 0.12, size = 1.2, alpha = 0.7) +
-    guides(fill = "none") +
-    labs(
-      title = "Repertoire diversity summary",
-      x = NULL,
-      y = "Metric value"
-    ) +
-    theme_scratch_pub(params$base_size)
-
-  p_div
-  save_plot_safe(p_div, "master_diversity_boxplots.png")
+#| label: gliph2-top-motifs
+if (!have(gliph2_detail)) {
+  note("No GLIPH2 motif detail available.")
+} else {
+  save_table(gliph2_detail, "master_gliph2_motif_detail.tsv")
+  d <- gliph2_detail %>%
+    slice_max(n_members, n = params$top_n_clusters, with_ties = FALSE) %>%
+    transmute(cat = paste0(cluster, "  (", patient, ")"),
+              val = n_members,
+              hover = paste0("motif ", cluster, "<br>patient ", patient,
+                             "<br>", n_members, " members, ", n_unique_cdr3,
+                             " distinct CDR3b<br>", n_samples, " sample(s)"))
+  hbar(d, paste0("Top ", params$top_n_clusters, " GLIPH2 motif clusters"),
+       "Members", colour = "#d95f02", height = 560)
 }
 ```
 
-# Clone Birden
 ```{r}
-if (!is.null(clone_burden) && nrow(clone_burden) > 0) {
-  sample_col_burden <- if ("sample" %in% colnames(clone_burden)) "sample" else colnames(clone_burden)[1]
-  frac_col <- if ("frac_cells" %in% colnames(clone_burden)) "frac_cells" else if ("frac_clones" %in% colnames(clone_burden)) "frac_clones" else NULL
-  bin_col <- if ("clone_bin" %in% colnames(clone_burden)) "clone_bin" else NULL
-
-  if (!is.null(frac_col) && !is.null(bin_col)) {
-    p_burden <- ggplot(clone_burden, aes_string(x = sample_col_burden, y = frac_col, fill = bin_col)) +
-      geom_col(position = "fill") +
-      coord_flip() +
-      scale_y_continuous(labels = percent_format(accuracy = 1)) +
-      labs(
-        title = "Clonal burden across samples",
-        x = NULL,
-        y = "Fraction",
-        fill = "Clone bin"
-      ) +
-      theme_scratch_pub(params$base_size)
-
-    p_burden
-    save_plot_safe(p_burden, "master_clone_burden.png")
-  }
+#| label: cross-sample-reach
+#| results: asis
+rows <- list()
+for (nm in names(det)) {
+  d <- det[[nm]]
+  if (!("n_samples" %in% names(d))) next
+  rows[[nm]] <- data.frame(
+    method = nm,
+    frac   = mean(as.numeric(d$n_samples) > 1, na.rm = TRUE),
+    n      = nrow(d), stringsAsFactors = FALSE)
+}
+if (!length(rows)) {
+  note("No per-cluster sample counts available.")
+} else {
+  d <- bind_rows(rows)
+  save_table(d, "master_cluster_cross_sample.tsv")
+  dd <- d %>% transmute(cat = method, val = frac,
+                        hover = paste0(method, "<br>",
+                                       percent(frac, accuracy = 0.1),
+                                       " of ", n, " clusters span >1 sample"))
+  hbar(dd, "Clusters spanning more than one sample", "Fraction of clusters",
+       height = 380, tickformat = ".0%")
 }
 ```
 
-# Method coverage and cluster counts
+A cluster spanning several samples is the interesting case — the same or similar receptor
+recovered independently, rather than confined to one library.
+
 ```{r}
-plot_list <- list()
-
-if (!is.null(method_presence) && nrow(method_presence) > 0) {
-  mp <- method_presence %>%
-    mutate(method = fct_reorder(method, frac_cells))
-  p1 <- ggplot(mp, aes(x = method, y = frac_cells)) +
-    geom_col(fill = "steelblue") +
-    coord_flip() +
-    scale_y_continuous(labels = percent_format(accuracy = 1)) +
-    labs(title = "Method coverage", x = NULL, y = "Fraction of cells annotated") +
-    theme_scratch_pub(params$base_size)
-  plot_list$coverage <- p1
-}
-
-if (!is.null(method_cluster_counts) && nrow(method_cluster_counts) > 0) {
-  mc <- method_cluster_counts %>%
-    mutate(method = fct_reorder(method, n_clusters))
-  p2 <- ggplot(mc, aes(x = method, y = n_clusters)) +
-    geom_col(fill = "darkorange") +
-    coord_flip() +
-    scale_y_continuous(labels = comma) +
-    labs(title = "Clusters detected by method", x = NULL, y = "Number of clusters") +
-    theme_scratch_pub(params$base_size)
-  plot_list$counts <- p2
-}
-
-if (length(plot_list) == 2) {
-  wrap_plots(plot_list$coverage, plot_list$counts, ncol = 2)
-  save_plot_safe(wrap_plots(plot_list$coverage, plot_list$counts, ncol = 2), "master_method_panels.png", width = 14, height = 6)
-} else if (length(plot_list) == 1) {
-  print(plot_list[[1]])
+#| label: giana-cluster-table
+if (!have(giana_detail)) {
+  note("No GIANA cluster detail available.")
+} else {
+  save_table(giana_detail, "master_giana_cluster_detail.tsv")
+  itable(giana_detail, pageSize = 10)
 }
 ```
 
-# Sample Overlap
+## V-gene usage within clusters
+
+Germline V-gene composition of the clustered clonotypes, per patient. A motif family
+dominated by one V gene is a stronger structural signal than one drawn from many.
+
 ```{r}
-if (!is.null(sample_overlap_matrix) && nrow(sample_overlap_matrix) > 0) {
-  som <- as.data.frame(sample_overlap_matrix)
-  rownames(som) <- som[[1]]
-  som[[1]] <- NULL
-  som <- as.matrix(som)
-
-  ht <- Heatmap(
-    som,
-    name = "Overlap",
-    col = colorRamp2(c(0, 0.5, 1), c("white", "gold", "firebrick")),
-    cluster_rows = TRUE,
-    cluster_columns = TRUE,
-    row_names_side = "left",
-    column_title = "Sample repertoire overlap",
-    heatmap_legend_param = list(title = "Overlap")
-  )
-  draw(ht)
-}
-```
-
-# Annotation-centered comparison
-```{r}
-annotation_panels <- list(
-  TCRi = annotation_tcri_summary,
-  CoNGA = annotation_conga_summary,
-  GLIPH2 = annotation_gliph2_summary,
-  TCRdist3 = annotation_tcrdist3_summary,
-  GIANA = annotation_giana_summary,
-  Consensus = annotation_consensus_summary
-)
-
-anno_comp <- lapply(names(annotation_panels), function(nm) {
-  df <- annotation_panels[[nm]]
-  if (is.null(df) || nrow(df) == 0) return(NULL)
-
-  annot_col <- if ("annot" %in% colnames(df)) "annot" else colnames(df)[1]
-  frac_col <- intersect(c("frac_high","frac_clustered","frac_gliph","frac_tcrdist","frac_giana","frac_consensus"), colnames(df))
-  if (length(frac_col) == 0) return(NULL)
-
-  df %>%
-    transmute(
-      method = nm,
-      annot = .data[[annot_col]],
-      frac = .data[[frac_col[1]]]
-    )
-})
-
-anno_comp <- dplyr::bind_rows(anno_comp)
-
-if (nrow(anno_comp) > 0) {
-  anno_comp2 <- anno_comp %>%
+#| label: cluster-vgene
+#| results: asis
+vg <- list(GIANA = giana_vgene, GLIPH2 = gliph2_vgene)
+vg <- vg[vapply(vg, have, logical(1))]
+if (!length(vg)) {
+  note("No V-gene usage tables available for the clustering methods.")
+} else {
+  d <- bind_rows(lapply(names(vg), function(nm)
+        data.frame(method = nm, vg[[nm]], stringsAsFactors = FALSE))) %>%
     group_by(method) %>%
-    slice_max(order_by = frac, n = params$top_n_annotations, with_ties = FALSE) %>%
+    slice_max(n_clonotypes, n = params$top_n_genes, with_ties = FALSE) %>%
     ungroup()
-
-  p_anno <- ggplot(anno_comp2, aes(x = reorder(annot, frac), y = frac, fill = method)) +
-    geom_col() +
-    coord_flip() +
-    facet_wrap(~method, scales = "free_y") +
-    scale_y_continuous(labels = percent_format(accuracy = 1)) +
-    labs(
-      title = "Top annotation enrichments across modules",
-      x = NULL,
-      y = "Fraction / enrichment summary"
-    ) +
-    theme_scratch_pub(params$base_size)
-
-  p_anno
-  save_plot_safe(p_anno, "master_annotation_comparison.png", width = 14, height = 10)
+  save_table(d, "master_cluster_vgene_usage.tsv")
+  dd <- d %>% transmute(cat = vgene, val = n_clonotypes, grp = method,
+                        hover = paste0(method, "<br>", vgene, "<br>patient ", patient,
+                                       "<br>", n_clonotypes, " clonotypes"))
+  gbar(dd, "V-gene usage among clustered clonotypes", "", "Clonotypes", height = 520)
 }
 ```
 
-# Concensus Cluster Burden
+## Per-annotation clustering coverage
+
+Fraction of cells clustered by each method, broken down by cell-type annotation. Requires
+cell-type labels from a GEX object.
+
 ```{r}
-if (!is.null(consensus_cluster_summary) && nrow(consensus_cluster_summary) > 0) {
-  ccs <- consensus_cluster_summary %>%
-    slice_head(n = params$top_n_consensus_clusters) %>%
-    mutate(consensus_cluster = fct_reorder(consensus_cluster, n_cells))
-
-  p_cons <- ggplot(ccs, aes(x = consensus_cluster, y = n_cells)) +
-    geom_col(fill = "steelblue") +
-    coord_flip() +
-    scale_y_continuous(labels = comma) +
-    labs(
-      title = "Top consensus clonotype clusters",
-      x = NULL,
-      y = "Cells"
-    ) +
-    theme_scratch_pub(params$base_size)
-
-  p_cons
-  save_plot_safe(p_cons, "master_consensus_clusters.png")
+#| label: annotation-panels
+panels <- list(GIANA = anno_giana, GLIPH2 = anno_gliph2, TCRdist3 = anno_tcrdist,
+               CoNGA = anno_conga, Consensus = anno_cons, TCRi = anno_tcri)
+rows <- list()
+for (nm in names(panels)) {
+  d <- panels[[nm]]
+  if (!have(d)) next
+  ac <- if ("annot" %in% names(d)) "annot" else names(d)[1]
+  fc <- intersect(c("frac_giana", "frac_gliph", "frac_tcrdist", "frac_clustered",
+                    "frac_high", "frac_consensus", "frac_tcri", "frac_high_tcri"), names(d))
+  if (!length(fc)) next
+  rows[[nm]] <- data.frame(method = nm, annot = as.character(d[[ac]]),
+                           frac = as.numeric(d[[fc[1]]]), stringsAsFactors = FALSE)
+}
+if (!length(rows)) {
+  note(paste("No per-annotation summaries available. These require cell-type labels from a",
+             "GEX object, so this section is empty on the VDJ-only route."))
+} else {
+  d <- bind_rows(rows) %>%
+    group_by(method) %>% slice_max(frac, n = params$top_n_annotations, with_ties = FALSE) %>%
+    ungroup()
+  save_table(d, "master_annotation_coverage.tsv")
+  dd <- d %>% transmute(cat = annot, val = frac, grp = method,
+                        hover = paste0(method, "<br>", annot, "<br>",
+                                       percent(frac, accuracy = 0.1)))
+  gbar(dd, "Clustering coverage by cell-type annotation", "", "Fraction of cells", height = 560)
 }
 ```
 
-# key tables
-```{r}
-if (!is.null(consensus_cluster_summary) && nrow(consensus_cluster_summary) > 0) {
-  kable(consensus_cluster_summary %>% slice_head(n = params$top_n_consensus_clusters),
-        caption = "Top consensus clusters.") %>%
-    kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed","responsive"))
-}
+# GEX-dependent analyses
 
-if (!is.null(diversity_by_sample) && nrow(diversity_by_sample) > 0) {
-  kable(diversity_by_sample,
-        caption = "Diversity metrics by sample.") %>%
-    kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed","responsive"))
+These sections require an annotated Seurat object (`--input_annotated_object`) and are
+skipped entirely on the VDJ-only route.
+
+## T-cell integration
+
+Fusion of VDJ contigs with the GEX object, matching receptors to transcriptome-defined cell
+states.
+
+```{r}
+#| label: tcell
+if (!have(tcell_roll)) {
+  note("T-cell integration did not run on this route (no GEX object supplied).")
+} else {
+  save_table(tcell_roll, "master_tcell_rollup.tsv")
+  itable(tcell_roll, pageSize = 15)
 }
 ```
 
-# session info
 ```{r}
-writeLines(capture.output(sessionInfo()), file.path(params$outdir, "sessionInfo.master_summary.txt"))
+#| label: tcell-annot
+if (!have(tcell_anno)) {
+  note("No per-annotation T-cell integration summary available.")
+} else {
+  d <- tcell_anno
+  nc <- intersect(c("n_cells", "cells", "n"), names(d))
+  ac <- if ("annot" %in% names(d)) "annot" else names(d)[1]
+  if (!length(nc)) note("T-cell annotation summary lacks a cell-count column.") else {
+    dd <- data.frame(cat = as.character(d[[ac]]), val = as.numeric(d[[nc[1]]]))
+    dd$hover <- paste0(dd$cat, "<br>", format(dd$val, big.mark = ","), " cells")
+    hbar(dd, "Cells per annotation", "Cells", height = 560)
+  }
+}
+```
+
+## CoNGA
+
+Graph-level correspondence between TCR similarity and transcriptional similarity. Clusters
+scoring highly here contain cells that are neighbours in *both* spaces — the strongest
+available evidence of antigen-driven clonal programmes.
+
+```{r}
+#| label: conga
+if (!have(conga_roll) && !have(conga_clusters)) {
+  note("CoNGA did not run on this route (requires a GEX object).")
+} else {
+  if (have(conga_roll)) save_table(conga_roll, "master_conga_rollup.tsv")
+  if (have(conga_clusters)) save_table(conga_clusters, "master_conga_clusters.tsv")
+  itable(if (have(conga_roll)) conga_roll else conga_clusters, pageSize = 15)
+}
+```
+
+## Consensus clustering
+
+Reconciliation of the GIANA, GLIPH2, TCRdist3 and CoNGA labels into a single consensus
+cluster per cell. Consensus clusters supported by several independent methods are the most
+trustworthy candidates for follow-up.
+
+```{r}
+#| label: consensus
+if (!have(cons_clusters)) {
+  note("Consensus clustering did not run on this route (requires a GEX object).")
+} else {
+  save_table(cons_clusters, "master_consensus_clusters.tsv")
+  d <- cons_clusters
+  nc <- intersect(c("n_cells", "cells", "n"), names(d))
+  cc <- intersect(c("consensus_cluster", "cluster"), names(d))
+  if (!length(nc) || !length(cc)) itable(d, pageSize = 15) else {
+    dd <- data.frame(cat = as.character(d[[cc[1]]]), val = as.numeric(d[[nc[1]]]))
+    dd <- dd[order(-dd$val), , drop = FALSE]
+    dd <- head(dd, params$top_n_clusters)
+    dd$hover <- paste0("cluster ", dd$cat, "<br>", dd$val, " cells")
+    hbar(dd, paste0("Top ", params$top_n_clusters, " consensus clusters"), "Cells", height = 560)
+  }
+}
+```
+
+```{r}
+#| label: consensus-table
+itable(cons_clusters, pageSize = 10)
+```
+
+## TCRi
+
+Immunogenicity scoring: how strongly each clone's receptor resembles known
+antigen-reactive receptors. High-scoring clones are the candidates worth following up
+experimentally. Requires the GEX object, so this section is empty on the VDJ-only route.
+
+```{r}
+#| label: tcri
+#| results: asis
+if (!have(tcri_roll)) {
+  note("TCRi did not run on this route (requires a GEX object).")
+} else {
+  save_table(tcri_roll, "master_tcri_rollup.tsv")
+  itable(tcri_roll, pageSize = 15)
+}
+```
+
+```{r}
+#| label: tcri-clones
+if (!have(tcri_scores)) {
+  note("No high-TCRi clone summary available.")
+} else {
+  save_table(tcri_scores, "master_tcri_high_clones.tsv")
+  d  <- tcri_scores
+  nc <- intersect(c("n_cells", "cells", "clone_size", "n"), names(d))
+  cc <- intersect(c("clone_id", "CTaa", "clonotype"), names(d))
+  if (!length(nc) || !length(cc)) {
+    itable(d, pageSize = 10)
+  } else {
+    dd <- data.frame(cat = as.character(d[[cc[1]]]), val = as.numeric(d[[nc[1]]]))
+    dd <- head(dd[order(-dd$val), , drop = FALSE], params$top_n_clusters)
+    dd$hover <- paste0(dd$cat, "<br>", dd$val, " cells")
+    hbar(dd, paste0("Top ", params$top_n_clusters, " high-TCRi clones"), "Cells", height = 560)
+  }
+}
+```
+
+# Reference tables
+
+Every table rendered above is also written to `Master_Summary_Report/tables/` as TSV for
+downstream use.
+
+```{r}
+#| label: written-tables
+files <- list.files(file.path(params$outdir, "tables"), pattern = "\\.tsv$")
+if (!length(files)) note("No tables were written.") else {
+  itable(data.frame(table = sort(files), stringsAsFactors = FALSE), pageSize = 25)
+}
+```
+
+# Session info
+
+```{r}
+#| label: session
+writeLines(capture.output(sessionInfo()),
+           file.path(params$outdir, "sessionInfo.master_summary.txt"))
 sessionInfo()
 ```

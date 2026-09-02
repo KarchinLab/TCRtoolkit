@@ -38,3 +38,16 @@ tmp
 .vscode/*
 
 .e2e_test_tmp/
+
+## Run artifacts — existing rules only match bare `work` and `results*`,
+## so custom -w / --outdir names slip through.
+# NB: not `work*/` - that also matches workflows/, the source directory.
+work/
+work_*/
+test_results*/
+test_v2port*/
+logs/
+
+## Let the report notebooks through: the `notebooks/*` rule above would
+## otherwise silently skip every template_*.qmd, which the bulk route needs.
+!notebooks/template_*.qmd
