@@ -30,6 +30,9 @@ process MERGE_VDJ_OBJECT {
       // Staged rather than called from ${projectDir}/bin so its contents join the task
       // hash; otherwise editing the script leaves -resume reusing the previous output.
       path merge_script,  stageAs: 'merge_vdj_object.R'
+      // Post-merge GEX export when the full-SC route ran; NO_FILE otherwise. Used only to
+      // flag which conserved receptors also reached the GEX analysis.
+      path gex_export,    stageAs: 'in_gex_export.tsv'
       val  project_name
 
     output:
@@ -55,6 +58,7 @@ process MERGE_VDJ_OBJECT {
             --prefix "\${stage}_qc" \\
             --outdir . \\
             --sample-col "${params.vdj_meta_sample_col ?: 'sample'}" \\
+            --gex-export in_gex_export.tsv \\
           || echo "[merge_vdj] WARN \${stage}-QC object failed; continuing"
     done
     """

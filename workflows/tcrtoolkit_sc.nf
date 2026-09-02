@@ -97,18 +97,6 @@ workflow TCRTOOLKIT_SC {
     def vdj_qc_clone_rank_abundance_fig   = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'clone_rank_abundance.png'           }.ifEmpty(nofile)
     def vdj_qc_multiple_chains_fig        = vdj_qc_out.qc_figures.flatten().filter { f -> f.name == 'multiple_chains_by_sample.png'      }.ifEmpty(nofile)
 
-    // ── Step 1b: merged per-cell TCR object, pre- and post-QC ─────────────
-    // Real barcodes, all samples pooled. On the VDJ-only route this is the only per-cell
-    // object produced - BULK_TO_EXPORT's export is clonotype-level with synthesized cells.
-    if (enabled(params.run_merge_vdj_object)) {
-        MERGE_VDJ_OBJECT(
-            pickFile(vdj_qc_out.qc_tables, 'contigs_before_qc.tsv', nofile),
-            pickFile(vdj_qc_out.qc_tables, 'contigs_after_qc.tsv',  nofile),
-            channel.fromPath("${projectDir}/bin/merge_vdj_object.R", checkIfExists: true),
-            ch_project_name
-        )
-    }
-
     // ── Step 2: pseudobulk → clonotype table (route-specific source) ──────
     def sc_samplesheet = nofile
     if (vdjOnly) {
@@ -121,6 +109,23 @@ workflow TCRTOOLKIT_SC {
         )
         SC_TO_CDR3_SW( tcell_out.export_cells )
         pseudobulk_map = SC_TO_CDR3_SW.out.sample_map
+    }
+
+    // ── Step 2b: merged per-cell TCR object, pre- and post-QC ─────────────
+    // Reads the contig tables directly, so it conserves EVERY receptor - including those
+    // that never matched a GEX barcode and are therefore absent from the full-SC analysis
+    // (which pseudobulks from the post-merge export). Runs after TCELL_INTEGRATION so it
+    // can flag which receptors did match.
+    mergedvdj_tables = channel.empty()
+    if (enabled(params.run_merge_vdj_object)) {
+        MERGE_VDJ_OBJECT(
+            pickFile(vdj_qc_out.qc_tables, 'contigs_before_qc.tsv', nofile),
+            pickFile(vdj_qc_out.qc_tables, 'contigs_after_qc.tsv',  nofile),
+            channel.fromPath("${projectDir}/bin/merge_vdj_object.R", checkIfExists: true),
+            vdjOnly ? channel.fromPath("${projectDir}/assets/NO_FILE") : tcell_out.export_cells,
+            ch_project_name
+        )
+        mergedvdj_tables = MERGE_VDJ_OBJECT.out.pre_qc.mix(MERGE_VDJ_OBJECT.out.post_qc)
     }
 
     // ── Step 3: tcrtoolkit pseudobulk QC gate (both routes) ───────────────
@@ -280,6 +285,7 @@ workflow TCRTOOLKIT_SC {
             conga_tables.flatten().collect().ifEmpty([]),
             consensus_tables.flatten().collect().ifEmpty([]),
             tcri_tables.flatten().collect().ifEmpty([]),
+            mergedvdj_tables.flatten().collect().ifEmpty([]),
             master_barrier,
             ch_project_name
         )

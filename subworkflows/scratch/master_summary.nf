@@ -25,6 +25,7 @@ workflow MASTER_SUMMARY_SW {
     conga_tables
     consensus_tables
     tcri_tables
+    mergedvdj_tables
 
     barrier_done
     project_name
@@ -48,6 +49,7 @@ workflow MASTER_SUMMARY_SW {
         conga_tables,
         consensus_tables,
         tcri_tables,
+        mergedvdj_tables,
         ch_notebook,
         barrier_done,
         project_name

@@ -306,6 +306,8 @@ pheno_flux     <- T("repertoire", "phenotypic_flux.tsv")
 tcell_roll     <- T("tcell", "tcell_summary_rollup.tsv")
 tcell_anno     <- T("tcell", "tcell_per_annotation_summary.tsv")
 tcell_topclone <- T("tcell", "tcell_top_clones.tsv")
+tcell_overlap  <- T("tcell", "barcode_overlap_by_sample.tsv")
+merged_vdj     <- T("mergedvdj", "post_qc_summary.tsv")
 conga_roll     <- T("conga", "conga_summary_rollup.tsv")
 conga_clusters <- T("conga", "conga_cluster_summary.tsv")
 anno_conga     <- T("conga", "annotation_conga_summary.tsv")
@@ -377,6 +379,80 @@ ov <- data.frame(
 )
 save_table(ov, "master_overview.tsv")
 itable(ov, pageSize = 10)
+```
+
+## Receptor retention
+
+The full single-cell route pseudobulks from the **post-merge** export, so a receptor whose
+barcode never matched a GEX cell is absent from every downstream result — not only the
+cell-level steps, but GIANA, GLIPH2, TCRdist3 and the repertoire statistics too. Every
+receptor is nevertheless conserved in `bridge/merged_vdj_object/`, flagged with whether it
+reached the GEX analysis.
+
+At a high match rate this is immaterial. At a low one it silently removes a large share of
+the data, so the rate is reported here rather than left in a module table.
+
+```{r}
+#| label: receptor-retention
+#| results: asis
+if (!have(tcell_overlap)) {
+  note(paste("No barcode overlap table — either the VDJ-only route (no GEX join is",
+             "performed, so every receptor is analysed) or T-cell integration did not run."))
+} else {
+  d <- tcell_overlap
+  nb <- intersect(c("tcr_barcodes","n_tcr"), names(d))
+  no <- intersect(c("overlap","matched","matched_keys"), names(d))
+  if (!length(nb) || !length(no)) {
+    note("Overlap table present but lacks the expected barcode/overlap columns.")
+  } else {
+    tot <- sum(as.numeric(d[[nb[1]]]), na.rm = TRUE)
+    hit <- sum(as.numeric(d[[no[1]]]), na.rm = TRUE)
+    rate <- if (tot > 0) hit / tot else NA_real_
+    save_table(d, "master_receptor_retention.tsv")
+
+    if (!is.na(rate) && rate < 0.75) {
+      cat(sprintf(paste0("\n::: {.callout-warning appearance=\"simple\"}\n",
+                  "**%s of %s receptors (%.1f%%) matched a GEX cell.** The remaining %s are ",
+                  "excluded from every downstream result on this route. They are preserved in ",
+                  "`bridge/merged_vdj_object/` with `gex_matched = FALSE`. Below ~75%%, ",
+                  "consider whether barcode conventions are reconciling correctly — the ",
+                  "per-sample rates below will show if it is one sample or all of them.\n:::\n\n"),
+                  format(hit, big.mark=","), format(tot, big.mark=","), 100*rate,
+                  format(tot-hit, big.mark=",")))
+    } else {
+      cat(sprintf(paste0("\n::: {.callout-note appearance=\"simple\"}\n",
+                  "**%s of %s receptors (%.1f%%) matched a GEX cell.** The %s unmatched are ",
+                  "excluded from downstream results but preserved in ",
+                  "`bridge/merged_vdj_object/` with `gex_matched = FALSE`.\n:::\n\n"),
+                  format(hit, big.mark=","), format(tot, big.mark=","), 100*rate,
+                  format(tot-hit, big.mark=",")))
+    }
+  }
+}
+```
+
+```{r}
+#| label: retention-by-sample
+if (!have(tcell_overlap)) {
+  invisible(NULL)
+} else {
+  d  <- tcell_overlap
+  sc <- intersect(c("sample","Sample"), names(d))
+  rc <- intersect(c("overlap_rate","rate"), names(d))
+  nb <- intersect(c("tcr_barcodes","n_tcr"), names(d))
+  no <- intersect(c("overlap","matched","matched_keys"), names(d))
+  if (length(sc) && length(nb) && length(no)) {
+    r <- if (length(rc)) as.numeric(d[[rc[1]]]) else
+         as.numeric(d[[no[1]]]) / as.numeric(d[[nb[1]]])
+    dd <- data.frame(cat = as.character(d[[sc[1]]]), val = r,
+                     hover = paste0(d[[sc[1]]], "<br>",
+                                    format(as.numeric(d[[no[1]]]), big.mark=","), " of ",
+                                    format(as.numeric(d[[nb[1]]]), big.mark=","),
+                                    " matched<br>", percent(r, accuracy = 0.1)))
+    hbar(dd, "Receptors matching a GEX cell, by sample", "Match rate",
+         height = 400, tickformat = ".0%")
+  }
+}
 ```
 
 ## Module coverage

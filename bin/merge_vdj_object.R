@@ -42,7 +42,11 @@ opt <- list(
     contigs    = .get("--contigs"),
     prefix     = .get("--prefix", "vdj"),
     outdir     = .get("--outdir", "."),
-    sample_col = .get("--sample-col", "sample")
+    sample_col = .get("--sample-col", "sample"),
+    # Optional post-merge GEX export. When supplied, every cell is flagged with whether it
+    # found a GEX partner - so the receptors dropped from the Full-SC analysis stay
+    # identifiable in this conserved object rather than just being absent downstream.
+    gex_export = .get("--gex-export")
 )
 if (is.na(opt$contigs)) stop("--contigs is required")
 
@@ -128,6 +132,28 @@ cells <- cells %>%
     ungroup() %>%
     as.data.frame()
 
+# ── GEX match flag ────────────────────────────────────────────────────────────
+# The Full-SC route feeds its pseudobulk from the POST-merge export, so a receptor that
+# never matched a GEX barcode is absent from every downstream result. This object keeps it;
+# the flag records which ones those are.
+cells$gex_matched <- NA
+if (!is.na(opt$gex_export) && file.exists(opt$gex_export) && file.size(opt$gex_export) > 0) {
+    gx <- tryCatch(fread(opt$gex_export, sep = "\t", select = c("cell_id")),
+                   error = function(e) NULL)
+    if (!is.null(gx) && nrow(gx)) {
+        # GEX cell_ids carry Cell Ranger's "-1" suffix; this object strips it. Normalise
+        # both sides before comparing or nothing matches.
+        gex_ids <- unique(sub("-1$", "", as.character(gx$cell_id)))
+        cells$gex_matched <- cells$cell_id %in% gex_ids
+        n_hit <- sum(cells$gex_matched)
+        msg(sprintf("GEX match: %s of %s cells (%.1f%%) found a GEX partner; %s conserved here only",
+                    format(n_hit, big.mark = ","), format(nrow(cells), big.mark = ","),
+                    100 * n_hit / nrow(cells), format(nrow(cells) - n_hit, big.mark = ",")))
+    } else {
+        msg("WARN could not read --gex-export; gex_matched left NA")
+    }
+}
+
 fwrite(cells, file.path(opt$outdir, paste0(opt$prefix, "_cells.tsv")), sep = "\t")
 msg(sprintf("wrote %s_cells.tsv (%s cells, %d samples, %s paired)",
             opt$prefix, format(nrow(cells), big.mark = ","),
@@ -173,6 +199,8 @@ summ <- cells %>%
               pct_paired = round(100 * sum(paired_tcr) / dplyr::n(), 2),
               unique_clonotypes = dplyr::n_distinct(CTaa[!is.na(CTaa)]),
               multi_chain = sum(multi_alpha | multi_beta),
+              gex_matched = if (all(is.na(gex_matched))) NA_integer_ else sum(gex_matched, na.rm = TRUE),
+              gex_only_here = if (all(is.na(gex_matched))) NA_integer_ else sum(!gex_matched, na.rm = TRUE),
               .groups = "drop")
 fwrite(summ, file.path(opt$outdir, paste0(opt$prefix, "_summary.tsv")), sep = "\t")
 print(as.data.frame(summ))

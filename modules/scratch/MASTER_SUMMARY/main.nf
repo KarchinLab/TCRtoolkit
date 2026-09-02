@@ -26,6 +26,7 @@ process MASTER_SUMMARY {
       path conga_tables,      stageAs: 'intables/conga/*'
       path consensus_tables,  stageAs: 'intables/consensus/*'
       path tcri_tables,       stageAs: 'intables/tcri/*'
+      path mergedvdj_tables,  stageAs: 'intables/mergedvdj/*'
 
       path qmd
       val  barrier_done
