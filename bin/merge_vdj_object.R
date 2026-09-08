@@ -199,8 +199,11 @@ summ <- cells %>%
               pct_paired = round(100 * sum(paired_tcr) / dplyr::n(), 2),
               unique_clonotypes = dplyr::n_distinct(CTaa[!is.na(CTaa)]),
               multi_chain = sum(multi_alpha | multi_beta),
-              gex_matched = if (all(is.na(gex_matched))) NA_integer_ else sum(gex_matched, na.rm = TRUE),
-              gex_only_here = if (all(is.na(gex_matched))) NA_integer_ else sum(!gex_matched, na.rm = TRUE),
+              # Names must differ from the source column: summarise() evaluates
+              # sequentially, so reusing `gex_matched` would make the second line read the
+              # first line's scalar sum rather than the original logical vector.
+              n_gex_matched   = if (all(is.na(gex_matched))) NA_integer_ else sum(gex_matched, na.rm = TRUE),
+              n_gex_unmatched = if (all(is.na(gex_matched))) NA_integer_ else sum(!gex_matched, na.rm = TRUE),
               .groups = "drop")
 fwrite(summ, file.path(opt$outdir, paste0(opt$prefix, "_summary.tsv")), sep = "\t")
 print(as.data.frame(summ))
