@@ -15,7 +15,7 @@
         "samplesheet": {
           "type": "string",
           "format": "file-path",
-          "pattern": ".*.csv$",
+          "pattern": ".*\\.csv$",
           "description": "Path to the samplesheet describing input AIRR data.",
           "help_text": "A CSV of samples and metadata for this TCR analysis.",
           "fa_icon": "fas fa-file-csv"
@@ -49,9 +49,9 @@
           "fa_icon": "fas fa-memory"
         },
         "max_time": {
-          "type": "integer",
-          "default": "2d",
-          "description": "Maximum walltime for any job, converted from Nextflow Duration object.",
+          "type": "string",
+          "default": "48.h",
+          "description": "Maximum walltime for any job (Nextflow duration string, e.g. '48.h' or '2d').",
           "fa_icon": "far fa-clock"
         }
       }
@@ -69,8 +69,7 @@
         },
         "project_name": {
           "type": "string",
-          "description": "Name of this analysis project.",
-          "default": "tcrtoolkit_2026-09-08_09-12-59"
+          "description": "Name of this analysis project."
         },
         "publish_dir_mode": {
           "type": "string",
@@ -220,7 +219,7 @@
         },
         "local_min_pvalue": {
           "type": "string",
-          "default": 0.001
+          "default": "0.001"
         },
         "simulation_depth": {
           "type": "string",
@@ -269,7 +268,8 @@
         "mode": {
           "type": "string",
           "enum": ["bulk", "singlecell"],
-          "description": "Pipeline modality. Default 'bulk' (omit for existing bulk runs)."
+          "default": "bulk",
+          "description": "Pipeline modality."
         },
         "input_vdj_contigs": {
           "type": "string",
