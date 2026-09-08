@@ -49,7 +49,7 @@
           "fa_icon": "fas fa-memory"
         },
         "max_time": {
-          "type": "string",
+          "type": "integer",
           "default": "48.h",
           "description": "Maximum walltime for any job (Nextflow duration string, e.g. '48.h' or '2d').",
           "fa_icon": "far fa-clock"
