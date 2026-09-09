@@ -5,9 +5,12 @@
         "properties": {
             "input_annotated_object": {
                 "default": "",
-                "description": "S3 path to the annotated GEX Seurat object (.rds) to integrate VDJ contigs onto.",
+                "description": "Annotated GEX Seurat object (.rds) to integrate VDJ contigs onto.",
                 "title": "Annotated GEX object (Seurat RDS)",
-                "type": "string"
+                "type": "string",
+                "multiple": false,
+                "pathType": "dataset",
+                "file": "**/*.{RDS,rds}"
             },
             "project_name": {
                 "default": "",
