@@ -1,762 +1,398 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/break-through-cancer/tcrtoolkit-pipeline/main/nextflow_schema.json",
-  "title": "tcrtoolkit pipeline parameters",
-  "description": "BTC TCR Toolkit pipeline",
-  "type": "object",
-  "$defs": {
-    "input_output_options": {
-      "title": "Input/output options",
-      "type": "object",
-      "fa_icon": "fas fa-terminal",
-      "description": "Define where the pipeline should find input data and save output data.",
-      "required": ["samplesheet", "outdir"],
-      "properties": {
-        "samplesheet": {
-          "type": "string",
-          "format": "file-path",
-          "pattern": ".*\\.csv$",
-          "description": "Path to the samplesheet describing input AIRR data.",
-          "help_text": "A CSV of samples and metadata for this TCR analysis.",
-          "fa_icon": "fas fa-file-csv"
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/break-through-cancer/tcrtoolkit-pipeline/main/nextflow_schema.json",
+    "title": "tcrtoolkit pipeline parameters",
+    "description": "BTC TCR Toolkit pipeline",
+    "type": "object",
+    "$defs": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": [
+                "samplesheet",
+                "outdir"
+            ],
+            "properties": {
+                "samplesheet": {
+                    "type": "string",
+                    "format": "file-path",
+                    "pattern": ".*\\.csv$",
+                    "description": "Path to the samplesheet describing input AIRR data.",
+                    "help_text": "A CSV of samples and metadata for this TCR analysis.",
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "outdir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "default": "out",
+                    "description": "Output directory where results will be saved.",
+                    "fa_icon": "fas fa-folder-open"
+                }
+            }
         },
-        "outdir": {
-          "type": "string",
-          "format": "directory-path",
-          "default": "out",
-          "description": "Output directory where results will be saved.",
-          "fa_icon": "fas fa-folder-open"
+        "resource_options": {
+            "title": "Max resource options",
+            "type": "object",
+            "fa_icon": "fab fa-acquisitions-incorporated",
+            "description": "Set the top limit for requested resources for any single job.",
+            "properties": {
+                "max_cpus": {
+                    "type": "integer",
+                    "default": 192,
+                    "description": "Maximum CPUs that can be requested by any process.",
+                    "fa_icon": "fas fa-microchip"
+                },
+                "max_memory": {
+                    "type": "string",
+                    "default": "768.GB",
+                    "pattern": "^\\d+(?:\\.\\d+|\\.)?\\s*(?:[KMGT]?B|[KMGT])$",
+                    "description": "Maximum memory for any process.",
+                    "fa_icon": "fas fa-memory"
+                },
+                "max_time": {
+                    "type": "string",
+                    "default": "48.h",
+                    "description": "Maximum walltime for any job (Nextflow duration string, e.g. '48.h' or '2d').",
+                    "fa_icon": "far fa-clock"
+                }
+            }
+        },
+        "workflow_options": {
+            "title": "Workflow parameters",
+            "type": "object",
+            "fa_icon": "fas fa-project-diagram",
+            "description": "General pipeline workflow settings.",
+            "properties": {
+                "workflow_level": {
+                    "type": "string",
+                    "default": "sample,compare",
+                    "description": "Comma-separated workflow stages.",
+                    "pattern": "^(sample|patient|compare|convert)(,(sample|patient|compare|convert))*$"
+                },
+                "project_name": {
+                    "type": "string",
+                    "description": "Name of this analysis project."
+                },
+                "publish_dir_mode": {
+                    "type": "string",
+                    "default": "copy",
+                    "enum": [
+                        "copy",
+                        "move",
+                        "link",
+                        "symlink"
+                    ],
+                    "description": "Method used by `publishDir` to save outputs."
+                },
+                "container": {
+                    "type": "string",
+                    "description": "Docker/Singularity container image to use for pipeline processes.",
+                    "fa_icon": "fas fa-box"
+                }
+            }
+        },
+        "airr_options": {
+            "title": "AIRR data options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Parameters related to AIRR format and schema references.",
+            "properties": {
+                "input_format": {
+                    "type": "string",
+                    "default": "airr",
+                    "enum": [
+                        "airr",
+                        "adaptive"
+                    ],
+                    "description": "Input data format."
+                },
+                "airr_schema": {
+                    "type": "string",
+                    "description": "Path to AIRR rearrangement schema JSON."
+                },
+                "imgt_lookup": {
+                    "type": "string",
+                    "description": "Path to imgt lookup table."
+                },
+                "template_qc": {
+                    "type": "string",
+                    "description": "Path to QC notebook template."
+                },
+                "template_discovery_brief": {
+                    "type": "string",
+                    "description": "Path to discovery brief notebook template."
+                },
+                "template_details_sample": {
+                    "type": "string",
+                    "description": "Path to the sample-level details notebook template (rendered when the sample workflow_level is run)."
+                },
+                "template_details_compare": {
+                    "type": "string",
+                    "description": "Path to the comparison-level details notebook template (rendered when the sample and compare workflow_levels are run)."
+                },
+                "template_details_patient": {
+                    "type": "string",
+                    "description": "Path to the patient-level details notebook template with GIANA/GLIPH2 clustering (rendered when the sample and patient workflow_levels are run)."
+                },
+                "template_pheno_bulk": {
+                    "type": "string",
+                    "description": "Path to bulk (TCRpheno) phenotype notebook template."
+                }
+            }
+        },
+        "plotting_options": {
+            "title": "Plotting and metadata options",
+            "type": "object",
+            "fa_icon": "fas fa-chart-bar",
+            "description": "Parameters for plotting and metadata columns.",
+            "properties": {
+                "subject_col": {
+                    "type": "string",
+                    "default": "patient",
+                    "description": "Samplesheet column identifying the subject/patient."
+                },
+                "timepoint_col": {
+                    "type": "string",
+                    "default": "timepoint",
+                    "description": "Samplesheet column identifying the timepoint."
+                },
+                "timepoint_order_col": {
+                    "type": "string",
+                    "default": "timepoint_order",
+                    "description": "Name of the (computed, not samplesheet-provided) column holding each timepoint's sort rank. See timepoint_order."
+                },
+                "timepoint_order": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional ordered comma-separated list of timepoint values (e.g. \"Base,Week4,EOT\"); rank = position in the list. If unset, timepoints are ranked numerically when every value parses as a number, otherwise alphabetically."
+                },
+                "alias_col": {
+                    "type": "string",
+                    "default": "alias",
+                    "description": "Samplesheet column giving a display alias for each sample."
+                }
+            }
+        },
+        "olga_options": {
+            "title": "OLGA options",
+            "type": "object",
+            "fa_icon": "fas fa-layer-group",
+            "properties": {
+                "olga_chunk_length": {
+                    "type": "integer",
+                    "default": 100000,
+                    "minimum": 1000,
+                    "description": "Number of sequences processed per OLGA chunk. Larger values reduce parallelization and increase memory usage."
+                }
+            }
+        },
+        "giana_options": {
+            "title": "GIANA clustering options",
+            "type": "object",
+            "fa_icon": "fas fa-brain",
+            "properties": {
+                "threshold": {
+                    "type": "number",
+                    "default": 7.0
+                },
+                "threshold_score": {
+                    "type": "number",
+                    "default": 3.6
+                },
+                "threshold_vgene": {
+                    "type": "number",
+                    "default": 3.7
+                }
+            }
+        },
+        "gliph2_options": {
+            "title": "GLIPH2 clustering options",
+            "type": "object",
+            "fa_icon": "fas fa-code-branch",
+            "properties": {
+                "use_gliph2": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "local_min_pvalue": {
+                    "type": "string",
+                    "default": "0.001"
+                },
+                "simulation_depth": {
+                    "type": "string",
+                    "default": "1000"
+                },
+                "kmer_min_depth": {
+                    "type": "string",
+                    "default": "3"
+                },
+                "local_min_OVE": {
+                    "type": "string",
+                    "default": "c(1000, 100, 10)"
+                },
+                "all_aa_interchangeable": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Treat all amino acids as interchangeable when scoring GLIPH2 motif significance."
+                }
+            }
+        },
+        "tcrdist3_options": {
+            "title": "TCRdist3 distance options",
+            "type": "object",
+            "fa_icon": "fas fa-ruler-combined",
+            "properties": {
+                "matrix_sparsity": {
+                    "type": "string",
+                    "default": "sparse",
+                    "enum": [
+                        "sparse",
+                        "full"
+                    ]
+                },
+                "distance_metric": {
+                    "type": "string",
+                    "default": "tcrdist"
+                },
+                "db_path": {
+                    "type": "string"
+                }
+            }
+        },
+        "singlecell_options": {
+            "title": "Single-cell options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Single-cell TCR modality (--mode singlecell). Ignored in bulk mode.",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": [
+                        "bulk",
+                        "singlecell"
+                    ],
+                    "default": "bulk",
+                    "description": "Pipeline modality. Default 'bulk' (omit for existing bulk runs)."
+                },
+                "input_vdj_contigs": {
+                    "type": "string",
+                    "format": "path",
+                    "description": "Cell Ranger VDJ contigs (required for --mode singlecell)."
+                },
+                "sample_sheet": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Single-cell sample sheet (distinct from bulk --samplesheet)."
+                },
+                "input_annotated_object": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Optional annotated GEX Seurat RDS. Present \u2192 full-SC route; absent \u2192 VDJ-only route."
+                },
+                "contigs_files": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's filtered_contig_annotations.csv. Empty for local/on-prem runs."
+                },
+                "clonotypes_files": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's clonotypes.csv. Empty for local/on-prem runs."
+                },
+                "metrics_files": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's metrics_summary.csv. Empty for local/on-prem runs."
+                },
+                "pseudobulk_by_phenotype": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Optional: stratify pseudobulk into {sample}__{phenotype} units (secondary per-cell-type view)."
+                },
+                "pseudobulk_qc_min_clones": {
+                    "type": "integer",
+                    "default": 25,
+                    "description": "Min unique clonotypes per pseudobulk unit."
+                },
+                "pseudobulk_qc_min_cells": {
+                    "type": "integer",
+                    "default": 50,
+                    "description": "Min total cells per pseudobulk unit."
+                },
+                "pseudobulk_qc_mode": {
+                    "type": "string",
+                    "enum": [
+                        "drop",
+                        "hard_stop"
+                    ],
+                    "default": "drop",
+                    "description": "'drop' = skip failing units; 'hard_stop' = abort run."
+                },
+                "patient_col": {
+                    "type": "string",
+                    "default": "patient_id",
+                    "description": "Metadata key used to pool units per patient for clustering."
+                },
+                "sc_container": {
+                    "type": "string",
+                    "default": "syedsazaidi/scratch-tcr:latest",
+                    "description": "Container for cell-level single-cell processes (Seurat/scanpy/CONGA/tcrdist3)."
+                },
+                "run_conga": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run CONGA (full-SC only)."
+                },
+                "run_consensus": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run consensus clustering (full-SC only)."
+                },
+                "run_repertoire": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run repertoire analysis."
+                },
+                "run_master_summary": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run master summary report."
+                }
+            }
         }
-      }
     },
-    "resource_options": {
-      "title": "Max resource options",
-      "type": "object",
-      "fa_icon": "fab fa-acquisitions-incorporated",
-      "description": "Set the top limit for requested resources for any single job.",
-      "properties": {
-        "max_cpus": {
-          "type": "integer",
-          "default": 192,
-          "description": "Maximum CPUs that can be requested by any process.",
-          "fa_icon": "fas fa-microchip"
+    "allOf": [
+        {
+            "$ref": "#/$defs/input_output_options"
         },
-        "max_memory": {
-          "type": "string",
-          "default": "768 GB",
-          "pattern": "^\\d+(?:\\.\\d+|\\.)?\\s*(?:[KMGT]?B|[KMGT])$",
-          "description": "Maximum memory for any process.",
-          "fa_icon": "fas fa-memory"
+        {
+            "$ref": "#/$defs/resource_options"
         },
-        "max_time": {
-          "type": "integer",
-          "default": "48.h",
-          "description": "Maximum walltime for any job (Nextflow duration string, e.g. '48.h' or '2d').",
-          "fa_icon": "far fa-clock"
+        {
+            "$ref": "#/$defs/workflow_options"
+        },
+        {
+            "$ref": "#/$defs/airr_options"
+        },
+        {
+            "$ref": "#/$defs/plotting_options"
+        },
+        {
+            "$ref": "#/$defs/olga_options"
+        },
+        {
+            "$ref": "#/$defs/giana_options"
+        },
+        {
+            "$ref": "#/$defs/gliph2_options"
+        },
+        {
+            "$ref": "#/$defs/tcrdist3_options"
+        },
+        {
+            "$ref": "#/$defs/singlecell_options"
         }
-      }
-    },
-    "workflow_options": {
-      "title": "Workflow parameters",
-      "type": "object",
-      "fa_icon": "fas fa-project-diagram",
-      "description": "General pipeline workflow settings.",
-      "properties": {
-        "workflow_level": {
-          "type": "string",
-          "description": "Comma-separated workflow stages.",
-          "pattern": "^(sample|patient|compare|convert)(,(sample|patient|compare|convert))*$"
-        },
-        "project_name": {
-          "type": "string",
-          "description": "Name of this analysis project."
-        },
-        "publish_dir_mode": {
-          "type": "string",
-          "default": "copy",
-          "enum": ["copy", "move", "link", "symlink"],
-          "description": "Method used by `publishDir` to save outputs."
-        },
-        "container": {
-          "type": "string",
-          "description": "Docker/Singularity container image to use for pipeline processes.",
-          "fa_icon": "fas fa-box",
-          "default": "ghcr.io/karchinlab/tcrtoolkit:main"
-        }
-      }
-    },
-    "airr_options": {
-      "title": "AIRR data options",
-      "type": "object",
-      "fa_icon": "fas fa-dna",
-      "description": "Parameters related to AIRR format and schema references.",
-      "properties": {
-        "input_format": {
-          "type": "string",
-          "default": "airr",
-          "enum": ["airr", "adaptive"],
-          "description": "Input data format."
-        },
-        "airr_schema": {
-          "type": "string",
-          "description": "Path to AIRR rearrangement schema JSON.",
-          "default": "assets/airr/airr_rearrangement_schema.json"
-        },
-        "imgt_lookup": {
-          "type": "string",
-          "description": "Path to imgt lookup table.",
-          "default": "assets/airr/imgt_adaptive_lookup.tsv"
-        },
-        "template_qc": {
-          "type": "string",
-          "description": "Path to QC notebook template.",
-          "default": "notebooks/template_qc.qmd"
-        },
-        "template_discovery_brief": {
-          "type": "string",
-          "description": "Path to discovery brief notebook template.",
-          "default": "notebooks/template_discovery_brief.qmd"
-        },
-        "template_details_part1": {
-          "type": "string",
-          "description": "Path to details (part 1) notebook template.",
-          "default": "notebooks/template_details_part1.qmd"
-        },
-        "template_details_part2": {
-          "type": "string",
-          "description": "Path to details (part 2) notebook template.",
-          "default": "notebooks/template_details_part2.qmd"
-        },
-        "template_pheno_bulk": {
-          "type": "string",
-          "description": "Path to bulk (TCRpheno) phenotype notebook template.",
-          "default": "notebooks/template_pheno_bulk.qmd"
-        },
-        "template_patient_clustering_on": {
-          "type": "string",
-          "description": "Path to patient-level clustering (GIANA/GLIPH2) notebook template, used when patient workflow_level is run.",
-          "default": "notebooks/template_patient_clustering_on.qmd"
-        },
-        "template_patient_clustering_off": {
-          "type": "string",
-          "description": "Path to placeholder notebook template used when patient workflow_level is not run.",
-          "default": "notebooks/template_patient_clustering_off.qmd"
-        }
-      }
-    },
-    "plotting_options": {
-      "title": "Plotting and metadata options",
-      "type": "object",
-      "fa_icon": "fas fa-chart-bar",
-      "description": "Parameters for plotting and metadata columns.",
-      "properties": {
-        "subject_col": {
-          "type": "string",
-          "default": "patient",
-          "description": "Samplesheet column identifying the subject/patient."
-        },
-        "timepoint_col": {
-          "type": "string",
-          "default": "timepoint",
-          "description": "Samplesheet column identifying the timepoint."
-        },
-        "timepoint_order_col": {
-          "type": "string",
-          "default": "timepoint_order",
-          "description": "Name of the (computed, not samplesheet-provided) column holding each timepoint's sort rank. See timepoint_order."
-        },
-        "timepoint_order": {
-          "type": "string",
-          "description": "Optional ordered comma-separated list of timepoint values (e.g. \"Base,Week4,EOT\"); rank = position in the list. If unset, timepoints are ranked numerically when every value parses as a number, otherwise alphabetically."
-        },
-        "alias_col": {
-          "type": "string",
-          "default": "alias",
-          "description": "Samplesheet column giving a display alias for each sample."
-        }
-      }
-    },
-    "olga_options": {
-      "title": "OLGA options",
-      "type": "object",
-      "fa_icon": "fas fa-layer-group",
-      "properties": {
-        "olga_chunk_length": {
-          "type": "integer",
-          "default": 100000,
-          "minimum": 1000,
-          "description": "Number of sequences processed per OLGA chunk. Larger values reduce parallelization and increase memory usage."
-        }
-      }
-    },
-    "giana_options": {
-      "title": "GIANA clustering options",
-      "type": "object",
-      "fa_icon": "fas fa-brain",
-      "properties": {
-        "threshold": {
-          "type": "number",
-          "default": 7
-        },
-        "threshold_score": {
-          "type": "number",
-          "default": 3.6
-        },
-        "threshold_vgene": {
-          "type": "number",
-          "default": 3.7
-        }
-      }
-    },
-    "gliph2_options": {
-      "title": "GLIPH2 clustering options",
-      "type": "object",
-      "fa_icon": "fas fa-code-branch",
-      "properties": {
-        "use_gliph2": {
-          "type": "boolean",
-          "default": true
-        },
-        "local_min_pvalue": {
-          "type": "string",
-          "default": "0.001"
-        },
-        "simulation_depth": {
-          "type": "string",
-          "default": 1000
-        },
-        "kmer_min_depth": {
-          "type": "string",
-          "default": 3
-        },
-        "local_min_OVE": {
-          "type": "string",
-          "default": "c(1000, 100, 10)"
-        },
-        "all_aa_interchangeable": {
-          "type": "boolean",
-          "description": "Treat all amino acids as interchangeable when scoring GLIPH2 motif significance."
-        }
-      }
-    },
-    "tcrdist3_options": {
-      "title": "TCRdist3 distance options",
-      "type": "object",
-      "fa_icon": "fas fa-ruler-combined",
-      "properties": {
-        "matrix_sparsity": {
-          "type": "string",
-          "default": "sparse",
-          "enum": ["sparse", "full"]
-        },
-        "distance_metric": {
-          "type": "string",
-          "default": "tcrdist"
-        },
-        "db_path": {
-          "type": "string",
-          "default": "assets/tcrdist3_files/alphabeta_gammadelta_db.tsv"
-        }
-      }
-    },
-    "singlecell_options": {
-      "title": "Single-cell options",
-      "type": "object",
-      "fa_icon": "fas fa-dna",
-      "description": "Single-cell TCR modality (--mode singlecell). Ignored in bulk mode.",
-      "properties": {
-        "mode": {
-          "type": "string",
-          "enum": ["bulk", "singlecell"],
-          "default": "bulk",
-          "description": "Pipeline modality."
-        },
-        "input_vdj_contigs": {
-          "type": "string",
-          "format": "path",
-          "description": "Cell Ranger VDJ contigs (required for --mode singlecell)."
-        },
-        "sample_sheet": {
-          "type": "string",
-          "format": "file-path",
-          "description": "Single-cell sample sheet (distinct from bulk --samplesheet)."
-        },
-        "input_annotated_object": {
-          "type": "string",
-          "format": "file-path",
-          "description": "Optional annotated GEX Seurat RDS. Present \u2192 full-SC route; absent \u2192 VDJ-only route."
-        },
-        "contigs_files": {
-          "type": "string",
-          "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's filtered_contig_annotations.csv. Empty for local/on-prem runs."
-        },
-        "clonotypes_files": {
-          "type": "string",
-          "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's clonotypes.csv. Empty for local/on-prem runs."
-        },
-        "metrics_files": {
-          "type": "string",
-          "description": "Cirro/S3 only: comma-separated, sample_sheet-ordered list of each sample's metrics_summary.csv. Empty for local/on-prem runs."
-        },
-        "pseudobulk_by_phenotype": {
-          "type": "boolean",
-          "description": "Optional: stratify pseudobulk into {sample}__{phenotype} units (secondary per-cell-type view)."
-        },
-        "pseudobulk_qc_min_clones": {
-          "type": "integer",
-          "default": 25,
-          "description": "Min unique clonotypes per pseudobulk unit."
-        },
-        "pseudobulk_qc_min_cells": {
-          "type": "integer",
-          "default": 50,
-          "description": "Min total cells per pseudobulk unit."
-        },
-        "pseudobulk_qc_mode": {
-          "type": "string",
-          "enum": ["drop", "hard_stop"],
-          "default": "drop",
-          "description": "'drop' = skip failing units; 'hard_stop' = abort run."
-        },
-        "patient_col": {
-          "type": "string",
-          "default": "patient_id",
-          "description": "Metadata key used to pool units per patient for clustering."
-        },
-        "sc_container": {
-          "type": "string",
-          "default": "syedsazaidi/scratch-tcr:latest",
-          "description": "Container for cell-level single-cell processes (Seurat/scanpy/CONGA/tcrdist3)."
-        },
-        "run_conga": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run CONGA (full-SC only)."
-        },
-        "run_consensus": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run consensus clustering (full-SC only)."
-        },
-        "run_repertoire": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run repertoire analysis."
-        },
-        "run_master_summary": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run master summary report."
-        }
-      }
-    }
-  },
-  "allOf": [
-    {
-      "$ref": "#/$defs/input_output_options"
-    },
-    {
-      "$ref": "#/$defs/resource_options"
-    },
-    {
-      "$ref": "#/$defs/workflow_options"
-    },
-    {
-      "$ref": "#/$defs/airr_options"
-    },
-    {
-      "$ref": "#/$defs/plotting_options"
-    },
-    {
-      "$ref": "#/$defs/olga_options"
-    },
-    {
-      "$ref": "#/$defs/giana_options"
-    },
-    {
-      "$ref": "#/$defs/gliph2_options"
-    },
-    {
-      "$ref": "#/$defs/tcrdist3_options"
-    },
-    {
-      "$ref": "#/$defs/singlecell_options"
-    }
-  ],
-  "properties": {
-    "run_sample": {
-      "type": "boolean",
-      "default": true
-    },
-    "run_compare": {
-      "type": "boolean",
-      "default": true
-    },
-    "run_patient": {
-      "type": "boolean"
-    },
-    "run_convert": {
-      "type": "boolean"
-    },
-    "sample_col": {
-      "type": "string",
-      "default": "orig.ident"
-    },
-    "condition_col": {
-      "type": "string",
-      "default": "condition"
-    },
-    "batch_col": {
-      "type": "string",
-      "default": "batch"
-    },
-    "label_col": {
-      "type": "string"
-    },
-    "run_tcri": {
-      "type": "boolean",
-      "default": true
-    },
-    "metadata_file": {
-      "type": "string",
-      "default": "assets/NO_FILE"
-    },
-    "reduction_use": {
-      "type": "string",
-      "default": "umap"
-    },
-    "make_umap_if_missing": {
-      "type": "boolean",
-      "default": true
-    },
-    "umap_dims_max": {
-      "type": "integer",
-      "default": 30
-    },
-    "umap_nfeatures": {
-      "type": "integer",
-      "default": 3000
-    },
-    "raster_large_umap": {
-      "type": "boolean",
-      "default": true
-    },
-    "min_clone_size_plot": {
-      "type": "integer",
-      "default": 2
-    },
-    "top_n_clones_umap": {
-      "type": "integer",
-      "default": 12
-    },
-    "top_n_clone_table": {
-      "type": "integer",
-      "default": 50
-    },
-    "vdj_chain_mode": {
-      "type": "string",
-      "default": "auto"
-    },
-    "vdj_min_umis": {
-      "type": "integer",
-      "default": 1
-    },
-    "vdj_min_reads": {
-      "type": "integer",
-      "default": 0
-    },
-    "vdj_cdr3_aa_min": {
-      "type": "integer",
-      "default": 8
-    },
-    "vdj_cdr3_aa_max": {
-      "type": "integer",
-      "default": 25
-    },
-    "vdj_require_productive": {
-      "type": "boolean",
-      "default": true
-    },
-    "vdj_require_high_conf": {
-      "type": "boolean",
-      "default": true
-    },
-    "vdj_require_full_length": {
-      "type": "boolean",
-      "default": true
-    },
-    "vdj_keep_one_per_chain": {
-      "type": "boolean",
-      "default": true
-    },
-    "vdj_keep_paired_only": {
-      "type": "boolean"
-    },
-    "vdj_keep_dual_alpha": {
-      "type": "boolean",
-      "default": true
-    },
-    "vdj_keep_dual_beta": {
-      "type": "boolean",
-      "default": true
-    },
-    "vdj_drop_stop_or_frames": {
-      "type": "boolean",
-      "default": true
-    },
-    "vdj_meta_sample_col": {
-      "type": "string",
-      "default": "sample"
-    },
-    "vdj_meta_patient_col": {
-      "type": "string",
-      "default": "patient_id"
-    },
-    "cells_mode": {
-      "type": "string",
-      "default": "T-AB"
-    },
-    "filter_to_t_ab": {
-      "type": "boolean",
-      "default": true
-    },
-    "clone_call_preference": {
-      "type": "string",
-      "default": "aa"
-    },
-    "keep_na_clonotypes": {
-      "type": "boolean"
-    },
-    "harmonize_apply_to": {
-      "type": "string",
-      "default": "tcr"
-    },
-    "harmonization_overlap_threshold": {
-      "type": "number",
-      "default": 0.8
-    },
-    "minimum_final_overlap_fraction": {
-      "type": "number",
-      "default": 0.5
-    },
-    "subset_tcells": {
-      "type": "boolean",
-      "default": true
-    },
-    "tcell_regex": {
-      "type": "string",
-      "default": "(?i)(t cell|cd4|cd8|treg|trm|tem|naive t|memory t|exhausted t|cytotoxic t|gamma-delta|gd t)"
-    },
-    "clone_id_col": {
-      "type": "string",
-      "default": "clone_id"
-    },
-    "conga_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "conga_min_cluster_size_plot": {
-      "type": "integer",
-      "default": 5
-    },
-    "conga_top_n_clusters": {
-      "type": "integer",
-      "default": 20
-    },
-    "conga_max_edges_to_plot": {
-      "type": "integer",
-      "default": 5000
-    },
-    "conga_high_cutoff": {
-      "type": "number",
-      "default": 0.8
-    },
-    "conga_mid_cutoff": {
-      "type": "number",
-      "default": 0.5
-    },
-    "conga_use_quantile_cutoffs": {
-      "type": "boolean",
-      "default": true
-    },
-    "conga_high_quantile": {
-      "type": "number",
-      "default": 0.9
-    },
-    "conga_mid_quantile": {
-      "type": "number",
-      "default": 0.5
-    },
-    "gliph_ref_mode": {
-      "type": "string",
-      "default": "local_bundle"
-    },
-    "refdb_beta": {
-      "type": "string",
-      "default": "human_v2.0_CD48"
-    },
-    "gliph_clone_match_mode": {
-      "type": "string",
-      "default": "auto"
-    },
-    "gliph_derive_clone_key_from_CTaa": {
-      "type": "boolean",
-      "default": true
-    },
-    "gliph_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "gliph_min_cluster_size_plot": {
-      "type": "integer",
-      "default": 3
-    },
-    "gliph_top_n_clusters": {
-      "type": "integer",
-      "default": 20
-    },
-    "gliph_top_n_motifs": {
-      "type": "integer",
-      "default": 20
-    },
-    "tcrdist_clone_match_mode": {
-      "type": "string",
-      "default": "cdr3b_from_CTaa"
-    },
-    "tcrdist_derive_clone_key_from_CTaa": {
-      "type": "boolean",
-      "default": true
-    },
-    "tcrdist_radius": {
-      "type": "integer",
-      "default": 24
-    },
-    "tcrdist_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "tcrdist_min_cluster_size_plot": {
-      "type": "integer",
-      "default": 3
-    },
-    "tcrdist_top_n_clusters": {
-      "type": "integer",
-      "default": 20
-    },
-    "tcrdist_top_n_neighbors": {
-      "type": "integer",
-      "default": 50
-    },
-    "giana_exact_mode": {
-      "type": "boolean",
-      "default": true
-    },
-    "giana_clone_match_mode": {
-      "type": "string",
-      "default": "cdr3b_from_CTaa"
-    },
-    "giana_derive_clone_key_from_CTaa": {
-      "type": "boolean",
-      "default": true
-    },
-    "giana_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "giana_min_cluster_size_plot": {
-      "type": "integer",
-      "default": 3
-    },
-    "giana_top_n_clusters": {
-      "type": "integer",
-      "default": 20
-    },
-    "consensus_min_methods": {
-      "type": "integer",
-      "default": 2
-    },
-    "consensus_use_majority_vote": {
-      "type": "boolean",
-      "default": true
-    },
-    "consensus_assign_singleton": {
-      "type": "boolean"
-    },
-    "consensus_label_prefix": {
-      "type": "string",
-      "default": "CONS"
-    },
-    "consensus_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "consensus_min_cluster_size_plot": {
-      "type": "integer",
-      "default": 3
-    },
-    "consensus_top_n_clusters": {
-      "type": "integer",
-      "default": 20
-    },
-    "repertoire_min_cells_per_clone_plot": {
-      "type": "integer",
-      "default": 2
-    },
-    "repertoire_top_n_shared_clones": {
-      "type": "integer",
-      "default": 50
-    },
-    "repertoire_top_n_flux_clones": {
-      "type": "integer",
-      "default": 30
-    },
-    "repertoire_shareability_min_n_groups": {
-      "type": "integer",
-      "default": 2
-    },
-    "repertoire_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "repertoire_overlap_metric": {
-      "type": "string",
-      "default": "jaccard"
-    },
-    "repertoire_use_relative_clone_freqs": {
-      "type": "boolean",
-      "default": true
-    },
-    "tcri_high_cutoff": {
-      "type": "number",
-      "default": 0.8
-    },
-    "tcri_mid_cutoff": {
-      "type": "number",
-      "default": 0.5
-    },
-    "tcri_use_quantile_cutoffs": {
-      "type": "boolean",
-      "default": true
-    },
-    "tcri_high_quantile": {
-      "type": "number",
-      "default": 0.9
-    },
-    "tcri_mid_quantile": {
-      "type": "number",
-      "default": 0.5
-    },
-    "tcri_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "tcri_min_clone_size_for_assoc": {
-      "type": "integer",
-      "default": 2
-    },
-    "tcri_top_n_high_clones": {
-      "type": "integer",
-      "default": 30
-    }
-  }
+    ]
 }

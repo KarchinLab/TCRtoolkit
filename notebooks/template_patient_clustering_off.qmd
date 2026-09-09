@@ -1,5 +1,0 @@
-## Patient-level TCR clustering (GIANA/GLIPH2)
-
-::: {.callout-note}
-This section requires patient-level clonotype clustering (GIANA and GLIPH2), which was not run for this project. Include `patient` in `--workflow_level` to generate it.
-:::
