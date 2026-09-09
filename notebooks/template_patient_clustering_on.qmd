@@ -1,3 +1,0 @@
-{{< include ./template_giana.qmd >}}
-
-{{< include ./template_gliph.qmd >}}

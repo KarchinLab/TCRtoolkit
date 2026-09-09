@@ -1,5 +1,5 @@
 ---
-title: "Details"
+title: "Details — Patient"
 format:
   html:
     theme: flatly
@@ -30,7 +30,8 @@ Thank you for using TCRtoolkit! This report is generated from the data you provi
 
 ::: {.callout-note collapse="true"}
 ## Notebook Analysis Scope
-This notebook provides a more detailed analysis of the samples being analyzed.
+This notebook provides patient-level clonotype clustering analysis (GIANA, and GLIPH2
+when `--use_gliph2` is enabled), aggregating all samples belonging to each individual.
 :::
 
 ```{python}
@@ -103,8 +104,6 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
   It focuses on population-level measures  
 :::
 
-{{< include ./template_overlap.qmd >}}
+{{< include ./template_giana.qmd >}}
 
-{{< include ./template_sharing.qmd >}}
-
-{{< include ./template_patient_clustering.qmd >}}
+{{< include ./template_gliph.qmd >}}

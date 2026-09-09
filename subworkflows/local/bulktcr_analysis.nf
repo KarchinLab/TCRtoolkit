@@ -126,7 +126,7 @@ workflow BULKTCR_ANALYSIS {
             }
         ch_reports = ch_reports.mix(ch_qc_report)
 
-        ch_details_part1_report = sample_stats_agg
+        ch_details_sample_report = sample_stats_agg
             .combine(ANNOTATE.out.concat_cdr3_sorted)
             .combine(ch_v_family)
             .combine(ch_j_family)
@@ -135,7 +135,7 @@ workflow BULKTCR_ANALYSIS {
             .combine(ch_vdjdb_files.map { l -> [l] })
             .combine(ch_convergence_files.map { l -> [l] })
             .map { sample_stats_csv, concat_cdr3_sorted, v_family_file, j_family_file, tcrdist_files_l, olga_files_l, vdjdb_files_l, convergence_files_l ->
-                def include_files = [file("${file(params.template_details_part1).parent}/template_sample.qmd")]
+                def include_files = [file("${file(params.template_details_sample).parent}/template_sample.qmd")]
                 def report_files = [sample_stats_csv, concat_cdr3_sorted, v_family_file, j_family_file] +
                     tcrdist_files_l + olga_files_l + vdjdb_files_l + convergence_files_l + include_files
                 def staged_layout = [
@@ -148,12 +148,12 @@ workflow BULKTCR_ANALYSIS {
                     vdjdb_files_l.collect { f -> ["${params.project_name}/vdjdb/${f.name}", f.name] } +
                     convergence_files_l.collect { f -> ["${params.project_name}/convergence/${f.name}", f.name] }
                 tuple(
-                    file(params.template_details_part1),
+                    file(params.template_details_sample),
                     report_files,
                     staged_layout
                 )
             }
-        ch_reports = ch_reports.mix(ch_details_part1_report)
+        ch_reports = ch_reports.mix(ch_details_sample_report)
 
         if (levels.contains('compare')) {
             ch_discovery_report = sample_stats_agg
@@ -185,73 +185,69 @@ workflow BULKTCR_ANALYSIS {
                 }
             ch_reports = ch_reports.mix(ch_discovery_report)
 
-            def details_part2_base = sample_stats_agg
+            def details_notebooks_dir = file(params.template_details_compare).parent
+
+            ch_details_compare_report = sample_stats_agg
                 .combine(ANNOTATE.out.concat_cdr3_sorted)
                 .combine(ch_shared_cdr3)
-
-            def run_patient_clustering = levels.contains('patient')
-            def patient_clustering_notebook = run_patient_clustering
-                ? file(params.template_patient_clustering_on)
-                : file(params.template_patient_clustering_off)
-
-            def part2_notebooks_dir = file(params.template_details_part2).parent
-            def part2_include_files = [
-                file("${part2_notebooks_dir}/template_overlap.qmd"),
-                file("${part2_notebooks_dir}/template_sharing.qmd"),
-                file("${part2_notebooks_dir}/template_giana.qmd"),
-                file("${part2_notebooks_dir}/template_gliph.qmd"),
-                patient_clustering_notebook
-            ]
-            def part2_staged_layout_extra = [
-                ["template_patient_clustering.qmd", patient_clustering_notebook.name]
-            ]
-
-            if (run_patient_clustering) {
-                ch_details_part2_report = details_part2_base
-                    .combine(ch_giana_files.map { l -> [l] })
-                    .combine(ch_gliph2_all_motifs.map { l -> [l] })
-                    .combine(ch_gliph2_clone_network.map { l -> [l] })
-                    .combine(ch_gliph2_cluster_member_details.map { l -> [l] })
-                    .combine(ch_gliph2_global_similarities.map { l -> [l] })
-                    .map { sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, giana_files_l,
-                           all_motifs_pairs, clone_network_pairs, cluster_member_pairs, global_sim_pairs ->
-                        def report_files = [sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file] + giana_files_l +
-                            all_motifs_pairs.collect { p -> p[1] } +
-                            clone_network_pairs.collect { p -> p[1] } +
-                            cluster_member_pairs.collect { p -> p[1] } +
-                            global_sim_pairs.collect { p -> p[1] } +
-                            part2_include_files
-                        def staged_layout = [
+                .map { sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file ->
+                    def include_files = [
+                        file("${details_notebooks_dir}/template_overlap.qmd"),
+                        file("${details_notebooks_dir}/template_sharing.qmd")
+                    ]
+                    tuple(
+                        file(params.template_details_compare),
+                        [sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file] + include_files,
+                        [
                             ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
                             ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name],
                             ["${params.project_name}/tcrsharing/${shared_cdr3_file.name}", shared_cdr3_file.name]
-                        ] + giana_files_l.collect { f -> ["${params.project_name}/giana/${f.name}", f.name] } +
-                            all_motifs_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
-                            clone_network_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
-                            cluster_member_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
-                            global_sim_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
-                            part2_staged_layout_extra
-                        tuple(
-                            file(params.template_details_part2),
-                            report_files,
-                            staged_layout
-                        )
-                    }
-            } else {
-                ch_details_part2_report = details_part2_base
-                    .map { sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file ->
-                        tuple(
-                            file(params.template_details_part2),
-                            [sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file] + part2_include_files,
-                            [
-                                ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
-                                ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name],
-                                ["${params.project_name}/tcrsharing/${shared_cdr3_file.name}", shared_cdr3_file.name]
-                            ] + part2_staged_layout_extra
-                        )
-                    }
-            }
-            ch_reports = ch_reports.mix(ch_details_part2_report)
+                        ]
+                    )
+                }
+            ch_reports = ch_reports.mix(ch_details_compare_report)
+        }
+
+        // Patient-level details report (GIANA, plus GLIPH2 when --use_gliph2). Rendered
+        // when the patient stage ran (this block already requires run_reports && sample);
+        // it does not additionally depend on the compare stage.
+        if (levels.contains('patient')) {
+            def patient_notebooks_dir = file(params.template_details_patient).parent
+            def patient_include_files = [
+                file("${patient_notebooks_dir}/template_giana.qmd"),
+                file("${patient_notebooks_dir}/template_gliph.qmd")
+            ]
+
+            ch_details_patient_report = sample_stats_agg
+                .combine(ANNOTATE.out.concat_cdr3_sorted)
+                .combine(ch_giana_files.map { l -> [l] })
+                .combine(ch_gliph2_all_motifs.map { l -> [l] })
+                .combine(ch_gliph2_clone_network.map { l -> [l] })
+                .combine(ch_gliph2_cluster_member_details.map { l -> [l] })
+                .combine(ch_gliph2_global_similarities.map { l -> [l] })
+                .map { sample_stats_csv, concat_cdr3_sorted, giana_files_l,
+                       all_motifs_pairs, clone_network_pairs, cluster_member_pairs, global_sim_pairs ->
+                    def report_files = [sample_stats_csv, concat_cdr3_sorted] + giana_files_l +
+                        all_motifs_pairs.collect { p -> p[1] } +
+                        clone_network_pairs.collect { p -> p[1] } +
+                        cluster_member_pairs.collect { p -> p[1] } +
+                        global_sim_pairs.collect { p -> p[1] } +
+                        patient_include_files
+                    def staged_layout = [
+                        ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
+                        ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name]
+                    ] + giana_files_l.collect { f -> ["${params.project_name}/giana/${f.name}", f.name] } +
+                        all_motifs_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
+                        clone_network_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
+                        cluster_member_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
+                        global_sim_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] }
+                    tuple(
+                        file(params.template_details_patient),
+                        report_files,
+                        staged_layout
+                    )
+                }
+            ch_reports = ch_reports.mix(ch_details_patient_report)
         }
 
         REPORT( ch_reports )
