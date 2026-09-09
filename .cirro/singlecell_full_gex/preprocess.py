@@ -68,22 +68,42 @@ def prepare_vdj_file_params(ds, samples):
     """
     files = ds.files
 
+    # ds.files is Cirro's *indexed* listing, not everything present in S3 - which files get
+    # indexed is set by the upstream process's file-type config. SCRATCH-align commonly
+    # registers only airr_rearrangement.tsv, so a direct match on the three names VDJ_QC
+    # needs finds nothing even though they sit right beside it in the same outs/ directory.
+    # Fall back to deriving the sibling path from whichever file for that sample IS indexed.
+    def sibling_in_outs(sample, fname):
+        rows = files.loc[files['sample'] == sample, 'file'].tolist()
+        for f in rows:
+            if '/outs/' in f:
+                return f.rsplit('/outs/', 1)[0] + '/outs/' + fname
+        return ''
+
     for fname, param_name in VDJ_FILE_PARAMS.items():
         hits = files[files['file'].str.endswith(fname)]
         per_sample = []
         for sample in samples:
             sample_hits = sorted(hits.loc[hits['sample'] == sample, 'file'].tolist())
             if not sample_hits:
-                ds.logger.warning(
-                    f"No {fname} found for sample '{sample}' via ds.files - "
-                    "VDJ_QC will fall back to sample_sheet's own path column for this sample."
-                )
-                per_sample.append('')
+                derived = sibling_in_outs(sample, fname)
+                if derived:
+                    ds.logger.info(f"{fname} not indexed for '{sample}'; derived sibling path {derived}")
+                    per_sample.append(derived)
+                else:
+                    ds.logger.warning(
+                        f"No {fname} for sample '{sample}' and no indexed file under an outs/ "
+                        "directory to derive it from - VDJ_QC will fall back to sample_sheet's path column."
+                    )
+                    per_sample.append('')
             else:
                 if len(sample_hits) > 1:
                     ds.logger.warning(f"Multiple {fname} matches for sample '{sample}', using the first: {sample_hits}")
                 per_sample.append(sample_hits[0])
-        ds.add_param(param_name, ','.join(per_sample))
+        # overwrite=True: process-input.json declares these params (as empty strings) so
+        # they exist in ds.params before preprocessing runs. Without overwrite, add_param
+        # asserts "already exists".
+        ds.add_param(param_name, ','.join(per_sample), overwrite=True)
 
 
 def prepare_sample_sheet(ds):
@@ -133,7 +153,7 @@ def prepare_sample_sheet(ds):
         ds.logger.warning(f"patient-column check skipped: {e}")
 
     sample_sheet.to_csv('sample_sheet.csv', index=None)
-    ds.add_param('sample_sheet', 'sample_sheet.csv')
+    ds.add_param('sample_sheet', 'sample_sheet.csv', overwrite=True)
     ds.logger.info(sample_sheet.to_dict())
 
 
