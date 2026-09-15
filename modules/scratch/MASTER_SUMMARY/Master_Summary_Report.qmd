@@ -363,7 +363,9 @@ ov <- data.frame(
   Metric = c("Project", "Analysis route", "Samples", "Patients",
              "Cells / clonotype rows", "Unique clonotypes", "TCRdist radius"),
   Value = c(
-    params$project_name,
+    # as_str1: `-P project_name=""` (Cirro's blank form field) reaches R as NULL, which c()
+    # silently drops, leaving Value one element short of Metric.
+    as_str1(params$project_name),
     route,
     coalesce_count(
       if (have(vdj_compact)) nrow(vdj_compact) else NA_integer_,
