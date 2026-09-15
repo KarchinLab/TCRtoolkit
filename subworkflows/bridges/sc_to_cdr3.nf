@@ -21,6 +21,12 @@ workflow SC_TO_CDR3_SW {
 
     // Build sample_map from unit_map.csv so meta carries patient (+ phenotype).
     // patient_id lets the shared PATIENT step pool per-patient for clustering.
+    // row.file is the task-internal path, which does not survive process.scratch (AWS Batch /
+    // Cirro), so take the file from the declared per_sample output, paired by file name.
+    def tsv_by_name = SC_TO_CDR3.out.per_sample
+        .flatten()
+        .map { f -> [f.name, f] }
+
     SC_TO_CDR3.out.unit_map
         .splitCsv(header: true)
         .map { row ->
@@ -29,8 +35,10 @@ workflow SC_TO_CDR3_SW {
                 patient_id: (row.patient ?: row.sample),
                 phenotype : (row.phenotype ?: '')
             ]
-            [ meta, file(row.file) ]
+            [ row.file.tokenize('/').last(), meta ]
         }
+        .join(tsv_by_name, failOnMismatch: true)
+        .map { _name, meta, file_obj -> [meta, file_obj] }
         .set { sample_map }
 
     emit:

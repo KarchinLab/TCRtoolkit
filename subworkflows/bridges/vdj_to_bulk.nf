@@ -27,14 +27,20 @@ workflow VDJ_TO_BULK_SW {
 
     samplesheet_utf8 = VDJ_TO_BULK.out.samplesheet
 
-    // Parse synthetic samplesheet → Nextflow sample_map channel
+    // Parse synthetic samplesheet → Nextflow sample_map channel.
+    // row.file is the path as seen INSIDE the task, which only exists afterwards when the
+    // task ran in the shared work dir. Under process.scratch (AWS Batch / Cirro) it was a
+    // throwaway /tmp/nxf.* dir, so take the file from the declared output and use the CSV
+    // only for metadata, pairing the two by file name.
+    def tsv_by_name = VDJ_TO_BULK.out.bulk_tsv_files
+        .flatten()
+        .map { f -> [f.name, f] }
+
     samplesheet_utf8
         .splitCsv(header: true, sep: ',')
-        .map { row ->
-            def meta     = row.findAll { k, _v -> k != 'file' }
-            def file_obj = file(row.file)
-            return [meta, file_obj]
-        }
+        .map { row -> [row.file.tokenize('/').last(), row.findAll { k, _v -> k != 'file' }] }
+        .join(tsv_by_name, failOnMismatch: true)
+        .map { _name, meta, file_obj -> [meta, file_obj] }
         .set { sample_map }
 
     emit:
