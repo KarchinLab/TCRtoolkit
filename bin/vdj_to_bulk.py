@@ -87,9 +87,15 @@ def main():
     os.makedirs('bulk_samples', exist_ok=True)
     samplesheet_rows = []
 
+    # Cell Ranger leaves d_gene unset for most beta chains (the D region is short and often
+    # unassignable), and pandas' groupby drops rows whose key is NaN. Grouping on d_call
+    # therefore discarded ~86% of TRB contigs silently — whole samples where no chain had a
+    # D call came out empty. Normalise to '' and keep NaN keys (sc_to_cdr3.py already does).
+    df['d_call'] = df['d_call'].fillna('') if 'd_call' in df.columns else ''
+
     for sample, grp in df.groupby(sample_col):
         agg = (
-            grp.groupby(['junction_aa', 'v_call', 'd_call', 'j_call'])
+            grp.groupby(['junction_aa', 'v_call', 'd_call', 'j_call'], dropna=False)
                .agg(
                    duplicate_count=('barcode', 'count'),
                    sequence=('sequence', 'first')
