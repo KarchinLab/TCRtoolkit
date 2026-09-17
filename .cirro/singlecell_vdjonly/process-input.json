@@ -9,5 +9,8 @@
     "pseudobulk_qc_min_clones": "$.params.dataset.paramJson.pseudobulk_qc_min_clones",
     "pseudobulk_qc_min_cells": "$.params.dataset.paramJson.pseudobulk_qc_min_cells",
     "pseudobulk_qc_mode": "$.params.dataset.paramJson.pseudobulk_qc_mode",
+    "patient_col": "$.params.dataset.paramJson.patient_col",
+    "giana_dedup_clonotypes": "$.params.dataset.paramJson.giana_dedup_clonotypes",
+    "tcrdist_radius": "$.params.dataset.paramJson.tcrdist_radius",
     "outdir": "$.params.dataset.s3|/data/"
 }

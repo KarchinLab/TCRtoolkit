@@ -1145,6 +1145,32 @@ save_plot_safe(patch_before_after, glue("qc_before_after_retention.{params$figur
 ```
 
 ```{r}
+#| label: pairing-bar-by-sample
+# Chain-pairing status per sample. This module already computes pairing_all and writes
+# pairing_status_all.tsv but never plotted it - and the Master Summary requests exactly
+# this figure by name (vdj_qc_pairing_bar_fig), so that panel was always empty.
+if (exists("pairing_all") && !is.null(pairing_all) && nrow(pairing_all) > 0) {
+  pairing_bar <- pairing_all %>%
+    count(sample, pairing, name = "cells") %>%
+    group_by(sample) %>%
+    mutate(frac = cells / sum(cells)) %>%
+    ungroup()
+
+  p_pairing <- ggplot(pairing_bar, aes(x = sample, y = frac, fill = pairing)) +
+    geom_col() +
+    coord_flip() +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(title = "Chain pairing status by sample",
+         x = NULL, y = "Fraction of cells", fill = "Pairing") +
+    theme_scratch_pub(params$base_size)
+
+  print(p_pairing)
+  save_plot_safe(p_pairing, glue("pairing_bar_by_sample.{params$figure_format}"),
+                 width = 12, height = 7)
+}
+```
+
+```{r}
 #| label: read-umi-plots
 if (isTRUE(params$show_reads_umis) && any(!is.na(contigs_all_post$reads))) {
   p_reads <- contigs_all_post %>%

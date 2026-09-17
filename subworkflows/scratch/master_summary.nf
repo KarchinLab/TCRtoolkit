@@ -3,20 +3,29 @@ nextflow.enable.dsl = 2
 
 include { MASTER_SUMMARY } from '../../modules/scratch/MASTER_SUMMARY/main.nf'
 
+/*
+ * MASTER_SUMMARY_SW
+ *
+ * Runs on both single-cell routes. Each `*_tables` input is the collected tables/
+ * directory of one upstream module, or an empty list on a route where that module did
+ * not run - the report then explains the absence instead of rendering a blank section.
+ */
 workflow MASTER_SUMMARY_SW {
     take:
     seurat_rds
     export_cells
 
-    vdj_qc_per_sample_compact
-    vdj_qc_before_after_summary
-    vdj_qc_sample_sheet_resolved
-    vdj_qc_clone_rank_abundance
-
-    vdj_qc_before_after_retention_fig
-    vdj_qc_pairing_bar_fig
-    vdj_qc_clone_rank_abundance_fig
-    vdj_qc_multiple_chains_fig
+    vdj_qc_tables
+    pseudobulk_tables
+    sample_tables
+    compare_tables
+    rollup_tables
+    repertoire_tables
+    tcell_tables
+    conga_tables
+    consensus_tables
+    tcri_tables
+    mergedvdj_tables
 
     barrier_done
     project_name
@@ -30,14 +39,17 @@ workflow MASTER_SUMMARY_SW {
     MASTER_SUMMARY(
         seurat_rds,
         export_cells,
-        vdj_qc_per_sample_compact,
-        vdj_qc_before_after_summary,
-        vdj_qc_sample_sheet_resolved,
-        vdj_qc_clone_rank_abundance,
-        vdj_qc_before_after_retention_fig,
-        vdj_qc_pairing_bar_fig,
-        vdj_qc_clone_rank_abundance_fig,
-        vdj_qc_multiple_chains_fig,
+        vdj_qc_tables,
+        pseudobulk_tables,
+        sample_tables,
+        compare_tables,
+        rollup_tables,
+        repertoire_tables,
+        tcell_tables,
+        conga_tables,
+        consensus_tables,
+        tcri_tables,
+        mergedvdj_tables,
         ch_notebook,
         barrier_done,
         project_name

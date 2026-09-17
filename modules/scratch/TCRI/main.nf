@@ -32,7 +32,10 @@ process TCRI {
     export QUARTO_PRINT_STACK=true
     export HOME="\$PWD"
 
-    export LD_LIBRARY_PATH="/opt/conda/envs/tcrenv/lib:\$LD_LIBRARY_PATH"
+    # :- default is required: Nextflow runs task scripts under `set -u`, and
+    # LD_LIBRARY_PATH is unset in this image, so a bare \$LD_LIBRARY_PATH aborts the
+    # task with "unbound variable" before anything runs.
+    export LD_LIBRARY_PATH="/opt/conda/envs/tcrenv/lib:\${LD_LIBRARY_PATH:-}"
     export RETICULATE_PYTHON="/opt/conda/envs/tcrenv/bin/python"
 
     echo "Testing Python environment natively..."
