@@ -37,6 +37,12 @@ warnings.filterwarnings(
 # Loading data
 ## reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
+
+# alias_col is optional in the samplesheet; default to the sample name when
+# absent so the alias-keyed groupings/labels below always have a value.
+if alias_col not in meta.columns:
+    meta[alias_col] = meta['sample']
+
 meta_cols = meta.columns.tolist()
 
 ```

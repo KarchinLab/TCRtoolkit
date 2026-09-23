@@ -53,6 +53,11 @@ import re
 ## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
 
+# alias_col is optional in the samplesheet; default to the sample name when
+# absent so the alias-keyed columns/labels below always have a value.
+if alias_col not in meta.columns:
+    meta[alias_col] = meta['sample']
+
 # timepoint_order_col isn't a samplesheet column - compute and inject it here.
 # timepoint_order (an ordered comma-separated list, e.g. "Base,Week4,EOT") ranks
 # timepoints by position in that list; any timepoint not listed sorts after the

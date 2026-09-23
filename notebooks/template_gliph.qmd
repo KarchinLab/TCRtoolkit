@@ -52,6 +52,11 @@ if timepoint_order_col not in meta.columns:
             rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=str))}
     meta[timepoint_order_col] = meta[timepoint_col].map(rank_map)
 
+# alias_col is optional in the samplesheet; default to the sample name when
+# absent so the alias-keyed columns/labels below always have a value.
+if alias_col not in meta.columns:
+    meta[alias_col] = meta['sample']
+
 concat_df = pd.read_csv(concat_csv, sep='\t')
 concat_df = concat_df.merge(meta[['sample', 'origin', timepoint_col, timepoint_order_col, alias_col]], on='sample', how='left')
 
