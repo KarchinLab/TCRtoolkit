@@ -1,7 +1,7 @@
 {
     "input_format": "adaptive",
-    "convert_lvl": true,
-    "sample_lvl": false,
-    "compare_lvl": false,
+    "run_convert": true,
+    "run_sample": false,
+    "run_compare": false,
     "outdir": "$.params.dataset.s3|/data/"
 }
