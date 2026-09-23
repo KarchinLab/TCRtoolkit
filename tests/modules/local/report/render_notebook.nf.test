@@ -26,6 +26,7 @@ nextflow_process {
                 ]
                 input[1] = "TCRtoolkit"
                 input[2] = "nextflow run main.nf"
+                input[3] = file(params.samplesheet)
                 """
             }
         }
@@ -63,6 +64,7 @@ nextflow_process {
                 ]
                 input[1] = "TCRtoolkit"
                 input[2] = "nextflow run main.nf"
+                input[3] = file(params.samplesheet)
                 """
             }
         }
@@ -107,6 +109,7 @@ nextflow_process {
                 ]
                 input[1] = "TCRtoolkit"
                 input[2] = "nextflow run main.nf"
+                input[3] = file(params.samplesheet)
                 """
             }
         }

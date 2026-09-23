@@ -23,7 +23,8 @@ workflow REPORT {
     RENDER_NOTEBOOK(
         ch_reports,
         params.project_name,
-        workflow.commandLine
+        workflow.commandLine,
+        file(params.samplesheet)
     )
 
     emit:

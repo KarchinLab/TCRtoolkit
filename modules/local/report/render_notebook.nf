@@ -16,6 +16,11 @@ process RENDER_NOTEBOOK {
     tuple path(notebook), path(files), val(staged_layout)
     val project_name
     val workflow_cmd
+    // Staged under a fixed name, distinct from anything in `files`, since a
+    // caller's report_files list could otherwise legitimately contain a file
+    // with the same basename as the samplesheet, which Nextflow would refuse
+    // to stage (input file name collision).
+    path samplesheet, stageAs: 'render_notebook_samplesheet.csv'
 
     output:
     path "${notebook.getBaseName()}.html", emit: report_html
@@ -34,7 +39,7 @@ process RENDER_NOTEBOOK {
     quarto render ${notebook} \\
         -P project_name:${project_name} \\
         -P workflow_cmd:'${workflow_cmd}' \\
-        -P sample_table:${file(params.samplesheet)} \\
+        -P sample_table:${samplesheet} \\
         -P subject_col:'${params.subject_col}' \\
         -P timepoint_col:'${params.timepoint_col}' \\
         -P timepoint_order_col:'${params.timepoint_order_col}' \\
