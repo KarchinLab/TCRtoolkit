@@ -23,12 +23,7 @@ workflow TCRTOOLKIT_BULK {
 
     println("Running TCRTOOLKIT_BULK workflow...")
 
-    // Construct levels list from the run_sample, run_compare, and run_patient parameters.
-    // Cirro/Nextflow CLI overrides land here as the string "false", not Boolean false -
-    // Groovy truthiness treats any non-empty String (including "false") as true, so a
-    // plain `if (params.run_sample)` would never actually disable a level. Route every
-    // flag through GDK's String.toBoolean() (via toString(), which also normalizes real
-    // Booleans and null) to parse the intended value correctly regardless of source.
+    // .toBoolean(): CLI overrides can arrive as the string "false", which is truthy in Groovy.
     def levels = []
     if (params.run_sample?.toString()?.toBoolean() ?: false) levels << 'sample'
     if (params.run_compare?.toString()?.toBoolean() ?: false) levels << 'compare'

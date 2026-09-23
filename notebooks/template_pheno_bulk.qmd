@@ -61,8 +61,7 @@ warnings.filterwarnings(
 meta = pd.read_csv(sample_table, sep=',')
 meta.drop(columns=['file'], inplace=True)
 
-# alias_col is optional in the samplesheet; default to the sample name when
-# absent so the alias-keyed columns/labels below always have a value.
+# alias_col is optional; default to sample name if missing.
 if alias_col not in meta.columns:
     meta[alias_col] = meta['sample']
 

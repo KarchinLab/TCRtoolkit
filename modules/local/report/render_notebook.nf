@@ -16,10 +16,7 @@ process RENDER_NOTEBOOK {
     tuple path(notebook), path(files), val(staged_layout)
     val project_name
     val workflow_cmd
-    // Staged under a fixed name, distinct from anything in `files`, since a
-    // caller's report_files list could otherwise legitimately contain a file
-    // with the same basename as the samplesheet, which Nextflow would refuse
-    // to stage (input file name collision).
+    // Fixed name avoids colliding with a same-named file in `files`.
     path samplesheet, stageAs: 'render_notebook_samplesheet.csv'
 
     output:
