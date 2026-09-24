@@ -896,7 +896,7 @@ def create_styled_table(df, title="", max_height='400px', formatter=None):
 import pandas as pd
 import numpy as np
 import itertools
-from scipy.stats import fisher_exact
+from scipy.stats import hypergeom
 from statsmodels.stats.multitest import multipletests
 
 # --- Setup & Pre-computation ---
@@ -915,11 +915,15 @@ sample_total_counts.rename(columns={'duplicate_count': 'total_counts'}, inplace=
 clonotypes_df = pd.merge(clonotypes_df, sample_total_counts, on=[subject_col, 'origin', timepoint_col])
 clonotypes_df['frequency'] = clonotypes_df['duplicate_count'] / clonotypes_df['total_counts']
 
-# Helper to run fisher exact test on rows
-def run_fisher(row, alt_hyp):
-    table = [[row['count_post'], row['total_post'] - row['count_post']],
-             [row['count_pre'], row['total_pre'] - row['count_pre']]]
-    return fisher_exact(table, alternative=alt_hyp)[1]
+# Vectorized one-sided Fisher's exact test: total_pre/total_post are fixed
+# margins within a group, so this reduces to a single hypergeometric call
+# per group instead of one fisher_exact call per clonotype.
+def run_fisher_vectorized(count_post, count_pre, total_post, total_pre, alt_hyp):
+    M = total_pre + total_post
+    n = count_post + count_pre
+    if alt_hyp == 'greater':
+        return hypergeom.sf(count_post - 1, M, n, total_post)
+    return hypergeom.cdf(count_post, M, n, total_post)
 
 
 # ==========================================
@@ -972,7 +976,9 @@ for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin
             continue
 
         # 5. Apply Fisher's Exact test only to the remaining rows
-        comp_df['p_value'] = comp_df.apply(run_fisher, axis=1, alt_hyp='greater')
+        comp_df['p_value'] = run_fisher_vectorized(
+            comp_df['count_post'], comp_df['count_pre'], comp_df['total_post'], comp_df['total_pre'], 'greater'
+        )
         
         # Add metadata
         comp_df[subject_col] = subject
@@ -1094,7 +1100,9 @@ for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin
             continue
 
         # 5. Apply Fisher
-        comp_df['p_value'] = comp_df.apply(run_fisher, axis=1, alt_hyp='less')
+        comp_df['p_value'] = run_fisher_vectorized(
+            comp_df['count_post'], comp_df['count_pre'], comp_df['total_post'], comp_df['total_pre'], 'less'
+        )
         
         # Add metadata
         comp_df[subject_col] = subject
