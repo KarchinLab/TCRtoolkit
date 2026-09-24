@@ -1,7 +1,8 @@
 // Generic process to render a Quarto notebook to HTML
 process RENDER_NOTEBOOK {
     tag "${notebook.getBaseName()}"
-    label 'process_single'
+    label 'process_high'
+    label 'process_high_memory'
 
     input:
     // path(files) stages files flat in the root dir; staged_layout optionally
