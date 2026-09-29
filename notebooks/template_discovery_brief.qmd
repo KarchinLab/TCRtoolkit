@@ -2492,7 +2492,11 @@ def plot_public_clones_upset(concat_df, subject_col, min_shared_patients=2):
     # --- 1. Extract Unique Clones per Patient ---
     patient_clones = df_clean.groupby(subject_col)['junction_aa'].unique().to_dict()
     patient_contents = {str(patient): list(clones) for patient, clones in patient_clones.items()}
-    
+
+    if len(patient_contents) < 2:
+        print("Only one patient present; skipping UpSet plot (needs ≥ 2 patients to show intersections).")
+        return
+
     # --- 2. Convert to UpSet Multi-Index Format ---
     upset_data = from_contents(patient_contents)
     
