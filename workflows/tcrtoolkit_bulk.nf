@@ -65,12 +65,11 @@ workflow TCRTOOLKIT_BULK {
         sample_map_final = INPUT_CHECK.out.sample_map
     }
 
-    // template_discovery_brief.qmd stages AIRR-converted files only when CONVERT ran
-    // (adaptive); template_discovery_brief.qmd's VDJdb section otherwise reads the raw
-    // input directly, which already has AIRR-standard frequency columns.
+    // [meta, file] pairs staged for template_discovery_brief.qmd's VDJdb section: the
+    // adaptive-converted output when CONVERT ran, otherwise the raw (already-AIRR) input.
     def convert_files = (input_format == 'adaptive')
-        ? CONVERT.out.map { _meta, f -> f }.collect()
-        : channel.value([])
+        ? CONVERT.out.collect(flat: false)
+        : INPUT_CHECK.out.sample_map.collect(flat: false)
 
     // Bulk reports are sample-centric. Compare- and patient-dependent sections are
     // added only when those workflow levels are present. Change this once reports do
