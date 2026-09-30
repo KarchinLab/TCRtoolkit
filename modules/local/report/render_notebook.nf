@@ -1,8 +1,13 @@
 // Generic process to render a Quarto notebook to HTML
 process RENDER_NOTEBOOK {
     tag "${notebook.getBaseName()}"
-    label 'process_high'
-    label 'process_high_memory'
+
+    // template_details_compare and template_discovery_brief process full VDJdb match
+    // files (up to ~1GB/sample) and build per-patient network graphs; the rest
+    // aggregate small summary tables and finish in under 5 minutes.
+    cpus   { ['template_details_compare', 'template_discovery_brief'].contains(notebook.baseName) ? 16 * task.attempt : 4 * task.attempt }
+    memory { ['template_details_compare', 'template_discovery_brief'].contains(notebook.baseName) ? 256.GB * task.attempt : 16.GB * task.attempt }
+    time   { ['template_details_compare', 'template_discovery_brief'].contains(notebook.baseName) ? 16.h : 4.h }
 
     input:
     // path(files) stages files flat in the root dir; staged_layout optionally
