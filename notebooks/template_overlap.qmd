@@ -451,7 +451,6 @@ The heatmap displays only those TCR clonotypes that were identified as **"signif
 import plotly.express as px
 import plotly.graph_objects as go
 import scipy.cluster.hierarchy as sch
-from scipy.stats import zscore
 from IPython.display import display, Markdown
 import pandas as pd
 
@@ -536,7 +535,7 @@ else:
             # --- Calculate Z-Scores ---
             if matrix_df.shape[1] > 1:
                 # fillna(0) handles cases where standard deviation is 0 (identical frequencies across time)
-                z_score_df = matrix_df.apply(zscore, axis=1, result_type='expand').fillna(0)
+                z_score_df = matrix_df.sub(matrix_df.mean(axis=1), axis=0).div(matrix_df.std(axis=1, ddof=0), axis=0).fillna(0)
             else:
                 z_score_df = matrix_df.copy() * 0 # If only 1 timepoint, z-score is baseline 0
             
@@ -783,21 +782,17 @@ def generate_plot_quarto_tabs(id_map, title_prefix, line_color):
         print("*No clonotypes met the significance thresholds for this direction; "
               "showing background repertoire trajectories only.*\n")
 
-    # Define Status Helper 
-    def get_status(row):
-        subj = row[subject_col]
-        orig = row['origin'] if 'origin' in row else None
-        seq = row['junction_aa']
-        
-        # Check map using the correct key format
-        key = (subj, orig) if orig is not None else subj
-        if key in id_map and seq in id_map[key]:
-            return "Highlight"
-        return "Background"
-
     # Create temp dataframe
     plot_data = cdr3_df.copy()
-    plot_data['status'] = plot_data.apply(get_status, axis=1)
+
+    # List comprehension over zip() avoids the per-row Series-construction
+    # overhead of .apply(axis=1); logic is identical to the row-wise version.
+    has_origin = 'origin' in plot_data.columns
+    keys = list(zip(plot_data[subject_col], plot_data['origin'])) if has_origin else plot_data[subject_col].tolist()
+    plot_data['status'] = [
+        "Highlight" if (key in id_map and seq in id_map[key]) else "Background"
+        for key, seq in zip(keys, plot_data['junction_aa'])
+    ]
 
     subjects = sorted(plot_data[subject_col].unique())
     color_map = {"Highlight": line_color, "Background": "lightgrey"}

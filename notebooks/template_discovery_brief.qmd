@@ -1664,17 +1664,14 @@ for subject, subj_df in clonotypes_df.groupby(subject_col):
             pivot['freq_t1_plot'] = pivot[t1].replace(0, min_freq)
             pivot['freq_t2_plot'] = pivot[t2].replace(0, min_freq)
             
-            # Assign highlight status using our sets
-            def assign_status(row):
-                key = (subject, origin, t1, t2, row['junction_aa'])
-                if key in sig_exp_lookup:
-                    return "Expanded"
-                elif key in sig_cont_lookup:
-                    return "Contracted"
-                else:
-                    return "Not Significant"
-                    
-            pivot['Status'] = pivot.apply(assign_status, axis=1)
+            # Assign highlight status using our sets. List comprehension over the
+            # junction_aa column avoids the per-row Series-construction overhead
+            # of .apply(axis=1); logic is identical to the row-wise version.
+            keys = [(subject, origin, t1, t2, j) for j in pivot['junction_aa']]
+            pivot['Status'] = [
+                "Expanded" if key in sig_exp_lookup else ("Contracted" if key in sig_cont_lookup else "Not Significant")
+                for key in keys
+            ]
             
             # Sort so that colored points render on top of gray points
             pivot['sort_order'] = pivot['Status'].map({"Not Significant": 0, "Expanded": 1, "Contracted": 2})
@@ -1881,24 +1878,27 @@ else:
                 if len(tps) > 1: return COLOR_MULTI, 'Multiple Timepoints'
                 else: return timepoint_colors.get(tps[0], '#888888'), tps[0]
 
-            node_properties[['color', 'category']] = node_properties['timepoints'].apply(
-                lambda x: pd.Series(get_color_and_category(x))
-            )
+            colors_categories = [get_color_and_category(x) for x in node_properties['timepoints']]
+            node_properties['color'] = [c for c, _ in colors_categories]
+            node_properties['category'] = [cat for _, cat in colors_categories]
 
-            node_properties['size'] = node_properties['max_frequency'].apply(lambda x: max(10, np.sqrt(x * 100) * 15))
+            node_properties['size'] = np.maximum(10, np.sqrt(node_properties['max_frequency'] * 100) * 15)
 
             tcr_to_idx = {tcr: i for i, tcr in enumerate(node_properties['cdr3_b_aa'])}
 
             g = ig.Graph()
             g.add_vertices(len(node_properties))
             g.vs['name'] = node_properties['cdr3_b_aa']
-            g.vs['size'] = node_properties['size'] 
+            g.vs['size'] = node_properties['size']
             g.vs['color'] = node_properties['color']
             g.vs['category'] = node_properties['category']
-            g.vs['title'] = node_properties.apply(
-                lambda row: f"TCR: {row['cdr3_b_aa']}<br>Peak Freq: {(row['max_frequency']*100):.3f}%<br>Peak Count: {row['max_count']}<br>TPs: {row['timepoints']}",
-                axis=1
-            ).tolist()
+            g.vs['title'] = [
+                f"TCR: {cdr3}<br>Peak Freq: {freq*100:.3f}%<br>Peak Count: {count}<br>TPs: {tps}"
+                for cdr3, freq, count, tps in zip(
+                    node_properties['cdr3_b_aa'], node_properties['max_frequency'],
+                    node_properties['max_count'], node_properties['timepoints']
+                )
+            ]
 
             patient_samples = patient_df['sample'].unique()
             for sample_id in patient_samples:
