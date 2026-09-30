@@ -65,8 +65,7 @@ workflow TCRTOOLKIT_BULK {
         sample_map_final = INPUT_CHECK.out.sample_map
     }
 
-    // [meta, file] pairs staged for template_discovery_brief.qmd's VDJdb section: the
-    // adaptive-converted output when CONVERT ran, otherwise the raw (already-AIRR) input.
+    // [meta, file] pairs for template_discovery_brief.qmd's VDJdb section.
     def convert_files = (input_format == 'adaptive')
         ? CONVERT.out.collect(flat: false)
         : INPUT_CHECK.out.sample_map.collect(flat: false)

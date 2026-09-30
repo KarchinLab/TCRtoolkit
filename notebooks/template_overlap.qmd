@@ -172,9 +172,7 @@ sample_total_counts.rename(columns={'duplicate_count': 'total_counts'}, inplace=
 clonotypes_df = pd.merge(clonotypes_df, sample_total_counts, on=[subject_col, 'origin', timepoint_col])
 clonotypes_df['frequency'] = clonotypes_df['duplicate_count'] / clonotypes_df['total_counts']
 
-# Vectorized one-sided Fisher's exact test: total_pre/total_post are fixed
-# margins within a group, so this reduces to a single hypergeometric call
-# per group instead of one fisher_exact call per clonotype.
+# One-sided Fisher's exact test reduces to a single vectorized hypergeometric call since total_pre/total_post are fixed margins.
 def run_fisher_vectorized(count_post, count_pre, total_post, total_pre, alt_hyp):
     M = total_pre + total_post
     n = count_post + count_pre
@@ -785,8 +783,7 @@ def generate_plot_quarto_tabs(id_map, title_prefix, line_color):
     # Create temp dataframe
     plot_data = cdr3_df.copy()
 
-    # List comprehension over zip() avoids the per-row Series-construction
-    # overhead of .apply(axis=1); logic is identical to the row-wise version.
+    # Avoids the per-row Series-construction overhead of .apply(axis=1).
     has_origin = 'origin' in plot_data.columns
     keys = list(zip(plot_data[subject_col], plot_data['origin'])) if has_origin else plot_data[subject_col].tolist()
     plot_data['status'] = [

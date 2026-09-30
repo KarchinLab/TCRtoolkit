@@ -915,9 +915,7 @@ sample_total_counts.rename(columns={'duplicate_count': 'total_counts'}, inplace=
 clonotypes_df = pd.merge(clonotypes_df, sample_total_counts, on=[subject_col, 'origin', timepoint_col])
 clonotypes_df['frequency'] = clonotypes_df['duplicate_count'] / clonotypes_df['total_counts']
 
-# Vectorized one-sided Fisher's exact test: total_pre/total_post are fixed
-# margins within a group, so this reduces to a single hypergeometric call
-# per group instead of one fisher_exact call per clonotype.
+# One-sided Fisher's exact test reduces to a single vectorized hypergeometric call since total_pre/total_post are fixed margins.
 def run_fisher_vectorized(count_post, count_pre, total_post, total_pre, alt_hyp):
     M = total_pre + total_post
     n = count_post + count_pre
@@ -1664,9 +1662,7 @@ for subject, subj_df in clonotypes_df.groupby(subject_col):
             pivot['freq_t1_plot'] = pivot[t1].replace(0, min_freq)
             pivot['freq_t2_plot'] = pivot[t2].replace(0, min_freq)
             
-            # Assign highlight status using our sets. List comprehension over the
-            # junction_aa column avoids the per-row Series-construction overhead
-            # of .apply(axis=1); logic is identical to the row-wise version.
+            # Avoids the per-row Series-construction overhead of .apply(axis=1).
             keys = [(subject, origin, t1, t2, j) for j in pivot['junction_aa']]
             pivot['Status'] = [
                 "Expanded" if key in sig_exp_lookup else ("Contracted" if key in sig_cont_lookup else "Not Significant")

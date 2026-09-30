@@ -165,9 +165,7 @@ workflow BULKTCR_ANALYSIS {
                 .combine(ch_tcrpheno_files.map { l -> [l] })
                 .combine(pseudobulk_pheno_files.map { l -> [l] })
                 .map { sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, tcrdist_files_l, vdjdb_files_l, convert_files_l, tcrpheno_files_l, pseudobulk_files_l ->
-                    // convert_files_l is [meta, file] pairs - staged as ${meta.sample}_airr.tsv
-                    // regardless of the source's original basename, so the notebook can find it
-                    // whether it came from CONVERT_ADAPTIVE or is native (already-AIRR) input.
+                    // convert_files_l is [meta, file] pairs, staged as ${meta.sample}_airr.tsv regardless of source basename.
                     def report_files = [sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, pheno_notebook] +
                         tcrdist_files_l + vdjdb_files_l + convert_files_l.collect { _meta, f -> f } + tcrpheno_files_l + pseudobulk_files_l
                     def staged_layout = [
