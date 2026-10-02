@@ -23,12 +23,12 @@ workflow TCRTOOLKIT_BULK {
 
     println("Running TCRTOOLKIT_BULK workflow...")
 
-    // Construct levels list from the run_sample, run_compare, and run_patient parameters
+    // .toBoolean(): CLI overrides can arrive as the string "false", which is truthy in Groovy.
     def levels = []
-    if (params.run_sample) levels << 'sample'
-    if (params.run_compare) levels << 'compare'
-    if (params.run_patient) levels << 'patient'
-    if (params.run_convert) levels << 'convert'
+    if (params.run_sample?.toString()?.toBoolean() ?: false) levels << 'sample'
+    if (params.run_compare?.toString()?.toBoolean() ?: false) levels << 'compare'
+    if (params.run_patient?.toString()?.toBoolean() ?: false) levels << 'patient'
+    if (params.run_convert?.toString()?.toBoolean() ?: false) levels << 'convert'
 
     def input_format = params.input_format.toLowerCase()
 
@@ -65,12 +65,10 @@ workflow TCRTOOLKIT_BULK {
         sample_map_final = INPUT_CHECK.out.sample_map
     }
 
-    // template_discovery_brief.qmd stages AIRR-converted files only when CONVERT ran
-    // (adaptive); template_discovery_brief.qmd's VDJdb section otherwise reads the raw
-    // input directly, which already has AIRR-standard frequency columns.
+    // [meta, file] pairs for template_discovery_brief.qmd's VDJdb section.
     def convert_files = (input_format == 'adaptive')
-        ? CONVERT.out.map { _meta, f -> f }.collect()
-        : channel.value([])
+        ? CONVERT.out.collect(flat: false)
+        : INPUT_CHECK.out.sample_map.collect(flat: false)
 
     // Bulk reports are sample-centric. Compare- and patient-dependent sections are
     // added only when those workflow levels are present. Change this once reports do

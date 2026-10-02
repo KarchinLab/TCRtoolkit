@@ -25,14 +25,4 @@ samplesheet['file'] = files['file']
 samplesheet.to_csv('samplesheet.csv', index=None)
 ds.add_param("samplesheet", "samplesheet.csv")
 
-
-# 3. Set workflow_level value based on form input
-ds.logger.info("Setting workflow_level")
-
-levels = ['convert', 'sample', 'patient', 'compare']
-flags = [ds.params['convert_lvl'], ds.params['sample_lvl'], ds.params['patient_lvl'], ds.params['compare_lvl']]
-workflow_level = [lvl for lvl, flag in zip(levels, flags) if flag]
-
-ds.add_param('workflow_level', ','.join(workflow_level))
-
 ds.logger.info(ds.params)

@@ -214,19 +214,19 @@
           "default": true
         },
         "local_min_pvalue": {
-          "type": "string",
-          "default": 0.001
+          "type": ["string", "number"],
+          "default": "0.001"
         },
         "simulation_depth": {
           "type": "string",
           "default": 1000
         },
         "kmer_min_depth": {
-          "type": "string",
-          "default": 3
+          "type": ["string", "integer"],
+          "default": "3"
         },
         "local_min_OVE": {
-          "type": "string",
+          "type": ["string", "integer"],
           "default": "c(1000, 100, 10)"
         },
         "all_aa_interchangeable": {

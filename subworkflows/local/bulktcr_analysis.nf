@@ -165,8 +165,9 @@ workflow BULKTCR_ANALYSIS {
                 .combine(ch_tcrpheno_files.map { l -> [l] })
                 .combine(pseudobulk_pheno_files.map { l -> [l] })
                 .map { sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, tcrdist_files_l, vdjdb_files_l, convert_files_l, tcrpheno_files_l, pseudobulk_files_l ->
+                    // convert_files_l is [meta, file] pairs, staged as ${meta.sample}_airr.tsv regardless of source basename.
                     def report_files = [sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, pheno_notebook] +
-                        tcrdist_files_l + vdjdb_files_l + convert_files_l + tcrpheno_files_l + pseudobulk_files_l
+                        tcrdist_files_l + vdjdb_files_l + convert_files_l.collect { _meta, f -> f } + tcrpheno_files_l + pseudobulk_files_l
                     def staged_layout = [
                         ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
                         ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name],
@@ -174,7 +175,7 @@ workflow BULKTCR_ANALYSIS {
                         ["template_pheno.qmd", pheno_notebook.name]
                     ] + tcrdist_files_l.collect { f -> ["${params.project_name}/tcrdist3/${f.name}", f.name] } +
                         vdjdb_files_l.collect { f -> ["${params.project_name}/vdjdb/${f.name}", f.name] } +
-                        convert_files_l.collect { f -> ["${params.project_name}/convert/${f.name}", f.name] } +
+                        convert_files_l.collect { meta, f -> ["${params.project_name}/convert/${meta.sample}_airr.tsv", f.name] } +
                         tcrpheno_files_l.collect { f -> ["${params.project_name}/tcrpheno/${f.name}", f.name] } +
                         pseudobulk_files_l.collect { f -> ["${params.project_name}/pseudobulk/${f.name}", f.name] }
                     tuple(

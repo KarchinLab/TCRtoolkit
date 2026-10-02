@@ -23,7 +23,7 @@ concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
 from IPython.display import Image, display, Markdown, HTML
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.sparse import csr_matrix
-from scipy.stats import gaussian_kde, fisher_exact
+from scipy.stats import gaussian_kde
 from statsmodels.stats.multitest import multipletests
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
@@ -52,6 +52,10 @@ import re
 
 ## Reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
+
+# alias_col is optional; default to sample name if missing.
+if alias_col not in meta.columns:
+    meta[alias_col] = meta['sample']
 
 # timepoint_order_col isn't a samplesheet column - compute and inject it here.
 # timepoint_order (an ordered comma-separated list, e.g. "Base,Week4,EOT") ranks
@@ -149,7 +153,7 @@ def create_styled_table(df, title="", max_height='400px', formatter=None):
 import pandas as pd
 import numpy as np
 import itertools
-from scipy.stats import fisher_exact
+from scipy.stats import hypergeom
 from statsmodels.stats.multitest import multipletests
 
 # --- Setup & Pre-computation ---
@@ -168,11 +172,13 @@ sample_total_counts.rename(columns={'duplicate_count': 'total_counts'}, inplace=
 clonotypes_df = pd.merge(clonotypes_df, sample_total_counts, on=[subject_col, 'origin', timepoint_col])
 clonotypes_df['frequency'] = clonotypes_df['duplicate_count'] / clonotypes_df['total_counts']
 
-# Helper to run fisher exact test on rows
-def run_fisher(row, alt_hyp):
-    table = [[row['count_post'], row['total_post'] - row['count_post']],
-             [row['count_pre'], row['total_pre'] - row['count_pre']]]
-    return fisher_exact(table, alternative=alt_hyp)[1]
+# One-sided Fisher's exact test reduces to a single vectorized hypergeometric call since total_pre/total_post are fixed margins.
+def run_fisher_vectorized(count_post, count_pre, total_post, total_pre, alt_hyp):
+    M = total_pre + total_post
+    n = count_post + count_pre
+    if alt_hyp == 'greater':
+        return hypergeom.sf(count_post - 1, M, n, total_post)
+    return hypergeom.cdf(count_post, M, n, total_post)
 
 
 # ==========================================
@@ -225,7 +231,9 @@ for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin
             continue
 
         # 5. Apply Fisher's Exact test only to the remaining rows
-        comp_df['p_value'] = comp_df.apply(run_fisher, axis=1, alt_hyp='greater')
+        comp_df['p_value'] = run_fisher_vectorized(
+            comp_df['count_post'], comp_df['count_pre'], comp_df['total_post'], comp_df['total_pre'], 'greater'
+        )
         
         # Add metadata
         comp_df[subject_col] = subject
@@ -347,7 +355,9 @@ for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin
             continue
 
         # 5. Apply Fisher
-        comp_df['p_value'] = comp_df.apply(run_fisher, axis=1, alt_hyp='less')
+        comp_df['p_value'] = run_fisher_vectorized(
+            comp_df['count_post'], comp_df['count_pre'], comp_df['total_post'], comp_df['total_pre'], 'less'
+        )
         
         # Add metadata
         comp_df[subject_col] = subject
@@ -439,7 +449,6 @@ The heatmap displays only those TCR clonotypes that were identified as **"signif
 import plotly.express as px
 import plotly.graph_objects as go
 import scipy.cluster.hierarchy as sch
-from scipy.stats import zscore
 from IPython.display import display, Markdown
 import pandas as pd
 
@@ -524,7 +533,7 @@ else:
             # --- Calculate Z-Scores ---
             if matrix_df.shape[1] > 1:
                 # fillna(0) handles cases where standard deviation is 0 (identical frequencies across time)
-                z_score_df = matrix_df.apply(zscore, axis=1, result_type='expand').fillna(0)
+                z_score_df = matrix_df.sub(matrix_df.mean(axis=1), axis=0).div(matrix_df.std(axis=1, ddof=0), axis=0).fillna(0)
             else:
                 z_score_df = matrix_df.copy() * 0 # If only 1 timepoint, z-score is baseline 0
             
@@ -771,21 +780,16 @@ def generate_plot_quarto_tabs(id_map, title_prefix, line_color):
         print("*No clonotypes met the significance thresholds for this direction; "
               "showing background repertoire trajectories only.*\n")
 
-    # Define Status Helper 
-    def get_status(row):
-        subj = row[subject_col]
-        orig = row['origin'] if 'origin' in row else None
-        seq = row['junction_aa']
-        
-        # Check map using the correct key format
-        key = (subj, orig) if orig is not None else subj
-        if key in id_map and seq in id_map[key]:
-            return "Highlight"
-        return "Background"
-
     # Create temp dataframe
     plot_data = cdr3_df.copy()
-    plot_data['status'] = plot_data.apply(get_status, axis=1)
+
+    # Avoids the per-row Series-construction overhead of .apply(axis=1).
+    has_origin = 'origin' in plot_data.columns
+    keys = list(zip(plot_data[subject_col], plot_data['origin'])) if has_origin else plot_data[subject_col].tolist()
+    plot_data['status'] = [
+        "Highlight" if (key in id_map and seq in id_map[key]) else "Background"
+        for key, seq in zip(keys, plot_data['junction_aa'])
+    ]
 
     subjects = sorted(plot_data[subject_col].unique())
     color_map = {"Highlight": line_color, "Background": "lightgrey"}

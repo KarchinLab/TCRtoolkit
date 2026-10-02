@@ -1,7 +1,6 @@
 // Generic process to render a Quarto notebook to HTML
 process RENDER_NOTEBOOK {
     tag "${notebook.getBaseName()}"
-    label 'process_single'
 
     input:
     // path(files) stages files flat in the root dir; staged_layout optionally
@@ -16,6 +15,8 @@ process RENDER_NOTEBOOK {
     tuple path(notebook), path(files), val(staged_layout)
     val project_name
     val workflow_cmd
+    // Fixed name avoids colliding with a same-named file in `files`.
+    path samplesheet, stageAs: 'render_notebook_samplesheet.csv'
 
     output:
     path "${notebook.getBaseName()}.html", emit: report_html
@@ -34,7 +35,7 @@ process RENDER_NOTEBOOK {
     quarto render ${notebook} \\
         -P project_name:${project_name} \\
         -P workflow_cmd:'${workflow_cmd}' \\
-        -P sample_table:${file(params.samplesheet)} \\
+        -P sample_table:${samplesheet} \\
         -P subject_col:'${params.subject_col}' \\
         -P timepoint_col:'${params.timepoint_col}' \\
         -P timepoint_order_col:'${params.timepoint_order_col}' \\
