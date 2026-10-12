@@ -47,6 +47,8 @@ warnings.filterwarnings(
     module="plotly"
 )
 
+from IPython.display import display, Markdown, HTML
+
 meta = pd.read_csv(sample_table, sep=',')
 meta.drop(columns=['file'], inplace=True)
 
@@ -54,25 +56,12 @@ meta.drop(columns=['file'], inplace=True)
 if alias_col not in meta.columns:
     meta[alias_col] = meta['sample']
 
-# timepoint_order_col isn't a samplesheet column - compute and inject it here.
-# timepoint_order (an ordered comma-separated list, e.g. "Base,Week4,EOT") ranks
-# timepoints by position in that list; any timepoint not listed sorts after the
-# listed ones. When timepoint_order is empty, timepoints are ranked numerically
-# if every value parses as a number, otherwise alphabetically.
-if timepoint_order_col not in meta.columns:
-    unique_timepoints = meta[timepoint_col].dropna().unique().tolist()
-    if timepoint_order:
-        order_list = [t.strip() for t in timepoint_order.split(',')]
-        rank_map = {t: i for i, t in enumerate(order_list)}
-        unlisted = sorted(t for t in unique_timepoints if t not in rank_map)
-        for i, t in enumerate(unlisted):
-            rank_map[t] = len(order_list) + i
-    else:
-        try:
-            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=lambda x: float(x)))}
-        except (TypeError, ValueError):
-            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=str))}
-    meta[timepoint_order_col] = meta[timepoint_col].map(rank_map)
+```
+
+{{< include ./_timepoint_order.qmd >}}
+
+```{python}
+#| code-fold: true
 
 meta_cols = meta.columns.tolist()
 
@@ -306,7 +295,7 @@ def create_expansion_stacked_barplot_per_individual(df, subject_col, origin_col,
         fig.update_layout(**layout_dict)
         fig.update_traces(textfont_size=11)
         fig.show()
-        
+
         print("\n\n")
 
     print(":::\n")
@@ -1251,13 +1240,15 @@ def plot_patient_with_dropdown(pat_df, group_col, origin_col, custom_order=None)
     Handles plotting for a single patient. If multiple origins exist, 
     combines them into a single figure with a dropdown menu.
     """
+    patient_label = pat_df[subject_col].iloc[0] if not pat_df.empty else "unknown"
+
     if origin_col not in pat_df.columns:
         fig = create_convergent_plot(pat_df, group_col, custom_order)
         if fig: fig.show()
         return
 
     origins = sorted(pat_df[origin_col].dropna().unique().tolist())
-    
+
     if len(origins) == 0:
         return
     elif len(origins) == 1:
@@ -1374,10 +1365,10 @@ if len(unique_patients) <= 10:
     print(":::: {.panel-tabset}\n") 
     for group in group_opts_all:
         print(f"### {group}\n")
-        fig = create_convergent_plot(df, group) 
+        fig = create_convergent_plot(df, group)
         if fig: fig.show()
         print("\n")
-    print("::::\n") 
+    print("::::\n")
 
     # --- TAB B: BY PATIENT ---
     print("## By Patient\n")
@@ -1584,6 +1575,175 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
+def _pairwise_significance_matrix(data, x_col, value_col, categories):
+    """Pairwise Mann-Whitney U significance between categories of `x_col`,
+    comparing `value_col`. Groups once instead of re-filtering the full
+    dataframe for every (i, j) pair, which matters once `data` has many rows.
+    Shared by create_pgen_tabs and create_distance_tabs_with_heatmap."""
+    groups = {cat: vals for cat, vals in data.groupby(x_col)[value_col]}
+    n = len(categories)
+    p_matrix = np.full((n, n), np.nan)
+    text_matrix = np.full((n, n), "", dtype=object)
+
+    for i, c1 in enumerate(categories):
+        g1 = groups.get(c1)
+        if g1 is None or len(g1) < 2:
+            continue
+        for j, c2 in enumerate(categories):
+            if i <= j:
+                continue
+            g2 = groups.get(c2)
+            if g2 is None or len(g2) < 2:
+                continue
+            try:
+                _, p = mannwhitneyu(g1, g2, alternative='two-sided')
+            except ValueError:
+                continue
+            p_matrix[i, j] = -np.log10(p + 1e-300)
+            if p < 0.0001: star = "****"
+            elif p < 0.001: star = "***"
+            elif p < 0.01: star = "**"
+            elif p < 0.05: star = "*"
+            else: star = ""
+            text_matrix[i, j] = star
+
+    return p_matrix, text_matrix
+
+
+def _violin_with_heatmap_figure(data, x_col, value_col, title, trace_name, axis_label, name_prefix, x_order=None):
+    """Violin plot of `value_col` by `x_col`, with a pairwise-significance
+    heatmap inset. Shared by create_pgen_tabs and
+    create_distance_tabs_with_heatmap (identical except for which column/
+    labels they plot)."""
+    unique_cats = data[x_col].unique()
+    unique_cats = [x for x in x_order if x in unique_cats] if x_order else sorted(unique_cats)
+
+    p_matrix, text_matrix = _pairwise_significance_matrix(data, x_col, value_col, unique_cats)
+
+    fig = make_subplots(
+        rows=1, cols=2, column_widths=[0.6, 0.4], horizontal_spacing=0.15,
+        specs=[[{"type": "xy"}, {"type": "heatmap"}]]
+    )
+    fig.add_trace(
+        go.Violin(
+            x=data[x_col], y=data[value_col], box_visible=True, points=False,
+            line_color='#1f77b4', opacity=0.6, name=trace_name, showlegend=False,
+            width=0.7, spanmode='hard'
+        ), row=1, col=1
+    )
+    fig.add_trace(
+        go.Heatmap(
+            z=p_matrix, x=unique_cats, y=unique_cats, text=text_matrix,
+            texttemplate="%{text}", textfont={"size": 8}, colorscale="Reds",
+            zmin=0, zmax=5, showscale=True,
+            colorbar=dict(title="-log10(p)", titleside="top", orientation="v", thickness=10, len=0.5, x=1.1, y=0.5),
+            hovertemplate="<b>%{y} vs %{x}</b><br>Sig: %{text}<br>-log10(p): %{z:.2f}<extra></extra>"
+        ), row=1, col=2
+    )
+    fig.update_layout(title=title, width=1000, height=600, plot_bgcolor='rgba(0,0,0,0)', margin=dict(t=60, b=100, l=50, r=50))
+    fig.update_xaxes(tickangle=-45, row=1, col=1, categoryorder='array', categoryarray=unique_cats)
+    fig.update_yaxes(title_text=axis_label, row=1, col=1, showgrid=True, gridcolor='lightgrey')
+    fig.update_xaxes(showgrid=False, tickangle=-45, tickfont=dict(size=8), row=1, col=2, categoryorder='array', categoryarray=unique_cats)
+    fig.update_yaxes(showgrid=False, tickfont=dict(size=8), side="left", row=1, col=2, categoryorder='array', categoryarray=unique_cats)
+
+    title_slug = "".join(c if c.isalnum() else "_" for c in title).strip("_").lower()
+    fig.show()
+
+
+def _violin_with_heatmap_dropdown(pat_df, title_prefix, value_col, trace_name, axis_label, name_prefix, origin_col):
+    """Same as _violin_with_heatmap_figure, but with an origin dropdown when
+    a patient has more than one origin. Shared by create_pgen_tabs and
+    create_distance_tabs_with_heatmap."""
+    if origin_col not in pat_df.columns:
+        _violin_with_heatmap_figure(pat_df, alias_col, value_col, title_prefix, trace_name, axis_label, name_prefix)
+        return
+
+    origins = sorted(pat_df[origin_col].dropna().unique())
+    if len(origins) == 0:
+        return
+    elif len(origins) == 1:
+        _violin_with_heatmap_figure(pat_df, alias_col, value_col, f"{title_prefix} ({origins[0]})", trace_name, axis_label, name_prefix)
+        return
+
+    processed_origins = []
+    for origin in origins:
+        origin_df = pat_df[pat_df[origin_col] == origin].copy()
+        if timepoint_order_col in origin_df.columns:
+            origin_df = origin_df.sort_values(timepoint_order_col)
+
+        unique_cats = origin_df[alias_col].unique().tolist()
+        if len(unique_cats) < 1:
+            continue
+
+        p_matrix, text_matrix = _pairwise_significance_matrix(origin_df, alias_col, value_col, unique_cats)
+        processed_origins.append({
+            'origin': origin, 'df': origin_df, 'cats': unique_cats,
+            'p_matrix': p_matrix, 'text_matrix': text_matrix
+        })
+
+    if not processed_origins:
+        return
+
+    fig = make_subplots(
+        rows=1, cols=2, column_widths=[0.6, 0.4], horizontal_spacing=0.15,
+        specs=[[{"type": "xy"}, {"type": "heatmap"}]]
+    )
+
+    buttons = []
+    initial_cats = processed_origins[0]['cats']
+
+    for i, data in enumerate(processed_origins):
+        is_first = (i == 0)
+        fig.add_trace(
+            go.Violin(
+                x=data['df'][alias_col], y=data['df'][value_col],
+                box_visible=True, points=False, line_color='#1f77b4', opacity=0.6,
+                name=trace_name, showlegend=False, width=0.7, spanmode='hard', visible=is_first
+            ), row=1, col=1
+        )
+        fig.add_trace(
+            go.Heatmap(
+                z=data['p_matrix'], x=data['cats'], y=data['cats'], text=data['text_matrix'],
+                texttemplate="%{text}", textfont={"size": 8}, colorscale="Reds", zmin=0, zmax=5, showscale=True,
+                colorbar=dict(title="-log10(p)", titleside="top", orientation="v", thickness=10, len=0.5, x=1.1, y=0.5),
+                hovertemplate="<b>%{y} vs %{x}</b><br>Sig: %{text}<br>-log10(p): %{z:.2f}<extra></extra>", visible=is_first
+            ), row=1, col=2
+        )
+
+        visibility = [False] * (len(processed_origins) * 2)
+        visibility[i * 2] = True
+        visibility[i * 2 + 1] = True
+
+        buttons.append(dict(
+            label=str(data['origin']), method="update",
+            args=[
+                {"visible": visibility},
+                {
+                    "title.text": f"{title_prefix} ({data['origin']})",
+                    "xaxis.categoryarray": data['cats'],
+                    "xaxis2.categoryarray": data['cats'],
+                    "yaxis2.categoryarray": data['cats']
+                }
+            ]
+        ))
+
+    fig.update_layout(
+        title_text=f"{title_prefix} ({processed_origins[0]['origin']})",
+        width=1000, height=600, plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(t=120, b=100, l=50, r=50),
+        updatemenus=[dict(
+            active=0, buttons=buttons, x=0.0, xanchor="left", y=1.15, yanchor="top", pad={"r": 10, "t": 10}
+        )]
+    )
+    fig.update_xaxes(tickangle=-45, row=1, col=1, categoryorder='array', categoryarray=initial_cats)
+    fig.update_yaxes(title_text=axis_label, row=1, col=1, showgrid=True, gridcolor='lightgrey')
+    fig.update_xaxes(showgrid=False, tickangle=-45, tickfont=dict(size=8), row=1, col=2, categoryorder='array', categoryarray=initial_cats)
+    fig.update_yaxes(showgrid=False, tickfont=dict(size=8), side="left", row=1, col=2, categoryorder='array', categoryarray=initial_cats)
+
+    prefix_slug = "".join(c if c.isalnum() else "_" for c in title_prefix).strip("_").lower()
+    fig.show()
+
+
 def create_pgen_tabs(meta_df, origin_col='origin'):
     """
     Generates multi-tabbed violin plots for TCR Generation Probability (Pgen).
@@ -1654,183 +1814,11 @@ def create_pgen_tabs(meta_df, origin_col='origin'):
 
     # --- HELPER 1: STANDARD PLOT WITH HEATMAP (For 'All Samples' tab) ---
     def plot_violin_with_heatmap(data, x_col, title, x_order=None):
-        unique_cats = data[x_col].unique()
-        if x_order:
-            unique_cats = [x for x in x_order if x in unique_cats]
-        else:
-            unique_cats = sorted(unique_cats)
-            
-        n_cats = len(unique_cats)
-        
-        p_matrix = np.full((n_cats, n_cats), np.nan)
-        text_matrix = np.full((n_cats, n_cats), "", dtype=object)
-
-        for i, c1 in enumerate(unique_cats):
-            for j, c2 in enumerate(unique_cats):
-                if i <= j: continue
-                g1 = data[data[x_col] == c1]['log10_pgen']
-                g2 = data[data[x_col] == c2]['log10_pgen']
-                if len(g1) < 2 or len(g2) < 2: continue
-                try: stat, p = mannwhitneyu(g1, g2, alternative='two-sided')
-                except: continue
-                p_matrix[i, j] = -np.log10(p + 1e-300)
-
-                if p < 0.0001: star = "****"
-                elif p < 0.001: star = "***"
-                elif p < 0.01: star = "**"
-                elif p < 0.05: star = "*"
-                else: star = ""
-                text_matrix[i, j] = star
-
-        fig = make_subplots(
-            rows=1, cols=2, column_widths=[0.6, 0.4], horizontal_spacing=0.15,
-            specs=[[{"type": "xy"}, {"type": "heatmap"}]]
-        )
-
-        fig.add_trace(
-            go.Violin(
-                x=data[x_col], y=data['log10_pgen'], box_visible=True, points=False,
-                line_color='#1f77b4', opacity=0.6, name="Pgen", showlegend=False, 
-                width=0.7, spanmode='hard'
-            ), row=1, col=1
-        )
-
-        fig.add_trace(
-            go.Heatmap(
-                z=p_matrix, x=unique_cats, y=unique_cats, text=text_matrix, 
-                texttemplate="%{text}", textfont={"size": 8}, colorscale="Reds", 
-                zmin=0, zmax=5, showscale=True,
-                colorbar=dict(title="-log10(p)", titleside="top", orientation="v", thickness=10, len=0.5, x=1.1, y=0.5),
-                hovertemplate="<b>%{y} vs %{x}</b><br>Sig: %{text}<br>-log10(p): %{z:.2f}<extra></extra>"
-            ), row=1, col=2
-        )
-
-        fig.update_layout(title=title, width=1000, height=600, plot_bgcolor='rgba(0,0,0,0)', margin=dict(t=60, b=100, l=50, r=50))
-        fig.update_xaxes(tickangle=-45, row=1, col=1, categoryorder='array', categoryarray=unique_cats)
-        fig.update_yaxes(title_text="log10 P(gen)", row=1, col=1, showgrid=True, gridcolor='lightgrey')
-        fig.update_xaxes(showgrid=False, tickangle=-45, tickfont=dict(size=8), row=1, col=2, categoryorder='array', categoryarray=unique_cats)
-        fig.update_yaxes(showgrid=False, tickfont=dict(size=8), side="left", row=1, col=2, categoryorder='array', categoryarray=unique_cats)
-
-        fig.show()
+        _violin_with_heatmap_figure(data, x_col, 'log10_pgen', title, "Pgen", "log10 P(gen)", "pgen_violin_heatmap", x_order=x_order)
 
     # --- HELPER 2: PATIENT PLOT WITH ORIGIN DROPDOWN ---
     def plot_patient_with_dropdown(pat_df, title_prefix):
-        if origin_col not in pat_df.columns:
-            plot_violin_with_heatmap(pat_df, alias_col, title_prefix)
-            return
-
-        origins = sorted(pat_df[origin_col].dropna().unique())
-        if len(origins) == 0:
-            return
-        elif len(origins) == 1:
-            plot_violin_with_heatmap(pat_df, alias_col, f"{title_prefix} ({origins[0]})")
-            return
-
-        # Pre-process all origins
-        processed_origins = []
-        for origin in origins:
-            origin_df = pat_df[pat_df[origin_col] == origin].copy()
-            if timepoint_order_col in origin_df.columns:
-                origin_df = origin_df.sort_values(timepoint_order_col)
-            
-            unique_cats = origin_df[alias_col].unique().tolist()
-            n_cats = len(unique_cats)
-            if n_cats < 1: continue
-
-            p_matrix = np.full((n_cats, n_cats), np.nan)
-            text_matrix = np.full((n_cats, n_cats), "", dtype=object)
-
-            for i, c1 in enumerate(unique_cats):
-                for j, c2 in enumerate(unique_cats):
-                    if i <= j: continue
-                    g1 = origin_df[origin_df[alias_col] == c1]['log10_pgen']
-                    g2 = origin_df[origin_df[alias_col] == c2]['log10_pgen']
-                    if len(g1) < 2 or len(g2) < 2: continue
-                    try: stat, p = mannwhitneyu(g1, g2, alternative='two-sided')
-                    except: continue
-                    p_matrix[i, j] = -np.log10(p + 1e-300)
-
-                    if p < 0.0001: star = "****"
-                    elif p < 0.001: star = "***"
-                    elif p < 0.01: star = "**"
-                    elif p < 0.05: star = "*"
-                    else: star = ""
-                    text_matrix[i, j] = star
-
-            processed_origins.append({
-                'origin': origin, 'df': origin_df, 'cats': unique_cats,
-                'p_matrix': p_matrix, 'text_matrix': text_matrix
-            })
-
-        if not processed_origins: return
-
-        # Build Master Figure
-        fig = make_subplots(
-            rows=1, cols=2, column_widths=[0.6, 0.4], horizontal_spacing=0.15,
-            specs=[[{"type": "xy"}, {"type": "heatmap"}]]
-        )
-
-        buttons = []
-        initial_cats = processed_origins[0]['cats']
-
-        for i, data in enumerate(processed_origins):
-            is_first = (i == 0)
-            
-            # Violin
-            fig.add_trace(
-                go.Violin(
-                    x=data['df'][alias_col], y=data['df']['log10_pgen'],
-                    box_visible=True, points=False, line_color='#1f77b4', opacity=0.6,
-                    name="Pgen", showlegend=False, width=0.7, spanmode='hard', visible=is_first
-                ), row=1, col=1
-            )
-            
-            # Heatmap
-            fig.add_trace(
-                go.Heatmap(
-                    z=data['p_matrix'], x=data['cats'], y=data['cats'], text=data['text_matrix'],
-                    texttemplate="%{text}", textfont={"size": 8}, colorscale="Reds", zmin=0, zmax=5, showscale=True,
-                    colorbar=dict(title="-log10(p)", titleside="top", orientation="v", thickness=10, len=0.5, x=1.1, y=0.5),
-                    hovertemplate="<b>%{y} vs %{x}</b><br>Sig: %{text}<br>-log10(p): %{z:.2f}<extra></extra>", visible=is_first
-                ), row=1, col=2
-            )
-
-            # Dropdown Logic
-            visibility = [False] * (len(processed_origins) * 2)
-            visibility[i * 2] = True
-            visibility[i * 2 + 1] = True
-            
-            button = dict(
-                label=str(data['origin']), method="update",
-                args=[
-                    {"visible": visibility},
-                    {
-                        "title.text": f"{title_prefix} ({data['origin']})",
-                        "xaxis.categoryarray": data['cats'],
-                        "xaxis2.categoryarray": data['cats'],
-                        "yaxis2.categoryarray": data['cats']
-                    }
-                ]
-            )
-            buttons.append(button)
-
-        # Apply Layout
-        fig.update_layout(
-            title_text=f"{title_prefix} ({processed_origins[0]['origin']})",
-            width=1000, height=600, plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(t=120, b=100, l=50, r=50), # 120 margin provides room for dropdown
-            updatemenus=[dict(
-                active=0, buttons=buttons, x=0.0, xanchor="left", y=1.15, yanchor="top", pad={"r": 10, "t": 10}
-            )]
-        )
-
-        # Apply Base Axes (linked to first origin)
-        fig.update_xaxes(tickangle=-45, row=1, col=1, categoryorder='array', categoryarray=initial_cats)
-        fig.update_yaxes(title_text="log10 P(gen)", row=1, col=1, showgrid=True, gridcolor='lightgrey')
-        fig.update_xaxes(showgrid=False, tickangle=-45, tickfont=dict(size=8), row=1, col=2, categoryorder='array', categoryarray=initial_cats)
-        fig.update_yaxes(showgrid=False, tickfont=dict(size=8), side="left", row=1, col=2, categoryorder='array', categoryarray=initial_cats)
-
-        fig.show()
+        _violin_with_heatmap_dropdown(pat_df, title_prefix, 'log10_pgen', "Pgen", "log10 P(gen)", "pgen_violin_heatmap", origin_col)
 
     # --- 4. Generate Quarto Tabs ---
     print("::: {.panel-tabset}\n")
@@ -1963,186 +1951,11 @@ def create_distance_tabs_with_heatmap(meta_df, origin_col='origin'):
 
     # --- HELPER 1: STANDARD PLOT WITH HEATMAP ---
     def plot_violin_with_heatmap(data, x_col, title, x_order=None):
-        unique_cats = data[x_col].unique()
-        if x_order:
-            unique_cats = [x for x in x_order if x in unique_cats]
-        else:
-            unique_cats = sorted(unique_cats)
-            
-        n_cats = len(unique_cats)
-        
-        p_matrix = np.full((n_cats, n_cats), np.nan)
-        text_matrix = np.full((n_cats, n_cats), "", dtype=object)
-
-        for i, c1 in enumerate(unique_cats):
-            for j, c2 in enumerate(unique_cats):
-                if i <= j: continue
-                g1 = data[data[x_col] == c1]['distance']
-                g2 = data[data[x_col] == c2]['distance']
-
-                if len(g1) < 2 or len(g2) < 2: continue
-
-                try: stat, p = mannwhitneyu(g1, g2, alternative='two-sided')
-                except: continue
-
-                p_matrix[i, j] = -np.log10(p + 1e-300)
-
-                if p < 0.0001: star = "****"
-                elif p < 0.001: star = "***"
-                elif p < 0.01: star = "**"
-                elif p < 0.05: star = "*"
-                else: star = ""
-                text_matrix[i, j] = star
-
-        fig = make_subplots(
-            rows=1, cols=2, column_widths=[0.6, 0.4], horizontal_spacing=0.15,
-            specs=[[{"type": "xy"}, {"type": "heatmap"}]]
-        )
-
-        fig.add_trace(
-            go.Violin(
-                x=data[x_col], y=data['distance'], box_visible=True, points=False,
-                line_color='#1f77b4', opacity=0.6, name="Distance", showlegend=False, 
-                width=0.7, spanmode='hard'
-            ), row=1, col=1
-        )
-
-        fig.add_trace(
-            go.Heatmap(
-                z=p_matrix, x=unique_cats, y=unique_cats, text=text_matrix, 
-                texttemplate="%{text}", textfont={"size": 8}, colorscale="Reds", 
-                zmin=0, zmax=5, showscale=True,
-                colorbar=dict(title="-log10(p)", titleside="top", orientation="v", thickness=10, len=0.5, x=1.1, y=0.5),
-                hovertemplate="<b>%{y} vs %{x}</b><br>Sig: %{text}<br>-log10(p): %{z:.2f}<extra></extra>"
-            ), row=1, col=2
-        )
-
-        fig.update_layout(title=title, width=1000, height=600, plot_bgcolor='rgba(0,0,0,0)', margin=dict(t=60, b=100, l=50, r=50))
-        fig.update_xaxes(tickangle=-45, row=1, col=1, categoryorder='array', categoryarray=unique_cats)
-        fig.update_yaxes(title_text="TCR Distance", row=1, col=1, showgrid=True, gridcolor='lightgrey')
-        fig.update_xaxes(showgrid=False, tickangle=-45, tickfont=dict(size=8), row=1, col=2, categoryorder='array', categoryarray=unique_cats)
-        fig.update_yaxes(showgrid=False, tickfont=dict(size=8), side="left", row=1, col=2, categoryorder='array', categoryarray=unique_cats)
-
-        fig.show()
+        _violin_with_heatmap_figure(data, x_col, 'distance', title, "Distance", "TCR Distance", "distance_violin_heatmap", x_order=x_order)
 
     # --- HELPER 2: PATIENT PLOT WITH ORIGIN DROPDOWN ---
     def plot_patient_with_dropdown(pat_df, title_prefix):
-        if origin_col not in pat_df.columns:
-            plot_violin_with_heatmap(pat_df, alias_col, title_prefix)
-            return
-
-        origins = sorted(pat_df[origin_col].dropna().unique())
-        if len(origins) == 0:
-            return
-        elif len(origins) == 1:
-            plot_violin_with_heatmap(pat_df, alias_col, f"{title_prefix} ({origins[0]})")
-            return
-
-        # Pre-process all origins
-        processed_origins = []
-        for origin in origins:
-            origin_df = pat_df[pat_df[origin_col] == origin].copy()
-            if timepoint_order_col in origin_df.columns:
-                origin_df = origin_df.sort_values(timepoint_order_col)
-            
-            unique_cats = origin_df[alias_col].unique().tolist()
-            n_cats = len(unique_cats)
-            if n_cats < 1: continue
-
-            p_matrix = np.full((n_cats, n_cats), np.nan)
-            text_matrix = np.full((n_cats, n_cats), "", dtype=object)
-
-            for i, c1 in enumerate(unique_cats):
-                for j, c2 in enumerate(unique_cats):
-                    if i <= j: continue
-                    g1 = origin_df[origin_df[alias_col] == c1]['distance']
-                    g2 = origin_df[origin_df[alias_col] == c2]['distance']
-                    if len(g1) < 2 or len(g2) < 2: continue
-                    try: stat, p = mannwhitneyu(g1, g2, alternative='two-sided')
-                    except: continue
-                    p_matrix[i, j] = -np.log10(p + 1e-300)
-
-                    if p < 0.0001: star = "****"
-                    elif p < 0.001: star = "***"
-                    elif p < 0.01: star = "**"
-                    elif p < 0.05: star = "*"
-                    else: star = ""
-                    text_matrix[i, j] = star
-
-            processed_origins.append({
-                'origin': origin, 'df': origin_df, 'cats': unique_cats,
-                'p_matrix': p_matrix, 'text_matrix': text_matrix
-            })
-
-        if not processed_origins: return
-
-        # Build Master Figure
-        fig = make_subplots(
-            rows=1, cols=2, column_widths=[0.6, 0.4], horizontal_spacing=0.15,
-            specs=[[{"type": "xy"}, {"type": "heatmap"}]]
-        )
-
-        buttons = []
-        initial_cats = processed_origins[0]['cats']
-
-        for i, data in enumerate(processed_origins):
-            is_first = (i == 0)
-            
-            # Violin
-            fig.add_trace(
-                go.Violin(
-                    x=data['df'][alias_col], y=data['df']['distance'],
-                    box_visible=True, points=False, line_color='#1f77b4', opacity=0.6,
-                    name="Distance", showlegend=False, width=0.7, spanmode='hard', visible=is_first
-                ), row=1, col=1
-            )
-            
-            # Heatmap
-            fig.add_trace(
-                go.Heatmap(
-                    z=data['p_matrix'], x=data['cats'], y=data['cats'], text=data['text_matrix'],
-                    texttemplate="%{text}", textfont={"size": 8}, colorscale="Reds", zmin=0, zmax=5, showscale=True,
-                    colorbar=dict(title="-log10(p)", titleside="top", orientation="v", thickness=10, len=0.5, x=1.1, y=0.5),
-                    hovertemplate="<b>%{y} vs %{x}</b><br>Sig: %{text}<br>-log10(p): %{z:.2f}<extra></extra>", visible=is_first
-                ), row=1, col=2
-            )
-
-            # Dropdown Logic
-            visibility = [False] * (len(processed_origins) * 2)
-            visibility[i * 2] = True
-            visibility[i * 2 + 1] = True
-            
-            button = dict(
-                label=str(data['origin']), method="update",
-                args=[
-                    {"visible": visibility},
-                    {
-                        "title.text": f"{title_prefix} ({data['origin']})",
-                        "xaxis.categoryarray": data['cats'],
-                        "xaxis2.categoryarray": data['cats'],
-                        "yaxis2.categoryarray": data['cats']
-                    }
-                ]
-            )
-            buttons.append(button)
-
-        # Apply Layout
-        fig.update_layout(
-            title_text=f"{title_prefix} ({processed_origins[0]['origin']})",
-            width=1000, height=600, plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(t=120, b=100, l=50, r=50), # 120 margin provides room for dropdown
-            updatemenus=[dict(
-                active=0, buttons=buttons, x=0.0, xanchor="left", y=1.15, yanchor="top", pad={"r": 10, "t": 10}
-            )]
-        )
-
-        # Apply Base Axes
-        fig.update_xaxes(tickangle=-45, row=1, col=1, categoryorder='array', categoryarray=initial_cats)
-        fig.update_yaxes(title_text="TCR Distance", row=1, col=1, showgrid=True, gridcolor='lightgrey')
-        fig.update_xaxes(showgrid=False, tickangle=-45, tickfont=dict(size=8), row=1, col=2, categoryorder='array', categoryarray=initial_cats)
-        fig.update_yaxes(showgrid=False, tickfont=dict(size=8), side="left", row=1, col=2, categoryorder='array', categoryarray=initial_cats)
-
-        fig.show()
+        _violin_with_heatmap_dropdown(pat_df, title_prefix, 'distance', "Distance", "TCR Distance", "distance_violin_heatmap", origin_col)
 
     # --- 3. GENERATE TABS ---
     print("::: {.panel-tabset}\n")
@@ -2331,10 +2144,10 @@ def plot_vdjdb_species_specificity(VDJdb_dir, meta_df, subject_col='subject_id')
         # Scientific styling
         fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True, tickangle=45)
         fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True, gridcolor='lightgrey')
-        
+
         fig.show()
         print("\n\n")
-        
+
     print(":::\n")
 
 # Run the function
@@ -2515,10 +2328,10 @@ def plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta_df, subject_col='subject_id'):
             margin=dict(t=80, b=50, l=50, r=200),
             height=700
         )
-        
+
         fig.show()
         print("\n\n")
-        
+
     print(":::\n")
 
 # Run the function
@@ -2691,10 +2504,10 @@ def plot_vdjdb_sunburst_reversed(VDJdb_dir, meta_df, subject_col='subject_id'):
             margin=dict(t=80, b=50, l=50, r=200),
             height=800 # Increased height slightly to accommodate the dense inner ring
         )
-        
+
         fig.show()
         print("\n\n")
-        
+
     print(":::\n")
 
 # Run the function

@@ -11,6 +11,7 @@ project_dir=f"{project_dir}"
 
 sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
 concat_csv = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"
+clonal_dynamics_dir = f"{project_dir}/clonal_dynamics"
 
 ```
 
@@ -57,25 +58,13 @@ meta = pd.read_csv(sample_table, sep=',')
 if alias_col not in meta.columns:
     meta[alias_col] = meta['sample']
 
-# timepoint_order_col isn't a samplesheet column - compute and inject it here.
-# timepoint_order (an ordered comma-separated list, e.g. "Base,Week4,EOT") ranks
-# timepoints by position in that list; any timepoint not listed sorts after the
-# listed ones. When timepoint_order is empty, timepoints are ranked numerically
-# if every value parses as a number, otherwise alphabetically.
-if timepoint_order_col not in meta.columns:
-    unique_timepoints = meta[timepoint_col].dropna().unique().tolist()
-    if timepoint_order:
-        order_list = [t.strip() for t in timepoint_order.split(',')]
-        rank_map = {t: i for i, t in enumerate(order_list)}
-        unlisted = sorted(t for t in unique_timepoints if t not in rank_map)
-        for i, t in enumerate(unlisted):
-            rank_map[t] = len(order_list) + i
-    else:
-        try:
-            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=lambda x: float(x)))}
-        except (TypeError, ValueError):
-            rank_map = {t: r for r, t in enumerate(sorted(unique_timepoints, key=str))}
-    meta[timepoint_order_col] = meta[timepoint_col].map(rank_map)
+```
+
+{{< include ./_timepoint_order.qmd >}}
+
+```{python}
+#| tags: [setup]
+#| warning: false
 
 ## Reading concatenated cdr3 file
 concat_df = pd.read_csv(concat_csv, sep='\t')
@@ -152,147 +141,32 @@ def create_styled_table(df, title="", max_height='400px', formatter=None):
 
 import pandas as pd
 import numpy as np
-import itertools
-from scipy.stats import hypergeom
-from statsmodels.stats.multitest import multipletests
 
-# --- Setup & Pre-computation ---
+# --- Load precomputed clonal dynamics ---
+# The Fisher's-exact-test expansion/contraction computation used to run here
+# (and, identically, in template_discovery_brief.qmd). It now runs once in
+# the CLONAL_DYNAMICS Nextflow module (bin/clonal_dynamics.py) and both
+# notebooks just load its output.
 
-clonotypes_df = concat_df.copy()
-clonotypes_df = clonotypes_df.dropna(subset=[timepoint_col, 'origin'])
 clone_cols = ['junction_aa', 'v_call', 'j_call']
-merge_cols = clone_cols + [subject_col, 'origin'] 
-
-clonotypes_df['timepoint_rank'] = clonotypes_df[timepoint_order_col]
-clonotypes_df = clonotypes_df.sort_values('timepoint_rank')
-
-# Grouping by subject, origin, and timepoint for accurate total counts
-sample_total_counts = clonotypes_df.groupby([subject_col, 'origin', timepoint_col])['duplicate_count'].sum().reset_index()
-sample_total_counts.rename(columns={'duplicate_count': 'total_counts'}, inplace=True)
-clonotypes_df = pd.merge(clonotypes_df, sample_total_counts, on=[subject_col, 'origin', timepoint_col])
-clonotypes_df['frequency'] = clonotypes_df['duplicate_count'] / clonotypes_df['total_counts']
-
-# One-sided Fisher's exact test reduces to a single vectorized hypergeometric call since total_pre/total_post are fixed margins.
-def run_fisher_vectorized(count_post, count_pre, total_post, total_pre, alt_hyp):
-    M = total_pre + total_post
-    n = count_post + count_pre
-    if alt_hyp == 'greater':
-        return hypergeom.sf(count_post - 1, M, n, total_post)
-    return hypergeom.cdf(count_post, M, n, total_post)
-
-
-# ==========================================
-# ----------- EXPANDING CLONES -----------
-# ==========================================
-
-fc_thold_up = 2.0
+merge_cols = clone_cols + [subject_col, 'origin']
 signif_thold = 0.05
 top_clones_to_show = 15
 
-all_significant_results = []
-comparison_details = []
-expansion_counts_list = []
+clonotypes_df = pd.read_csv(f"{clonal_dynamics_dir}/clonotypes.csv")
 
-for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin']):
-    timepoints = subject_df.sort_values('timepoint_rank')[timepoint_col].unique().tolist()
-    if len(timepoints) < 2:
-        continue
+detailed_comparisons_table = pd.read_csv(f"{clonal_dynamics_dir}/detailed_comparisons_expansion.csv")
+expanded_clones_summary_table = pd.read_csv(f"{clonal_dynamics_dir}/expanded_clones_summary.csv")
 
-    freq_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='frequency', fill_value=0)
-    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='duplicate_count', fill_value=0)
-    subject_total_counts = subject_df.groupby(timepoint_col)['duplicate_count'].sum()
-
-    for t_pre, t_post in itertools.combinations(timepoints, 2):
-        # 1. Vectorized DataFrame creation instead of iterrows
-        comp_df = pd.DataFrame({
-            'count_pre': counts_pivot[t_pre],
-            'count_post': counts_pivot[t_post],
-            'freq_pre': freq_pivot[t_pre],
-            'freq_post': freq_pivot[t_post]
-        }).reset_index()
-        
-        # 2. Fast pre-filtering: Must have post counts > 0 to be an expansion
-        comp_df = comp_df[comp_df['count_post'] > 0].copy()
-        if comp_df.empty:
-            continue
-            
-        # 3. Vectorized Total Counts & Fold Change
-        comp_df['total_pre'] = subject_total_counts[t_pre]
-        comp_df['total_post'] = subject_total_counts[t_post]
-        
-        # Safe divide for fold change (np.where is extremely fast)
-        comp_df['fold_change'] = np.where(comp_df['freq_pre'] == 0, np.inf, comp_df['freq_post'] / comp_df['freq_pre'])
-        
-        # 4. Filter strictly by fold_change threshold BEFORE running expensive Fisher tests
-        # If it doesn't meet the FC threshold, it won't make your final cut anyway.
-        comp_df = comp_df[comp_df['fold_change'] > fc_thold_up].copy()
-        
-        if comp_df.empty:
-            continue
-
-        # 5. Apply Fisher's Exact test only to the remaining rows
-        comp_df['p_value'] = run_fisher_vectorized(
-            comp_df['count_post'], comp_df['count_pre'], comp_df['total_post'], comp_df['total_pre'], 'greater'
-        )
-        
-        # Add metadata
-        comp_df[subject_col] = subject
-        comp_df['origin'] = origin
-        comp_df['t_pre'] = t_pre
-        comp_df['t_post'] = t_post
-
-        # Run FDR correction
-        _, q_values, _, _ = multipletests(comp_df['p_value'], alpha=signif_thold, method='fdr_bh')
-        comp_df['q_value'] = q_values
-        
-        comparison_details.append(comp_df)
-
-        # Get Significant Hits
-        significant_hits = comp_df[comp_df['q_value'] < signif_thold]
-
-        if not significant_hits.empty:
-            counts_per_pair = pd.DataFrame({
-                't_pre': [t_pre], 't_post': [t_post], 
-                'expanded_count': [len(significant_hits)],
-                subject_col: [subject], 'origin': [origin]
-            })
-            expansion_counts_list.append(counts_per_pair)
-
-            significant_clones = significant_hits[clone_cols].drop_duplicates()
-            final_clones_df = freq_pivot.loc[pd.MultiIndex.from_frame(significant_clones)].reset_index()
-            final_clones_df[subject_col] = subject
-            final_clones_df['origin'] = origin
-            
-            cols = [subject_col, 'origin'] + clone_cols + timepoints
-            final_clones_df = final_clones_df[[c for c in cols if c in final_clones_df.columns]]
-            all_significant_results.append(final_clones_df)
-
-# --- Assemble Expanding Tables ---
-expansion_counts_table = pd.DataFrame()
-if expansion_counts_list:
-    expansion_counts_table = pd.concat(expansion_counts_list, ignore_index=True)
-    # Reorder columns slightly just to match previous layout
-    if not expansion_counts_table.empty:
-        expansion_counts_table = expansion_counts_table[[subject_col, 'origin', 't_pre', 't_post', 'expanded_count']]
-
-detailed_comparisons_table = pd.DataFrame()
-if comparison_details:
-    detailed_comparisons_table = pd.concat(comparison_details, ignore_index=True)
-
-expanded_clones_summary_table = pd.DataFrame()
-if all_significant_results:
-    expanded_clones_summary_table = pd.concat(all_significant_results, ignore_index=True).fillna(0)
-    expanded_clones_summary_table.rename(columns={t: f'freq_{t}' for t in expanded_clones_summary_table.columns if t not in merge_cols}, inplace=True)
+detailed_comparisons_table_cont = pd.read_csv(f"{clonal_dynamics_dir}/detailed_comparisons_contraction.csv")
+contracting_clones_summary_table = pd.read_csv(f"{clonal_dynamics_dir}/contracting_clones_summary.csv")
 
 # --- Clean & Get Top Expanding Clones ---
 table1_top = pd.DataFrame()
 table2_top = pd.DataFrame()
 
 if not detailed_comparisons_table.empty:
-    for col in ['p_value', 'q_value', 'fold_change']:
-        detailed_comparisons_table[col] = detailed_comparisons_table[col].replace([np.inf, -np.inf], pd.NA)
-
-    # Note: FC filter was already applied earlier, so this is just checking Q-value
+    # Note: FC filter was already applied upstream, so this is just checking Q-value
     significant_details = detailed_comparisons_table[
         (pd.to_numeric(detailed_comparisons_table['q_value'], errors='coerce') < signif_thold)
     ].copy()
@@ -308,113 +182,11 @@ if not detailed_comparisons_table.empty:
         table2_top = pd.merge(top_clone_identifiers, detailed_comparisons_table, on=merge_cols, how='inner')
         table2_top = table2_top[table2_top['q_value'] < signif_thold]
 
-
-# ==========================================
-# ----------- CONTRACTING CLONES -----------
-# ==========================================
-
-fc_thold_down = 0.5 
-signif_thold = 0.05
-
-all_significant_results_cont = []
-comparison_details_cont = []
-contraction_counts_list = [] 
-
-for (subject, origin), subject_df in clonotypes_df.groupby([subject_col, 'origin']):
-    timepoints = subject_df.sort_values('timepoint_rank')[timepoint_col].unique().tolist()
-    if len(timepoints) < 2:
-        continue
-
-    freq_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='frequency', fill_value=0)
-    counts_pivot = subject_df.pivot_table(index=clone_cols, columns=timepoint_col, values='duplicate_count', fill_value=0)
-    subject_total_counts = subject_df.groupby(timepoint_col)['duplicate_count'].sum()
-
-    for t_pre, t_post in itertools.combinations(timepoints, 2):
-        # 1. Vectorize
-        comp_df = pd.DataFrame({
-            'count_pre': counts_pivot[t_pre],
-            'count_post': counts_pivot[t_post],
-            'freq_pre': freq_pivot[t_pre],
-            'freq_post': freq_pivot[t_post]
-        }).reset_index()
-        
-        # 2. Fast pre-filtering: Must have pre counts > 0 to contract
-        comp_df = comp_df[comp_df['count_pre'] > 0].copy()
-        if comp_df.empty:
-            continue
-            
-        # 3. Vectorized Total Counts & Fold Change
-        comp_df['total_pre'] = subject_total_counts[t_pre]
-        comp_df['total_post'] = subject_total_counts[t_post]
-        comp_df['fold_change'] = comp_df['freq_post'] / comp_df['freq_pre']
-        
-        # 4. Filter by FC threshold BEFORE Fisher
-        comp_df = comp_df[comp_df['fold_change'] < fc_thold_down].copy()
-        
-        if comp_df.empty:
-            continue
-
-        # 5. Apply Fisher
-        comp_df['p_value'] = run_fisher_vectorized(
-            comp_df['count_post'], comp_df['count_pre'], comp_df['total_post'], comp_df['total_pre'], 'less'
-        )
-        
-        # Add metadata
-        comp_df[subject_col] = subject
-        comp_df['origin'] = origin
-        comp_df['t_pre'] = t_pre
-        comp_df['t_post'] = t_post
-
-        # Run FDR
-        _, q_values, _, _ = multipletests(comp_df['p_value'], alpha=signif_thold, method='fdr_bh')
-        comp_df['q_value'] = q_values
-        
-        comparison_details_cont.append(comp_df)
-
-        # Get Significant Hits
-        significant_hits = comp_df[comp_df['q_value'] < signif_thold]
-
-        if not significant_hits.empty:
-            counts_per_pair = pd.DataFrame({
-                't_pre': [t_pre], 't_post': [t_post], 
-                'contracted_count': [len(significant_hits)],
-                subject_col: [subject], 'origin': [origin]
-            })
-            contraction_counts_list.append(counts_per_pair)
-
-            significant_clones = significant_hits[clone_cols].drop_duplicates()
-            final_clones_df = freq_pivot.loc[pd.MultiIndex.from_frame(significant_clones)].reset_index()
-            final_clones_df[subject_col] = subject
-            final_clones_df['origin'] = origin
-
-            cols = [subject_col, 'origin'] + clone_cols + timepoints
-            final_clones_df = final_clones_df[[c for c in cols if c in final_clones_df.columns]]
-            all_significant_results_cont.append(final_clones_df)
-
-# --- Assemble Contracting Tables ---
-contraction_counts_table = pd.DataFrame()
-if contraction_counts_list:
-    contraction_counts_table = pd.concat(contraction_counts_list, ignore_index=True)
-    if not contraction_counts_table.empty:
-        contraction_counts_table = contraction_counts_table[[subject_col, 'origin', 't_pre', 't_post', 'contracted_count']]
-
-detailed_comparisons_table_cont = pd.DataFrame() 
-if comparison_details_cont:
-    detailed_comparisons_table_cont = pd.concat(comparison_details_cont, ignore_index=True)
-
-contracting_clones_summary_table = pd.DataFrame()
-if all_significant_results_cont:
-    contracting_clones_summary_table = pd.concat(all_significant_results_cont, ignore_index=True).fillna(0)
-    contracting_clones_summary_table.rename(columns={t: f'freq_{t}' for t in contracting_clones_summary_table.columns if t not in merge_cols}, inplace=True)
-
 # --- Clean & Get Top Contracting Clones ---
 table1_contracting_top = pd.DataFrame()
 table2_contracting_top = pd.DataFrame()
 
 if not detailed_comparisons_table_cont.empty:
-    for col in ['p_value', 'q_value']:
-        detailed_comparisons_table_cont[col] = detailed_comparisons_table_cont[col].replace([np.inf, -np.inf], pd.NA)
-
     significant_details = detailed_comparisons_table_cont[
         (pd.to_numeric(detailed_comparisons_table_cont['q_value'], errors='coerce') < signif_thold)
     ].copy()
@@ -429,7 +201,7 @@ if not detailed_comparisons_table_cont.empty:
 
         table2_contracting_top = pd.merge(top_clone_identifiers, detailed_comparisons_table_cont, on=merge_cols, how='left')
         table2_contracting_top = table2_contracting_top[table2_contracting_top['q_value'] < signif_thold]
-        
+
 ```
 
 
@@ -922,6 +694,7 @@ def generate_plot_quarto_tabs(id_map, title_prefix, line_color):
             )
 
         # 3. Render the figure directly into the tab
+        prefix_slug = "".join(c if c.isalnum() else "_" for c in title_prefix).strip("_").lower()
         master_fig.show()
         print("\n")
 

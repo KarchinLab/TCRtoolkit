@@ -23,7 +23,7 @@ pseudobulk_dir = f"{project_dir}/pseudobulk/"
 
 ```{python}
 # Load Packages
-from IPython.display import Image
+from IPython.display import Image, Markdown
 import os
 import datetime
 import sys

@@ -20,6 +20,10 @@ process RENDER_NOTEBOOK {
 
     output:
     path "${notebook.getBaseName()}.html", emit: report_html
+    // Notebooks that save figures write them under ./figures/ (PNGs for static
+    // plots, standalone interactive .html fragments for Plotly figures kept
+    // out of the main report document). Optional: not every notebook does.
+    path "figures", emit: figures, optional: true
 
     script:
     // Joined with '\n    ' (not just '\n') so each generated line lands at the

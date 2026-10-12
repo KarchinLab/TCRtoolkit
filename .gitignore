@@ -51,3 +51,4 @@ logs/
 ## Let the report notebooks through: the `notebooks/*` rule above would
 ## otherwise silently skip every template_*.qmd, which the bulk route needs.
 !notebooks/template_*.qmd
+!notebooks/_timepoint_order.qmd

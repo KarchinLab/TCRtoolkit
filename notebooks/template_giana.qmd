@@ -25,7 +25,7 @@ import plotly.graph_objects as go
 import itertools
 import numpy as np
 import scipy.cluster.hierarchy as sch
-from IPython.display import display, Markdown
+from IPython.display import display, Markdown, HTML
 
 import warnings
 warnings.filterwarnings(
@@ -33,6 +33,18 @@ warnings.filterwarnings(
     category=FutureWarning,
     module="plotly"
 )
+
+# Matplotlib figures are saved as PNGs under FIGURES_DIR and embedded as
+# static images, instead of relying on quarto's default figure capture.
+FIGURES_DIR = "figures"
+os.makedirs(FIGURES_DIR, exist_ok=True)
+
+def save_fig(fig, name):
+    import matplotlib.pyplot as plt
+    path = f"{FIGURES_DIR}/{name}.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return Markdown(f"![]({path})")
 
 # Loading data
 ## reading sample metadata
@@ -131,6 +143,7 @@ def plot_giana_tables_per_patient(meta_df, giana_dir, subject_col, timepoint_col
             margin=dict(l=10, r=10, t=50, b=10),
             width=max(total_table_width, 1000)
         )
+        name_slug = "".join(c if c.isalnum() else "_" for c in title).strip("_")
         fig.show()
 
     # --- Start the Quarto Tabset ---
@@ -396,8 +409,8 @@ fig = go.Figure(go.Sunburst(
 
 fig.update_layout(
     title_text="TCR Cluster Contribution by Sample",
-    font_size=16, title_font_size=24, title_x=0.5, 
-    margin=dict(t=50, l=0, r=0, b=0) 
+    font_size=16, title_font_size=24, title_x=0.5,
+    margin=dict(t=50, l=0, r=0, b=0)
 )
 fig.show()
 
@@ -523,7 +536,7 @@ if valid_patients:
                 # -------------------------------------------------------
                 
                 plt.suptitle(f"Cluster Sharing over Time: {patient}", fontsize=14)
-                plt.show()
+                display(save_fig(fig, f"giana_upset_{patient}"))
             except Exception as e:
                 print(f"\n*Could not generate plot for {patient}: {e}*\n")
                 

@@ -28,5 +28,6 @@ workflow REPORT {
     )
 
     emit:
-        RENDER_NOTEBOOK.out
+        report_html = RENDER_NOTEBOOK.out.report_html
+        figures     = RENDER_NOTEBOOK.out.figures
 }
