@@ -3,29 +3,31 @@
  *
  * Unified spine (see IMPLEMENTATION_SPEC.md §1.3). Both routes converge after their
  * pseudobulk step into: PSEUDOBULK_QC → ANNOTATE → full shared bulk engine
- * (SAMPLE + PATIENT + COMPARE) → repertoire/summary.
+ * (SAMPLE + PATIENT + COMPARE + report notebooks) → CLONOTYPE_CLUSTERING (shared with
+ * bulk) → repertoire/summary.
  *
  *   Full SC   (--input_annotated_object provided):
  *     VDJ_QC → TCELL_INTEGRATION → SC_TO_CDR3 (phenotype pseudobulk)
  *            → PSEUDOBULK_QC → ANNOTATE
- *            → SAMPLE + PATIENT + COMPARE            (shared engine, full route)
- *            → CLUSTER_TO_SC → CONGA → CONSENSUS     (cell-level, GEX-only)
+ *            → SAMPLE + PATIENT + COMPARE + report notebooks   (shared engine)
+ *            → CLUSTER_TO_SC → CONSENSUS → CLUSTER_ROLLUP       (shared, on the Seurat)
+ *            → CONGA, TCRI                                      (GEX-only)
  *            → REPERTOIRE (cell-level) → MASTER_SUMMARY (full)
  *
  *   VDJ-only  (--input_annotated_object absent):
  *     VDJ_QC → VDJ_TO_BULK (pseudobulk from contigs)
  *            → PSEUDOBULK_QC → ANNOTATE
- *            → SAMPLE + PATIENT + COMPARE            (shared engine, full route)
- *            → BULK_TO_EXPORT (clonotype-level per-cell export)
+ *            → SAMPLE + PATIENT + COMPARE + report notebooks   (shared engine)
+ *            → BULK_TO_EXPORT (per-cell export from clonotypes)
+ *            → CLUSTER_TO_SC → CONSENSUS → CLUSTER_ROLLUP       (shared, table-only)
  *            → REPERTOIRE (clonotype-level) → MASTER_SUMMARY (CoNGA-excluded)
- *            (only CLUSTER_TO_SC / CONGA / CONSENSUS are skipped — they need the GEX substrate)
+ *            (only TCELL_INTEGRATION / CONGA / TCRI are skipped — they need the GEX substrate)
  */
 
 // ── Single-cell subworkflows (SCRATCH) ────────────────────────────────────
 include { VDJ_QC_SW }            from '../subworkflows/scratch/vdj_qc.nf'
 include { TCELL_INTEGRATION_SW } from '../subworkflows/scratch/tcell_integration.nf'
 include { CONGA_SW }             from '../subworkflows/scratch/conga.nf'
-include { CONSENSUS_SW }         from '../subworkflows/scratch/consensus_clustering.nf'
 include { REPERTOIRE_SW }        from '../subworkflows/scratch/repertoire.nf'
 include { TCRI_SW }             from '../subworkflows/scratch/tcri.nf'
 include { MASTER_SUMMARY_SW }    from '../subworkflows/scratch/master_summary.nf'
@@ -33,15 +35,17 @@ include { MASTER_SUMMARY_SW }    from '../subworkflows/scratch/master_summary.nf
 // ── Bridges (SC ↔ bulk-engine schema conversion) ──────────────────────────
 include { SC_TO_CDR3_SW }        from '../subworkflows/bridges/sc_to_cdr3.nf'
 include { VDJ_TO_BULK_SW }       from '../subworkflows/bridges/vdj_to_bulk.nf'
-include { CLUSTER_TO_SC_SW }     from '../subworkflows/bridges/cluster_to_sc.nf'
 include { SC_SAMPLE_STATS }      from '../modules/bridges/sc_sample_stats.nf'
+include { SC_REPORT_SAMPLESHEET } from '../modules/bridges/sc_report_samplesheet.nf'
+include { SC_REPORT_BUNDLE }     from '../modules/bridges/sc_report_bundle.nf'
 include { BULK_TO_EXPORT }       from '../modules/bridges/bulk_to_export.nf'
-include { CLUSTER_ROLLUP }       from '../modules/bridges/cluster_rollup.nf'
 include { MERGE_VDJ_OBJECT }     from '../modules/bridges/merge_vdj_object.nf'
 
 // ── Shared bulk-TCR analysis engine (main/local — unchanged behavior) ─────
 include { PSEUDOBULK_QC_SW }  from '../subworkflows/local/pseudobulk_qc.nf'
 include { BULKTCR_ANALYSIS }  from '../subworkflows/local/bulktcr_analysis.nf'
+include { CLONOTYPE_CLUSTERING } from '../subworkflows/local/clonotype_clustering.nf'
+include { REPORT }            from '../subworkflows/local/report.nf'
 
 // A workflow-local `def enabled = { x -> ... }` closure isn't visible from
 // inside nested if-blocks under this Nextflow version's strict-syntax parser
@@ -75,7 +79,7 @@ workflow TCRTOOLKIT_SC {
 
     if (vdjOnly) {
         log.info "==> VDJ-only mode: no GEX annotated object provided. " +
-                 "TCELL_INTEGRATION / CLUSTER_TO_SC / CONGA will be skipped."
+                 "TCELL_INTEGRATION / CONGA / TCRI will be skipped."
     }
 
     ch_sample_sheet  = channel.fromPath(params.sample_sheet, checkIfExists: true)
@@ -133,48 +137,81 @@ workflow TCRTOOLKIT_SC {
 
     // ── Step 4+5: shared bulk-TCR analysis engine (Option A — no truncation) ──
     // Synthesize the pre-filter-stats sidecar so SC data can use the shared engine's
-    // 4-arg SAMPLE step. Reports stay off (run_reports: false) — the shared bulk report
-    // templates assume bulk-samplesheet metadata (origin/timepoint) that single-cell-derived
-    // samplesheets don't reliably carry. Single-cell reporting is handled by REPERTOIRE +
-    // MASTER_SUMMARY (below).
+    // 4-arg SAMPLE step.
     SC_SAMPLE_STATS( PSEUDOBULK_QC_SW.out.sample_map )
+
+    // The report notebooks (QC / discovery brief / details) read a bulk-style samplesheet
+    // (sample, alias, patient, timepoint, origin, file). Build one per QC-passing unit from
+    // the pseudobulk meta + the user's SC sample sheet. For {sample}__{phenotype} units the
+    // base sample is the unit name minus the phenotype suffix.
+    def ch_units = PSEUDOBULK_QC_SW.out.sample_map
+        .map { meta, f ->
+            def unit  = meta.sample.toString()
+            def phen  = (meta.phenotype ?: '').toString()
+            def base  = (phen && unit.endsWith("__${phen}")) ? unit[0..<(unit.length() - phen.length() - 2)] : unit
+            [unit, base, (meta.patient_id ?: '').toString(), phen, f.name].join('\t')
+        }
+        .collectFile(name: 'report_units.tsv', newLine: true, sort: true,
+                     seed: ['unit', 'sample', 'patient_id', 'phenotype', 'file'].join('\t'))
+    SC_REPORT_SAMPLESHEET(
+        ch_units,
+        params.sample_sheet ? file(params.sample_sheet) : nofile,
+        vdjOnly ? channel.value(nofile) : tcell_out.export_cells
+    )
+    def report_samplesheet = SC_REPORT_SAMPLESHEET.out.samplesheet.first()
+
+    // The discovery brief's VDJdb section reads each unit's clonotype table, staged as
+    // <sample>_airr.tsv (the same [meta, file] pairs bulk passes from CONVERT).
+    def report_clonotype_files = PSEUDOBULK_QC_SW.out.sample_map.collect(flat: false).ifEmpty([])
 
     BULKTCR_ANALYSIS(
         PSEUDOBULK_QC_SW.out.sample_map,
         SC_SAMPLE_STATS.out.pre_filter_stats,
         PSEUDOBULK_QC_SW.out.concat_cdr3,
         ['sample', 'patient', 'compare'],
-        false,
-        channel.value([])
+        enabled(params.run_reports),
+        report_clonotype_files,
+        report_samplesheet
     )
 
     def concat_cdr3_sorted = BULKTCR_ANALYSIS.out.concat_cdr3_sorted
 
-    // ── Step 6: cell-level clustering — FULL-SC ONLY (needs the GEX/Seurat substrate) ──
-    // Produces the enriched/consensus Seurat + export that REPERTOIRE / MASTER_SUMMARY use
-    // when a GEX object is present. In VDJ-only mode this whole block is skipped and a
-    // clonotype-level export is synthesized instead (below).
+    // ── Step 6: clonotype export → cluster mapping → consensus → rollups ─────
+    // Shared with the bulk modality (CLONOTYPE_CLUSTERING). With a GEX object it maps
+    // clusters onto the Seurat; without one it works on a per-cell export synthesised
+    // from the pseudobulk.
     conga_report     = channel.empty()
-    consensus_report = channel.empty()
     // Collected tables/ per module for the Master Summary; stay empty where skipped.
     tcell_tables     = channel.empty()
     conga_tables     = channel.empty()
-    consensus_tables = channel.empty()
     tcri_tables      = channel.empty()
     tcri_report      = channel.empty()
 
+    if (vdjOnly) {
+        BULK_TO_EXPORT( concat_cdr3_sorted, sc_samplesheet, 'cell' )
+    } else {
+        tcell_tables = tcell_out.tables
+    }
+    def cluster_export = vdjOnly ? BULK_TO_EXPORT.out.export_cells : tcell_out.export_cells
+
+    CLONOTYPE_CLUSTERING(
+        vdjOnly ? channel.value(nofile) : tcell_out.seurat_tcells_with_tcr,
+        !vdjOnly,
+        cluster_export,
+        BULKTCR_ANALYSIS.out.giana_clusters,
+        BULKTCR_ANALYSIS.out.gliph2_cluster_details,
+        BULKTCR_ANALYSIS.out.tcrdist_clone_df,
+        BULKTCR_ANALYSIS.out.tcrdist_output,
+        ch_project_name
+    )
+    consensus_report = CLONOTYPE_CLUSTERING.out.consensus_report
+    consensus_tables = CLONOTYPE_CLUSTERING.out.consensus_tables
+    rep_seurat       = CLONOTYPE_CLUSTERING.out.rep_seurat
+    rep_export       = CLONOTYPE_CLUSTERING.out.rep_export
+
+    // ── Step 6b: GEX-only cell-level analyses ─────────────────────────────
     if (!vdjOnly) {
-        // Reuse tcrdist3 outputs computed inside SAMPLE (no second run).
-        CLUSTER_TO_SC_SW(
-            tcell_out.seurat_tcells_with_tcr,
-            tcell_out.export_cells,
-            BULKTCR_ANALYSIS.out.giana_clusters,
-            BULKTCR_ANALYSIS.out.gliph2_cluster_details,
-            BULKTCR_ANALYSIS.out.tcrdist_clone_df,
-            BULKTCR_ANALYSIS.out.tcrdist_output.map { _meta, f -> f }
-        )
-        enriched_seurat = CLUSTER_TO_SC_SW.out.enriched_seurat
-        tcell_tables    = tcell_out.tables
+        def enriched_seurat = CLONOTYPE_CLUSTERING.out.enriched_seurat
 
         if (enabled(params.run_conga)) {
             conga_out    = CONGA_SW( enriched_seurat, tcell_out.export_cells, ch_project_name )
@@ -189,28 +226,6 @@ workflow TCRTOOLKIT_SC {
             tcri_tables = tcri_out.tables
             tcri_report = tcri_out.report_html
         }
-
-        if (enabled(params.run_consensus)) {
-            def gliph2_export  = CLUSTER_TO_SC_SW.out.gliph2_export.ifEmpty(nofile)
-            def tcrdist_export = CLUSTER_TO_SC_SW.out.tcrdist_export.ifEmpty(nofile)
-            def giana_export   = CLUSTER_TO_SC_SW.out.giana_export.ifEmpty(nofile)
-            CONSENSUS_SW(
-                enriched_seurat, tcell_out.export_cells,
-                gliph2_export, tcrdist_export, giana_export, ch_project_name
-            )
-            consensus_report = CONSENSUS_SW.out.report_html
-            consensus_tables = CONSENSUS_SW.out.tables
-        }
-
-        rep_seurat = enabled(params.run_consensus) ? CONSENSUS_SW.out.seurat_with_consensus : enriched_seurat
-        rep_export = enabled(params.run_consensus) ? CONSENSUS_SW.out.export_cells          : tcell_out.export_cells
-
-    } else {
-        // VDJ-only: no Seurat. Build a clonotype-level per-cell export from the pseudobulk
-        // so REPERTOIRE / MASTER_SUMMARY run without a GEX object (CoNGA/consensus skipped).
-        BULK_TO_EXPORT( concat_cdr3_sorted, sc_samplesheet )
-        rep_seurat = channel.fromPath("${projectDir}/assets/NO_FILE")
-        rep_export = BULK_TO_EXPORT.out.export_cells
     }
 
     // ── Step 7: REPERTOIRE + MASTER_SUMMARY — BOTH routes ─────────────────
@@ -224,18 +239,29 @@ workflow TCRTOOLKIT_SC {
         repertoire_tables = REPERTOIRE_SW.out.tables
     }
 
-    // ── Step 7b: rollups for GIANA / GLIPH2 / TCRdist3 ────────────────────
-    // These three write raw per-patient / per-sample output but no rollup table, so the
-    // Master Summary had nothing to read for them and they always reported as absent.
-    CLUSTER_ROLLUP(
-        BULKTCR_ANALYSIS.out.giana_clusters.collect().ifEmpty([]),
-        BULKTCR_ANALYSIS.out.gliph2_cluster_details.collect().ifEmpty([]),
-        BULKTCR_ANALYSIS.out.tcrdist_clone_df.collect().ifEmpty([]),
-        BULKTCR_ANALYSIS.out.tcrdist_output.map { _meta, f -> f }.collect().ifEmpty([]),
-        rep_export,
-        channel.fromPath("${projectDir}/bin/cluster_rollup.py", checkIfExists: true),
-        ch_project_name
-    )
+    // ── Step 7a: report notebooks + their single-cell sections ───────────
+    // The QC / discovery-brief / details notebooks come from the shared engine; each gets
+    // its _sc_*.qmd section appended, reading the SC module tables bundled here.
+    if (enabled(params.run_reports)) {
+        SC_REPORT_BUNDLE(
+            cluster_export.mix(rep_export).unique().collect(),
+            // Per-sample summaries only - the contig-level tables are large and unused.
+            vdj_qc_out.qc_tables.flatten()
+                .filter { f -> !(f.name.startsWith('contigs_') || f.name == 'clonotypes_all.tsv') }
+                .collect().ifEmpty([]),
+            channel.empty().mix(PSEUDOBULK_QC_SW.out.qc_summary, PSEUDOBULK_QC_SW.out.v_family)
+                .collect().ifEmpty([]),
+            tcell_tables.flatten().collect().ifEmpty([]),
+            mergedvdj_tables.flatten().collect().ifEmpty([]),
+            consensus_tables.flatten().collect().ifEmpty([]),
+            CLONOTYPE_CLUSTERING.out.rollup_tables,
+            conga_tables.flatten().collect().ifEmpty([]),
+            tcri_tables.flatten().collect().ifEmpty([]),
+            repertoire_tables.flatten().collect().ifEmpty([]),
+            vdjOnly ? 'vdj_only' : 'full'
+        )
+        REPORT( BULKTCR_ANALYSIS.out.reports, report_samplesheet, SC_REPORT_BUNDLE.out.bundle )
+    }
 
     if (enabled(params.run_master_summary)) {
         master_barrier = channel.empty()
@@ -248,21 +274,7 @@ workflow TCRTOOLKIT_SC {
         def sample_stats_agg = BULKTCR_ANALYSIS.out.sample_csv
             .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
 
-        def rollup_tables = channel.empty()
-            .mix(CLUSTER_ROLLUP.out.giana_summary,
-                 CLUSTER_ROLLUP.out.gliph2_summary,
-                 CLUSTER_ROLLUP.out.tcrdist3_summary,
-                 CLUSTER_ROLLUP.out.method_presence,
-                 CLUSTER_ROLLUP.out.method_cluster_counts,
-                 CLUSTER_ROLLUP.out.annotation_giana,
-                 CLUSTER_ROLLUP.out.annotation_gliph2,
-                 CLUSTER_ROLLUP.out.annotation_tcrdist3,
-                 CLUSTER_ROLLUP.out.giana_detail,
-                 CLUSTER_ROLLUP.out.gliph2_detail,
-                 CLUSTER_ROLLUP.out.tcrdist_detail,
-                 CLUSTER_ROLLUP.out.giana_vgene,
-                 CLUSTER_ROLLUP.out.gliph2_vgene)
-            .collect().ifEmpty([])
+        def rollup_tables = CLONOTYPE_CLUSTERING.out.rollup_tables
 
         def pseudobulk_tables = channel.empty()
             .mix(PSEUDOBULK_QC_SW.out.qc_summary, PSEUDOBULK_QC_SW.out.v_family)

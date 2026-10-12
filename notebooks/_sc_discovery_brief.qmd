@@ -1,0 +1,198 @@
+{{< include ./_sc_common.qmd >}}
+
+# Single-cell highlights {#sec-sc-highlights}
+
+::: {.callout-note collapse="true"}
+## About this section
+This section is added because the run used **single-cell** TCR data. Everything above treats
+each sample as a bulk repertoire (one count = one cell). Here the clonotypes are linked back to
+the cells that carry them, which shows *which cell states* the expanded, persistent and
+dynamically changing clones occupy. When a GEX object was supplied it also shows the two
+TCR-to-transcriptome analyses:
+
+- **CoNGA** finds clonotypes whose TCR-sequence neighbours are also their transcriptional
+  neighbours. Shared receptor similarity and shared cell state together suggest a common
+  antigen-driven programme.
+- **TCRi** predicts, from the receptor sequence alone, which phenotype a T cell is likely to
+  adopt, and scores how strongly the receptor encodes that bias.
+
+Patients rarely share a sampling schedule. Every longitudinal panel places samples on the
+cohort-wide timepoint order and draws only the timepoints and compartments each patient
+actually has.
+:::
+
+## Which cell states carry the clonal expansion {#sec-sc-expansion-states}
+
+```{python}
+#| output: asis
+#| echo: false
+
+if sc_tcr is None:
+    sc_note("No per-cell table is available for this run.")
+elif not sc_has_annot:
+    sc_note("No cell-type annotation is available (VDJ-only route), so expansion cannot be "
+            "broken down by cell state. The clone size distributions are in the bulk-style "
+            "sections above.")
+else:
+    d = (sc_tcr.groupby(['sample', 'annot'])
+               .agg(cells=('cell_id', 'size'), expanded=('expanded', 'mean'))
+               .reset_index())
+    d = d[d['cells'] >= SC_MIN_CELLS]
+    top = sc_tcr['annot'].value_counts().index[:20]
+    d = d[d['annot'].isin(top)]
+    if d.empty:
+        sc_note(f"No sample × cell-state group reaches {SC_MIN_CELLS} TCR+ cells.")
+    else:
+        d['label'] = d['sample'].map(sc_alias).fillna(d['sample'])
+        cols = [sc_alias.get(s, s) for s in sc_sample_order if s in set(d['sample'])]
+        rows = (d.groupby('annot')['expanded'].mean().sort_values(ascending=False).index.tolist())
+        mat = d.pivot(index='annot', columns='label', values='expanded').reindex(index=rows, columns=cols)
+        n = d.pivot(index='annot', columns='label', values='cells').reindex(index=rows, columns=cols)
+        fig = go.Figure(go.Heatmap(
+            z=mat.values, x=cols, y=rows, colorscale='YlOrRd', zmin=0, zmax=1,
+            colorbar=dict(title='Expanded', tickformat='.0%'),
+            customdata=n.values,
+            hovertemplate='%{y}<br>%{x}<br>%{z:.1%} of %{customdata} cells in expanded clones<extra></extra>'))
+        # Patient boundaries make the per-patient blocks readable.
+        pats = [sc_meta.set_index(alias_col)[subject_col].get(c, '') for c in cols]
+        for i in range(1, len(cols)):
+            if pats[i] != pats[i - 1]:
+                fig.add_vline(x=i - 0.5, line_color='black', line_width=1)
+        fig.update_layout(title=f'Fraction of TCR+ cells in expanded clones (≥{SC_EXPANDED_MIN} cells in the sample)',
+                          xaxis_title='Sample (grouped by patient, ordered by timepoint)', yaxis_title='')
+        sc_show(fig, height=max(SC_HEIGHT, 26 * len(rows) + 160))
+```
+**Figure SC-H1. Clonal expansion by cell state.** For each sample (column) and annotated cell state (row), the colour is the fraction of TCR+ cells belonging to a clone with at least two cells in that sample. Groups with fewer than 10 TCR+ cells are blank, and vertical lines separate patients. Effector and exhausted states usually carry most of the expansion while naive cells stay unexpanded. Look for states whose expansion grows or shrinks across a patient's timepoints, or differs between blood and tissue at the same timepoint.
+
+## Cell states of clones that expand or contract over time {#sec-sc-dynamics-states}
+
+```{python}
+#| output: asis
+#| echo: false
+
+_cd_dir = globals().get('clonal_dynamics_dir', os.path.join(project_dir, 'clonal_dynamics'))
+
+def _read_cd(name):
+    p = os.path.join(_cd_dir, name)
+    if not os.path.isfile(p) or os.path.getsize(p) <= 1:
+        return pd.DataFrame()
+    return pd.read_csv(p)
+
+_exp, _con = _read_cd('expanded_clones_summary.csv'), _read_cd('contracting_clones_summary.csv')
+
+if sc_tcr is None or not sc_has_annot:
+    sc_note("Needs cell-type annotations (a GEX object) to describe the cells of expanding "
+            "and contracting clones.")
+elif _exp.empty and _con.empty:
+    sc_note("No clone expanded or contracted significantly between two timepoints of the same "
+            "patient and compartment. Either no patient was sampled at two timepoints in the same "
+            "compartment, or none of the changes passed the test.")
+else:
+    status = []
+    for lab, tab in (('Expanding', _exp), ('Contracting', _con)):
+        if not tab.empty and {'junction_aa', subject_col} <= set(tab.columns):
+            status.append(tab[[subject_col, 'junction_aa']].drop_duplicates().assign(status=lab))
+    status = pd.concat(status, ignore_index=True)
+    # A CDR3 can be called expanding in one compartment and contracting in another.
+    status = (status.groupby([subject_col, 'junction_aa'])['status']
+                    .agg(lambda s: s.iloc[0] if s.nunique() == 1 else 'Both').reset_index())
+    c = sc_tcr.merge(status.rename(columns={'junction_aa': 'cdr3b'}), on=[subject_col, 'cdr3b'], how='left')
+    c['status'] = c['status'].fillna(pd.Series(np.where(c['expanded'], 'Other expanded', 'Not expanded'), index=c.index))
+    d = c.groupby([subject_col, 'status', 'annot']).size().rename('cells').reset_index()
+    d['frac'] = d['cells'] / d.groupby([subject_col, 'status'])['cells'].transform('sum')
+    top = sc_tcr['annot'].value_counts().index[:12]
+    d['annot'] = d['annot'].where(d['annot'].isin(top), 'Other')
+    d = d.groupby([subject_col, 'status', 'annot'], as_index=False)[['cells', 'frac']].sum()
+    order = ['Expanding', 'Contracting', 'Both', 'Other expanded', 'Not expanded']
+    pats = [p for p in sc_patients if p in set(d[subject_col])]
+    fig = px.bar(d, x='status', y='frac', color='annot', facet_col=subject_col, facet_col_wrap=4,
+                 category_orders={'status': [o for o in order if o in set(d['status'])],
+                                  subject_col: pats},
+                 color_discrete_map=sc_annot_colors(d['annot'].unique()),
+                 hover_data={'cells': True, 'frac': ':.1%'},
+                 labels={'status': '', 'frac': 'Fraction of cells', 'annot': 'Annotation'},
+                 title='Cell states of significantly expanding and contracting clones')
+    fig.update_yaxes(tickformat='.0%')
+    fig.for_each_annotation(lambda a: a.update(text=a.text.split('=')[-1]))
+    sc_show(fig, height=max(SC_HEIGHT, 330 * int(np.ceil(len(pats) / 4))))
+    n_exp = status[status['status'] == 'Expanding'].shape[0]
+    n_con = status[status['status'] == 'Contracting'].shape[0]
+    print(f"{n_exp} expanding and {n_con} contracting clonotypes (patient × CDR3β) from the "
+          "Clonal Dynamics analysis were matched to their cells.\n")
+```
+**Figure SC-H2. Phenotypes behind the clonal dynamics.** Clones were called expanding or contracting by the Clonal Dynamics analysis: a significant frequency change between two timepoints of the same patient and compartment (Fisher's exact test, FDR < 0.05). Here those clones are traced back to their cells across all of the patient's samples. *Other expanded* are clones with ≥2 cells in a sample that did not reach significance, which happens mostly when a patient has a single timepoint. A treatment-induced response typically shows expanding clones enriched for effector/cytotoxic or exhausted states and contracting clones drifting toward memory or naive states.
+
+## CoNGA: clones with matching TCR and transcriptional neighbourhoods {#sec-sc-conga-headline}
+
+```{python}
+#| output: asis
+#| echo: false
+
+if not sc_has_conga:
+    sc_note("CoNGA did not run for this run (it needs a GEX object), or produced no scores.")
+else:
+    t = sc_tcr.dropna(subset=['conga_score'])
+    d = (t.groupby(['sample', subject_col, 'origin', 'tp_rank', 'tp_label', alias_col])
+          .agg(cells=('cell_id', 'size'), hits=('conga_hit', 'sum')).reset_index())
+    d['frac_hits'] = d['hits'] / d['cells']
+    sc_trajectory(d, 'frac_hits', 'Share of TCR+ cells in CoNGA hit clonotypes',
+                  'CoNGA hits', hover_cols=['cells', 'hits'], yfmt='.0%')
+
+    hits = t[t['conga_hit']]
+    if hits.empty:
+        sc_note("No clonotype reached CoNGA significance (score < 1).")
+    else:
+        g = (hits.groupby([subject_col, 'clone_id'])
+                 .agg(best_score=('conga_score', 'min'), cells=('cell_id', 'size'),
+                      state=('annot', lambda s: s.value_counts().index[0]),
+                      samples=('tp_label', lambda s: ', '.join(sorted(set(s), key=lambda x: sc_tp_rank.get(x, 99)))),
+                      origins=('origin', lambda s: ', '.join(sorted(set(s)))))
+                 .reset_index().sort_values(['best_score', 'cells'], ascending=[True, False]))
+        g['clone'] = sc_beta(g['clone_id'])
+        g['best_score'] = g['best_score'].map(lambda v: f'{v:.2e}')
+        display(Markdown("**Table SC-H1. Strongest CoNGA hit clonotypes** (top 20, ordered by CoNGA score; lower is stronger)."))
+        display(HTML(g[[subject_col, 'clone', 'cells', 'state', 'samples', 'origins', 'best_score']]
+                     .head(20).rename(columns={'clone': 'CDR3β', 'state': 'dominant state',
+                                               'samples': 'timepoints', 'best_score': 'CoNGA score'})
+                     .to_html(index=False, classes='table table-sm table-striped')))
+```
+**Figure SC-H3. CoNGA hits over time.** One panel per patient, showing the share of TCR+ cells in clonotypes with a significant CoNGA score (< 1, Bonferroni-adjusted). Lines join the timepoints each patient was sampled at, separately for each compartment, and patients sampled once appear as single points. A rising share means more of the repertoire sits in receptor groups with coherent transcriptional states, typical of a focused antigen-driven response. The table lists the strongest hits with the timepoints and compartments where their cells were found.
+
+## TCRi: phenotype bias encoded in the receptor {#sec-sc-tcri-headline}
+
+```{python}
+#| output: asis
+#| echo: false
+
+if not sc_has_tcri:
+    sc_note("TCRi did not run for this run (it needs a GEX object), or produced no scores.")
+else:
+    t = sc_tcr.dropna(subset=['tcri_score'])
+    t = t.assign(high=t['tcri_group'].astype(str).eq('High') if 'tcri_group' in t.columns else False)
+    d = (t.groupby(['sample', subject_col, 'origin', 'tp_rank', 'tp_label', alias_col])
+          .agg(cells=('cell_id', 'size'), mean_score=('tcri_score', 'mean'), frac_high=('high', 'mean'))
+          .reset_index())
+    print("::: {.panel-tabset}\n")
+    print("## Mean TCRi score\n")
+    sc_trajectory(d, 'mean_score', 'Mean TCRi score of TCR+ cells', 'Mean TCRi score', hover_cols=['cells'])
+    print("## High-TCRi fraction\n")
+    sc_trajectory(d, 'frac_high', 'Share of TCR+ cells in the High TCRi group', 'High TCRi', hover_cols=['cells'], yfmt='.0%')
+    print(":::\n")
+
+    g = (t[t['expanded']].groupby([subject_col, 'clone_id'])
+           .agg(mean_score=('tcri_score', 'mean'), cells=('cell_id', 'size'),
+                predicted=('tcri_predicted_phenotype', lambda s: s.value_counts().index[0] if s.notna().any() else ''),
+                observed=('annot', lambda s: s.value_counts().index[0]),
+                timepoints=('tp_label', lambda s: ', '.join(sorted(set(s), key=lambda x: sc_tp_rank.get(x, 99)))))
+           .reset_index().sort_values(['mean_score', 'cells'], ascending=False))
+    if not g.empty:
+        g['clone'] = sc_beta(g['clone_id'])
+        g['mean_score'] = g['mean_score'].round(3)
+        display(Markdown("**Table SC-H2. Expanded clones with the strongest TCRi signal** (top 20)."))
+        display(HTML(g[[subject_col, 'clone', 'cells', 'mean_score', 'predicted', 'observed', 'timepoints']]
+                     .head(20).rename(columns={'clone': 'CDR3β', 'mean_score': 'mean TCRi',
+                                               'predicted': 'TCRi-predicted state',
+                                               'observed': 'observed state'})
+                     .to_html(index=False, classes='table table-sm table-striped')))
+```
+**Figure SC-H4. TCRi over time.** One panel per patient, showing the mean TCRi score (how strongly the receptors encode a phenotype bias) and the share of cells in the *High* TCRi group, per sample. The table lists expanded clones with the strongest TCRi signal and compares the phenotype TCRi predicts from the receptor with the one observed from the transcriptome. Agreement means a receptor-intrinsic fate bias. Disagreement means the clone's state is driven by its environment rather than by its receptor.

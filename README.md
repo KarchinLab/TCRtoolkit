@@ -80,6 +80,11 @@ Certain sub-reports are automatically appended based on input and workflow optio
 - `--input_format adaptive` → includes bulk phenotype report
 - `--workflow_level` includes `sample` and `patient` → renders `template_details_patient.qmd` (patient-level clonotype analysis)
 - `--use_gliph2` → additionally includes GLIPH2 clustering in the patient details report
+- `--mode singlecell` → the same five notebooks are rendered, each with a single-cell section appended (`notebooks/_sc_*.qmd`): VDJ / GEX-matching QC, cell states of expanded and dynamically changing clones, CoNGA and TCRi, blood vs tissue, clone tracking over time, and cell-level consensus clusters. The report samplesheet is built from `--sample_sheet` (`patient_id`, `timepoint`, `origin`/`tissue` columns).
+
+### Clonotype clustering and Master Summary (both modalities)
+
+After the cohort comparison, both modalities run the same chain: a per-cell (single-cell) or per-clonotype (bulk) export → `CLUSTER_TO_SC` (GIANA / GLIPH2 / TCRdist3 clusters mapped onto those rows) → `CONSENSUS_CLUSTERING` → `CLUSTER_ROLLUP` → `MASTER_SUMMARY`. Without a GEX object these steps run on the export table alone. Bulk runs need `compare` plus `sample` and/or `patient`; disable with `--run_clonotype_clustering false`.
 
 ## Key Parameters
  

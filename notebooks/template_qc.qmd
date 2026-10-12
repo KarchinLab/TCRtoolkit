@@ -2339,3 +2339,6 @@ print(qc_table)
 print("\nThe following samples had a metric that deviates from the rest (|z-score|>3):\n")
 print(flags)
 ```
+
+<!-- Single-cell section: the real one with SC data, an empty stub otherwise (subworkflows/local/report.nf). -->
+{{< include ./_sc_qc.qmd >}}

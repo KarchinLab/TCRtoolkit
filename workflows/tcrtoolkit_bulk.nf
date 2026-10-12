@@ -10,6 +10,12 @@ include { CONVERT }             from '../subworkflows/local/convert'
 include { VALIDATE_PARAMS }     from '../subworkflows/local/validate_params'
 include { ANNOTATE_INGEST }     from '../subworkflows/local/annotate'
 include { BULKTCR_ANALYSIS }    from '../subworkflows/local/bulktcr_analysis'
+include { CLONOTYPE_CLUSTERING } from '../subworkflows/local/clonotype_clustering'
+include { BULK_TO_EXPORT }      from '../modules/bridges/bulk_to_export'
+include { MASTER_SUMMARY_SW }   from '../subworkflows/scratch/master_summary'
+include { REPORT }              from '../subworkflows/local/report'
+
+def enabled(x) { x == null || x == true }
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -73,7 +79,7 @@ workflow TCRTOOLKIT_BULK {
     // Bulk reports are sample-centric. Compare- and patient-dependent sections are
     // added only when those workflow levels are present. Change this once reports do
     // not always require sample workflow.
-    def run_reports = levels.contains('sample')
+    def run_reports = levels.contains('sample') && enabled(params.run_reports)
 
     // --- Main Analysis ---
     if (levels.intersect(['sample','patient','compare'])) {
@@ -85,8 +91,70 @@ workflow TCRTOOLKIT_BULK {
             ANNOTATE_INGEST.out.concat_cdr3,
             levels,
             run_reports,
-            convert_files
+            convert_files,
+            channel.value(file(params.samplesheet))
         )
+
+        // Report notebooks; NO_FILE = no single-cell data, so the SC sections stay empty.
+        REPORT(
+            BULKTCR_ANALYSIS.out.reports,
+            channel.value(file(params.samplesheet)),
+            channel.value(file("${projectDir}/assets/NO_FILE"))
+        )
+
+        // --- Clonotype export -> cluster mapping -> consensus -> Master Summary ---
+        // The same downstream chain the single-cell modality runs, after the cohort
+        // comparison. There is no GEX object, so it runs on a clonotype-level export
+        // (one row per sample x clonotype; bulk counts are reads/templates, too many to
+        // expand into one row each).
+        // Needs SAMPLE (TCRdist3) and/or PATIENT (GIANA, GLIPH2) for anything to cluster.
+        def has_clusters = levels.contains('sample') || levels.contains('patient')
+        if (levels.contains('compare') && has_clusters && enabled(params.run_clonotype_clustering)) {
+            def nofile = file("${projectDir}/assets/NO_FILE")
+            def ch_project_name = channel.value(params.project_name)
+
+            BULK_TO_EXPORT(
+                BULKTCR_ANALYSIS.out.concat_cdr3_sorted,
+                file(params.samplesheet),
+                'clonotype'
+            )
+
+            CLONOTYPE_CLUSTERING(
+                channel.value(nofile),
+                false,
+                BULK_TO_EXPORT.out.export_cells,
+                BULKTCR_ANALYSIS.out.giana_clusters,
+                BULKTCR_ANALYSIS.out.gliph2_cluster_details,
+                BULKTCR_ANALYSIS.out.tcrdist_clone_df,
+                BULKTCR_ANALYSIS.out.tcrdist_output,
+                ch_project_name
+            )
+
+            if (enabled(params.run_master_summary)) {
+                def sample_stats_agg = BULKTCR_ANALYSIS.out.sample_csv
+                    .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
+
+                MASTER_SUMMARY_SW(
+                    channel.value(nofile),
+                    CLONOTYPE_CLUSTERING.out.rep_export,
+                    channel.value([]),
+                    channel.value([]),
+                    channel.empty()
+                        .mix(sample_stats_agg, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
+                        .collect().ifEmpty([]),
+                    BULKTCR_ANALYSIS.out.shared_cdr3.flatten().collect().ifEmpty([]),
+                    CLONOTYPE_CLUSTERING.out.rollup_tables,
+                    channel.value([]),
+                    channel.value([]),
+                    channel.value([]),
+                    CLONOTYPE_CLUSTERING.out.consensus_tables.flatten().collect().ifEmpty([]),
+                    channel.value([]),
+                    channel.value([]),
+                    CLONOTYPE_CLUSTERING.out.consensus_report.collect().ifEmpty([nofile]),
+                    ch_project_name
+                )
+            }
+        }
     }
 }
 

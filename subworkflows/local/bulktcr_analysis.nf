@@ -9,7 +9,6 @@ include { ANNOTATE } from './annotate'
 include { SAMPLE }   from './sample'
 include { PATIENT }  from './patient'
 include { COMPARE }  from './compare'
-include { REPORT }   from './report'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -20,10 +19,11 @@ include { REPORT }   from './report'
     subworkflow rather than importing ANNOTATE/SAMPLE/PATIENT/COMPARE individually.
 
     `levels` preserves TCRTOOLKIT_BULK's --workflow_level partial-run feature (which of
-    sample/patient/compare to run). `run_reports` gates the 4 bulk report notebooks:
-    bulk's report templates assume samplesheet columns (origin/timepoint) that
-    single-cell-derived samplesheets don't reliably carry, so SC callers pass
-    run_reports: false and use their own REPERTOIRE/MASTER_SUMMARY reports instead.
+    sample/patient/compare to run). `run_reports` gates the report notebooks: their
+    [notebook, files, staged_layout] tuples are emitted as `reports` and rendered by the
+    caller through REPORT, which appends the single-cell sections when there is SC data.
+    `report_samplesheet` (sample, alias, patient, timepoint, origin, file) is the user's
+    samplesheet for bulk, and one synthesised by SC_REPORT_SAMPLESHEET for single-cell.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
@@ -33,9 +33,10 @@ workflow BULKTCR_ANALYSIS {
     per_sample_stats    // channel [meta, file]: pre_filter_stats.csv per unit
     concat_cdr3         // path: pre-concatenated CDR3 table across units
     levels              // list, e.g. ['sample','patient','compare'] - which stages to run
-    run_reports         // bool: render the 4 bulk report notebooks?
-    convert_files       // channel: list of converted-input files for the discovery-brief
-                         //   report (bulk-only; SC callers pass channel.value([]))
+    run_reports         // bool: render the report notebooks?
+    convert_files       // channel: list of [meta, file] clonotype tables for the
+                         //   discovery-brief report's VDJdb section
+    report_samplesheet  // value channel: samplesheet the report notebooks read
 
     main:
     ANNOTATE( sample_map, concat_cdr3 )
@@ -61,6 +62,7 @@ workflow BULKTCR_ANALYSIS {
 
     def ch_shared_cdr3 = channel.empty()
     def ch_clonal_dynamics_files = channel.value([])
+    def ch_reports = channel.empty()
 
     if (levels.contains('sample')) {
         SAMPLE(
@@ -97,7 +99,8 @@ workflow BULKTCR_ANALYSIS {
     if (levels.contains('compare')) {
         COMPARE(
             ANNOTATE.out.concat_cdr3_sorted,
-            ANNOTATE.out.cdr3_pgen
+            ANNOTATE.out.cdr3_pgen,
+            report_samplesheet
         )
 
         ch_shared_cdr3 = COMPARE.out.shared_cdr3
@@ -105,7 +108,6 @@ workflow BULKTCR_ANALYSIS {
     }
 
     if (run_reports && levels.contains('sample')) {
-        ch_reports = channel.empty()
 
         def sample_stats_agg = ch_sample_csv
             .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
@@ -262,8 +264,6 @@ workflow BULKTCR_ANALYSIS {
                 }
             ch_reports = ch_reports.mix(ch_details_patient_report)
         }
-
-        REPORT( ch_reports )
     }
 
     emit:
@@ -293,4 +293,6 @@ workflow BULKTCR_ANALYSIS {
 
     shared_cdr3 = ch_shared_cdr3
     clonal_dynamics_files = ch_clonal_dynamics_files
+
+    reports = ch_reports
 }

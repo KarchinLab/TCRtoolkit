@@ -106,3 +106,6 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 
 {{< include ./template_sample.qmd >}}
 
+
+<!-- Single-cell section: the real one with SC data, an empty stub otherwise (subworkflows/local/report.nf). -->
+{{< include ./_sc_details_sample.qmd >}}

@@ -115,3 +115,6 @@ Patient-level clonotype clustering (GIANA and GLIPH2) is reported separately in
 the **Patient Details** report (`template_details_patient.html`), which is
 generated when `sample` and `patient` are both included in `--workflow_level`.
 :::
+
+<!-- Single-cell section: the real one with SC data, an empty stub otherwise (subworkflows/local/report.nf). -->
+{{< include ./_sc_details_compare.qmd >}}

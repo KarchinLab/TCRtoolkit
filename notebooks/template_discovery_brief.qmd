@@ -2286,3 +2286,6 @@ plot_public_clones_upset(concat_df, subject_col=subject_col, min_shared_patients
 **Figure 8. UpSet plot of public TCR clones**. This plot illustrates the intersection of unique CDR3b sequences shared among multiple individuals. The horizontal bars on the left indicate the total number of unique clones identified in each individual patient. In the central matrix, connected black dots denote the specific combination of patients sharing a subset of clones. The vertical bars at the top represent the intersection size, indicating the exact number of public clones shared exclusively by the patients marked in the corresponding column below.
 
 {{< include ./template_pheno.qmd >}}
+
+<!-- Single-cell section: the real one with SC data, an empty stub otherwise (subworkflows/local/report.nf). -->
+{{< include ./_sc_discovery_brief.qmd >}}

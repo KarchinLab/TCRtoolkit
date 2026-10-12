@@ -1,0 +1,267 @@
+{{< include ./_sc_common.qmd >}}
+
+# Single-cell longitudinal and compartment comparison {#sec-sc-compare}
+
+::: {.callout-note collapse="true"}
+## About this section
+This section is added because the run used **single-cell** TCR data. The overlap, sharing and
+clonal-dynamics analyses above follow clones between samples by frequency. Here the same
+comparisons are made at cell level: how a patient's cell-state make-up changes over time, what
+happens to the phenotype of clones found in more than one sample, how much of a tissue
+repertoire is also detected in blood, and how specific clones (the largest, the CoNGA hits,
+the high-TCRi clones) change in frequency across a patient's samples.
+
+**Uneven sampling.** Patients are compared only with themselves. A clone counts as *absent*
+only from samples that were actually collected: timepoints or compartments a patient was never
+sampled at are left blank, never treated as zero.
+:::
+
+## Cell-state composition over time {#sec-sc-composition-time}
+
+```{python}
+#| output: asis
+#| echo: false
+
+def _composition(p):
+    d = sc_tcr[sc_tcr[subject_col] == p]
+    top = sc_tcr['annot'].value_counts().index[:12]
+    d = d.assign(annot=d['annot'].where(d['annot'].isin(top), 'Other'))
+    g = d.groupby(['origin', 'tp_label', 'tp_rank', 'sample', 'annot']).size().rename('cells').reset_index()
+    g['frac'] = g['cells'] / g.groupby('sample')['cells'].transform('sum')
+    tps = g.sort_values('tp_rank')['tp_label'].unique().tolist()
+    origins = sorted(g['origin'].unique())
+    fig = px.bar(g, x='tp_label', y='frac', color='annot', facet_row='origin' if len(origins) > 1 else None,
+                 category_orders={'tp_label': tps, 'origin': origins},
+                 color_discrete_map=sc_annot_colors(list(top) + ['Other']),
+                 hover_data={'cells': True, 'frac': ':.1%', 'sample': True},
+                 labels={'tp_label': 'Timepoint', 'frac': 'Fraction of TCR+ cells', 'annot': 'Annotation'},
+                 title=f'{p}: cell-state composition of TCR+ cells')
+    fig.update_yaxes(tickformat='.0%')
+    fig.for_each_annotation(lambda a: a.update(text=a.text.split('=')[-1]))
+    sc_show(fig, height=max(SC_HEIGHT, 260 * len(origins) + 120))
+
+if sc_tcr is None or not sc_has_annot:
+    sc_note("Needs cell-type annotations (a GEX object).")
+else:
+    sc_patient_tabs(_composition)
+```
+**Figure SC-C1. Cell-state composition over time.** The TCR+ cells of each sample, split by annotation, with one row per compartment. Only timepoints at which the patient was sampled in that compartment appear. Shifts between timepoints, for example from naive/memory toward effector or exhausted states, show the repertoire being remodelled. Comparing rows at the same timepoint contrasts blood with tissue.
+
+## Phenotypic fate of persistent clones {#sec-sc-fate}
+
+```{python}
+#| output: asis
+#| echo: false
+
+def _fate(p):
+    d = sc_tcr[(sc_tcr[subject_col] == p)]
+    samples = (sc_meta[(sc_meta[subject_col] == p) & sc_meta['base_sample'].isin(d['sample'])]
+               .sort_values(['tp_rank', 'origin'])['base_sample'].tolist())
+    if len(samples) < 2:
+        print("Only one sample for this patient: there is nothing to follow a clone into.\n")
+        return
+    dom = (d.groupby(['sample', 'clone_id'])['annot']
+            .agg(lambda s: s.value_counts().index[0]).rename('state').reset_index())
+    states = sorted(dom['state'].unique())
+    colors = sc_annot_colors(sc_tcr['annot'].unique())
+    nodes, node_idx = [], {}
+    for i, s in enumerate(samples):
+        for st in states:
+            node_idx[(s, st)] = len(nodes)
+            nodes.append(dict(label=st, x=i / max(len(samples) - 1, 1), sample=sc_alias.get(s, s)))
+    src, tgt, val = [], [], []
+    for a, b in zip(samples[:-1], samples[1:]):
+        m = dom[dom['sample'] == a].merge(dom[dom['sample'] == b], on='clone_id', suffixes=('_a', '_b'))
+        for (sa, sb), n in m.groupby(['state_a', 'state_b']).size().items():
+            src.append(node_idx[(a, sa)]); tgt.append(node_idx[(b, sb)]); val.append(int(n))
+    if not val:
+        print("No clone of this patient was detected in two consecutive samples.\n")
+        return
+    used = sorted(set(src) | set(tgt))
+    remap = {o: i for i, o in enumerate(used)}
+    nn = [nodes[i] for i in used]
+    # Plotly only honours node x when y is given too (otherwise a node with no incoming
+    # flow jumps to the first column), so stack each column's nodes by their flow.
+    flow = pd.Series(0.0, index=used)
+    for a, b, v in zip(src, tgt, val):
+        flow[a] += v; flow[b] += v
+    ys = {}
+    for x in sorted({n['x'] for n in nn}):
+        col = [o for o in used if nodes[o]['x'] == x]
+        # Floor each slot at 6% of the column so small states keep readable labels.
+        slot = flow[col].clip(lower=0.06 * flow[col].sum())
+        tot, cum = slot.sum(), 0.0
+        for o in col:
+            ys[o] = 0.02 + 0.96 * (cum + slot[o] / 2) / tot
+            cum += slot[o]
+    fig = go.Figure(go.Sankey(
+        arrangement='fixed',
+        node=dict(label=[n['label'] for n in nn], x=[min(max(n['x'], 0.001), 0.999) for n in nn],
+                  y=[min(max(ys[o], 0.001), 0.999) for o in used],
+                  color=[colors.get(n['label'], '#999') for n in nn], pad=12, thickness=14,
+                  customdata=[n['sample'] for n in nn],
+                  hovertemplate='%{customdata}<br>%{label}: %{value} clones<extra></extra>'),
+        link=dict(source=[remap[x] for x in src], target=[remap[x] for x in tgt], value=val,
+                  color='rgba(150,150,150,0.35)',
+                  hovertemplate='%{source.label} → %{target.label}: %{value} clones<extra></extra>')))
+    labels = [f"{sc_alias.get(s, s)}" for s in samples]
+    for i, lab in enumerate(labels):
+        fig.add_annotation(x=i / max(len(samples) - 1, 1), y=1.08, xref='paper', yref='paper',
+                           text=f'<b>{lab}</b>', showarrow=False, font=dict(size=11))
+    fig.update_layout(title=f'{p}: dominant state of clones shared between consecutive samples')
+    sc_show(fig, height=max(SC_HEIGHT, 30 * len(states) + 260))
+
+if sc_tcr is None or not sc_has_annot:
+    sc_note("Needs cell-type annotations (a GEX object).")
+else:
+    sc_patient_tabs(_fate)
+```
+**Figure SC-C2. Phenotypic fate of persistent clones.** The patient's samples are columns, ordered by timepoint and then compartment, so at a single timepoint blood and tissue sit next to each other. Each flow joins a clone detected in two consecutive samples, going from its dominant state in the first sample to its dominant state in the second, with width proportional to the number of clones. Horizontal flows within one state show phenotypic stability. Diagonal flows show clones changing state, for example memory clones whose cells have become effector or exhausted at a later timepoint, or blood clones that look different once in tissue.
+
+## Blood and tissue {#sec-sc-blood-tissue}
+
+```{python}
+#| output: asis
+#| echo: false
+
+_blood_like = sc_meta['origin'].str.contains('blood|pbmc|periph|plasma', case=False, regex=True)
+_blood = set(sc_meta.loc[_blood_like, 'origin'])
+if sc_tcr is None:
+    sc_note("No per-cell table is available.")
+elif not _blood or _blood == set(sc_origins):
+    sc_note("This comparison needs both blood (an origin containing *blood*, *PBMC* or "
+            "*peripheral*) and a tissue compartment in the samplesheet's `origin` column.")
+else:
+    rows = []
+    for p in sc_patients:
+        d = sc_tcr[sc_tcr[subject_col] == p]
+        bl = d[d['origin'].isin(_blood)]
+        if bl.empty:
+            continue
+        any_blood = set(bl['cdr3b'].dropna())
+        for s, sd in d[~d['origin'].isin(_blood)].groupby('sample'):
+            tp = sd['tp_label'].iloc[0]
+            same = set(bl.loc[bl['tp_label'] == tp, 'cdr3b'].dropna())
+            row = dict(patient=p, sample=s, label=sc_alias.get(s, s), timepoint=tp,
+                       cells=len(sd), any=sd['cdr3b'].isin(any_blood).mean(),
+                       expanded_any=sd.loc[sd['expanded'], 'cdr3b'].isin(any_blood).mean() if sd['expanded'].any() else np.nan)
+            row['same'] = sd['cdr3b'].isin(same).mean() if same else np.nan
+            rows.append(row)
+    if not rows:
+        sc_note("No patient has both a blood and a tissue sample.")
+    else:
+        r = pd.DataFrame(rows)
+        long = r.melt(id_vars=['patient', 'label', 'timepoint', 'cells'],
+                      value_vars=['same', 'any', 'expanded_any'], var_name='ref', value_name='frac').dropna()
+        long['ref'] = long['ref'].map({'same': 'in same-timepoint blood', 'any': 'in any blood sample',
+                                       'expanded_any': 'expanded tissue clones, in any blood'})
+        order = [sc_alias.get(s, s) for s in sc_sample_order if sc_alias.get(s, s) in set(long['label'])]
+        fig = px.bar(long, x='label', y='frac', color='ref', barmode='group',
+                     category_orders={'label': order},
+                     color_discrete_sequence=['#66c2a5', '#3288bd', '#d53e4f'],
+                     hover_data={'patient': True, 'timepoint': True, 'cells': True, 'frac': ':.1%'},
+                     labels={'label': 'Tissue sample', 'frac': 'Fraction of tissue TCR+ cells', 'ref': ''},
+                     title='Tissue TCR+ cells whose clone is also detected in blood')
+        fig.update_yaxes(tickformat='.0%', range=[0, 1])
+        sc_show(fig)
+
+        if sc_has_annot:
+            d = sc_tcr[~sc_tcr['origin'].isin(_blood)].copy()
+            shared = []
+            for p, pdf in d.groupby(subject_col):
+                bl = set(sc_tcr[(sc_tcr[subject_col] == p) & sc_tcr['origin'].isin(_blood)]['cdr3b'].dropna())
+                if bl:
+                    shared.append(pdf.assign(blood=np.where(pdf['cdr3b'].isin(bl), 'Also in blood', 'Tissue-restricted')))
+            if shared:
+                d = pd.concat(shared)
+                top = sc_tcr['annot'].value_counts().index[:12]
+                d['annot'] = d['annot'].where(d['annot'].isin(top), 'Other')
+                g = d.groupby([subject_col, 'blood', 'annot']).size().rename('cells').reset_index()
+                g['frac'] = g['cells'] / g.groupby([subject_col, 'blood'])['cells'].transform('sum')
+                pats = sorted(g[subject_col].unique())
+                fig = px.bar(g, x='blood', y='frac', color='annot', facet_col=subject_col,
+                             facet_col_wrap=min(4, len(pats)), category_orders={subject_col: pats},
+                             color_discrete_map=sc_annot_colors(list(top) + ['Other']),
+                             hover_data={'cells': True, 'frac': ':.1%'},
+                             labels={'blood': '', 'frac': 'Fraction of tissue TCR+ cells', 'annot': 'Annotation'},
+                             title='Cell states of tissue clones shared with blood vs tissue-restricted')
+                fig.update_yaxes(tickformat='.0%')
+                fig.for_each_annotation(lambda a: a.update(text=a.text.split('=')[-1]))
+                sc_show(fig, height=max(SC_HEIGHT, 330 * int(np.ceil(len(pats) / 4))))
+```
+**Figure SC-C3. Blood and tissue.** The bars show, for each tissue sample, the fraction of its TCR+ cells whose clone (CDR3β) is also detected in the same patient's blood: at the same timepoint (when blood was collected then), at any timepoint, and among expanded tissue clones only. The stacked bars compare the cell states of tissue cells from blood-shared and tissue-restricted clones. Expanded tissue clones that are detectable in blood are candidates for blood-based monitoring of the tissue response. Tissue-restricted clones are often tissue-resident (T~RM~-like) or exhausted.
+
+## Following individual clones over time {#sec-sc-clone-tracking}
+
+```{python}
+#| output: asis
+#| echo: false
+
+def _track(p, kind):
+    d = sc_tcr[sc_tcr[subject_col] == p]
+    if kind == 'expanded':
+        clones = d[d['expanded']]['clone_id'].value_counts().index[:SC_TOP_CLONES]
+    elif kind == 'conga':
+        h = d[d['conga_hit']] if 'conga_hit' in d.columns else d.iloc[0:0]
+        clones = h.groupby('clone_id')['conga_score'].min().sort_values().index[:SC_TOP_CLONES]
+    else:
+        h = d[d['tcri_group'].astype(str).eq('High')] if 'tcri_group' in d.columns else d.iloc[0:0]
+        clones = h['clone_id'].value_counts().index[:SC_TOP_CLONES]
+    if len(clones) == 0:
+        print("No clones of this kind for this patient.\n")
+        return
+    # Frequency in every sample the patient HAS (absent -> 0), never in samples it lacks.
+    tot = d.groupby('sample').size()
+    grid = pd.MultiIndex.from_product([tot.index, clones], names=['sample', 'clone_id']).to_frame(index=False)
+    cnt = d[d['clone_id'].isin(clones)].groupby(['sample', 'clone_id']).agg(
+        cells=('cell_id', 'size'), state=('annot', lambda s: s.value_counts().index[0])).reset_index()
+    g = grid.merge(cnt, on=['sample', 'clone_id'], how='left').fillna({'cells': 0, 'state': '—'})
+    g['freq'] = g['cells'] / g['sample'].map(tot)
+    g = g.merge(sc_meta[['base_sample', 'tp_rank', 'tp_label', 'origin']].rename(columns={'base_sample': 'sample'}),
+                on='sample', how='left')
+    g['clone'] = g['clone_id'].astype(str).map(sc_clone_labels(clones))
+    origins = sorted(g['origin'].unique())
+    fig = make_subplots(rows=1, cols=len(origins), subplot_titles=origins, shared_yaxes=True,
+                        horizontal_spacing=0.05)
+    pal = px.colors.qualitative.Dark24
+    for j, o in enumerate(origins):
+        od = g[g['origin'] == o]
+        for k, cl in enumerate(clones):
+            cd = od[od['clone_id'] == cl].sort_values('tp_rank')
+            lab = cd['clone'].iloc[0] if len(cd) else str(cl)
+            fig.add_trace(go.Scatter(
+                x=cd['tp_rank'], y=cd['freq'], mode='lines+markers', name=lab, legendgroup=lab,
+                showlegend=j == 0, line=dict(color=pal[k % len(pal)]), marker=dict(size=8),
+                hovertext=(lab + '<br>' + cd['tp_label'] + ' · ' + o + '<br>' + cd['cells'].astype(int).astype(str)
+                           + ' cells (' + (100 * cd['freq']).round(2).astype(str) + '%)<br>state: ' + cd['state']),
+                hoverinfo='text'), row=1, col=j + 1)
+    fig.update_xaxes(tickmode='array', tickvals=list(range(len(sc_tp_order))), ticktext=sc_tp_order,
+                     range=[-0.5, max(len(sc_tp_order) - 0.5, 0.5)])
+    fig.update_yaxes(tickformat='.1%', title_text='Share of TCR+ cells', col=1)
+    title = {'expanded': 'largest clones', 'conga': 'strongest CoNGA hit clones',
+             'tcri': 'clones with most High-TCRi cells'}[kind]
+    fig.update_layout(title=f'{p}: {title} across samples', legend_title_text='Clone (CDR3β)')
+    sc_show(fig, height=460)
+
+if sc_tcr is None:
+    sc_note("No per-cell table is available.")
+else:
+    kinds = [('expanded', 'Largest clones')]
+    if sc_has_conga:
+        kinds.append(('conga', 'CoNGA hits'))
+    if sc_has_tcri:
+        kinds.append(('tcri', 'High TCRi'))
+
+    def _track_tabs(p):
+        if len(kinds) == 1:
+            _track(p, kinds[0][0])
+            return
+        print("::: {.panel-tabset}\n")
+        for k, lab in kinds:
+            print(f"### {lab}\n")
+            _track(p, k)
+        print(":::\n")
+
+    sc_patient_tabs(_track_tabs)
+```
+**Figure SC-C4. Individual clones across a patient's samples.** One line per clone, showing its share of the sample's TCR+ cells at each sampled timepoint, with one panel per compartment. A clone not detected in a collected sample is drawn at 0. Timepoints with no sample are skipped, never drawn as 0. Hovering a point gives the clone's dominant cell state in that sample. The tabs select which clones are followed: the patient's largest clones, its strongest CoNGA hits, or the clones with most High-TCRi cells. Clones that persist across timepoints and appear in both blood and tissue are the most robust candidates for follow-up.

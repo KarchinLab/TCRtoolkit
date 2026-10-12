@@ -1,0 +1,215 @@
+{{< include ./_sc_common.qmd >}}
+
+# Single-cell details {#sec-sc-sample}
+
+::: {.callout-note collapse="true"}
+## About this section
+This section is added because the run used **single-cell** TCR data. The per-sample analyses
+above use each sample's pseudobulk. Here each clone is resolved into its cells, which shows
+where the clones sit on the transcriptional map, which cell states make up each sample's
+largest clones, and how uniform a clone's phenotype is. When a GEX object was supplied it also
+shows CoNGA and TCRi per cell state. Tabs are organised by patient, and each patient's samples
+are ordered by timepoint, then compartment.
+:::
+
+## Clonal expansion on the cell-state map {#sec-sc-embedding}
+
+```{python}
+#| output: asis
+#| echo: false
+
+def _embed_patient(p):
+    d = sc_cells[sc_cells[subject_col] == p]
+    order = [sc_alias.get(s, s) for s in sc_sample_order if s in set(d['sample'])]
+    d = sc_downsample(d, SC_MAX_POINTS // max(len(sc_patients), 1) + 2000, seed=1)
+    d = d.assign(label=d['sample'].map(sc_alias).fillna(d['sample']))
+    d = d.sort_values('clone_cells')   # expanded cells drawn last, on top
+    fig = px.scatter(d, x='emb_1', y='emb_2', color='size_bin', facet_col='label',
+                     facet_col_wrap=min(3, len(order)),
+                     category_orders={'label': order, 'size_bin': SC_SIZE_LABELS + ['no TCR']},
+                     color_discrete_map=dict(zip(SC_SIZE_LABELS + ['no TCR'], SC_SIZE_COLORS + [SC_NO_TCR_COLOR])),
+                     hover_data={'annot': True, 'clone_cells': True, 'emb_1': False, 'emb_2': False, 'label': False},
+                     labels={'size_bin': 'Clone size in sample', 'emb_1': '', 'emb_2': ''},
+                     render_mode='webgl')
+    fig.update_traces(marker=dict(size=3))
+    fig.for_each_annotation(lambda a: a.update(text=a.text.split('=')[-1]))
+    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
+    fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
+    fig.update_layout(title=f'{p}: cells coloured by clone size')
+    sc_show(fig, height=330 * int(np.ceil(len(order) / 3)) + 80)
+
+if sc_cells is None or not sc_has_emb:
+    sc_note("No transcriptional embedding is available (VDJ-only route): cells cannot be placed "
+            "on a cell-state map.")
+else:
+    sc_patient_tabs(_embed_patient)
+```
+**Figure SC-S1. Clonal expansion on the transcriptional map.** Every cell of the sample (grey: no productive TCR) on the GEX embedding, coloured by the size of its clone *within that sample*. Expanded clones that gather in one region of the map share a transcriptional programme. Expanded clones spread across regions span several states (for example effector and memory progeny of one clone). Compare panels to see the expansion move between states over a patient's timepoints, or differ between blood and tissue.
+
+## Cell-state make-up of the largest clones {#sec-sc-top-clones}
+
+```{python}
+#| output: asis
+#| echo: false
+
+def _top_clones_patient(p):
+    d = sc_tcr[(sc_tcr[subject_col] == p) & sc_tcr['expanded']]
+    samples = [s for s in sc_sample_order if s in set(d['sample'])]
+    if not samples:
+        print("No expanded clones in this patient.\n")
+        return
+    print("::: {.panel-tabset}\n")
+    for s in samples:
+        print(f"### {sc_alias.get(s, s)}\n")
+        sd = d[d['sample'] == s]
+        top = sd['clone_id'].value_counts().index[:15]
+        g = sd[sd['clone_id'].isin(top)].groupby(['clone_id', 'annot']).size().rename('cells').reset_index()
+        g['clone'] = g['clone_id'].astype(str).map(sc_clone_labels(top))
+        order = g.groupby('clone')['cells'].sum().sort_values().index.tolist()
+        fig = px.bar(g, y='clone', x='cells', color='annot', orientation='h',
+                     category_orders={'clone': order},
+                     color_discrete_map=sc_annot_colors(sc_tcr['annot'].unique()),
+                     labels={'clone': 'Clone (CDR3β)', 'cells': 'Cells', 'annot': 'Annotation'},
+                     title=f'{sc_alias.get(s, s)}: 15 largest clones')
+        sc_show(fig, height=max(SC_HEIGHT, 26 * len(order) + 140))
+    print(":::\n")
+
+if sc_tcr is None or not sc_has_annot:
+    sc_note("Needs cell-type annotations (a GEX object) to resolve clones into cell states.")
+else:
+    sc_patient_tabs(_top_clones_patient)
+```
+**Figure SC-S2. The largest clones of each sample, split by cell state.** Each bar is one clone, with its cells coloured by annotation. A single-colour bar is a phenotypically committed clone. A multi-colour bar is a clone whose progeny occupy several states, the usual signature of an ongoing response with effector and memory branches.
+
+## Phenotypic heterogeneity within clones {#sec-sc-heterogeneity}
+
+```{python}
+#| output: asis
+#| echo: false
+
+if sc_tcr is None or not sc_has_annot:
+    sc_note("Needs cell-type annotations (a GEX object).")
+else:
+    big = sc_tcr[sc_tcr['clone_cells'] >= 5]
+    if big.empty:
+        sc_note("No clone reaches 5 cells in a sample.")
+    else:
+        def _entropy(s):
+            p = s.value_counts(normalize=True).values
+            return float(-(p * np.log2(p)).sum())
+        h = (big.groupby(['sample', 'clone_id'])
+                .agg(cells=('cell_id', 'size'), entropy=('annot', _entropy),
+                     dominant=('annot', lambda s: s.value_counts().index[0]),
+                     dominant_frac=('annot', lambda s: s.value_counts(normalize=True).iloc[0]))
+                .reset_index())
+        h = h.merge(sc_meta[['base_sample', subject_col, 'tp_label', 'origin']]
+                    .rename(columns={'base_sample': 'sample'}), on='sample', how='left')
+        h['clone'] = sc_beta(h['clone_id'])
+        h['label'] = h['sample'].map(sc_alias).fillna(h['sample'])
+        pats = [p for p in sc_patients if p in set(h[subject_col])]
+        fig = px.scatter(h, x='cells', y='entropy', color='dominant', facet_col=subject_col,
+                         facet_col_wrap=min(4, len(pats)), log_x=True,
+                         category_orders={subject_col: pats},
+                         color_discrete_map=sc_annot_colors(sc_tcr['annot'].unique()),
+                         hover_data={'clone': True, 'label': True, 'tp_label': True, 'origin': True,
+                                     'dominant_frac': ':.0%'},
+                         labels={'cells': 'Cells in clone (sample)', 'entropy': 'Phenotype entropy (bits)',
+                                 'dominant': 'Dominant state', 'tp_label': 'timepoint'},
+                         title='Phenotypic diversity within clones of ≥5 cells')
+        fig.for_each_annotation(lambda a: a.update(text=a.text.split('=')[-1]))
+        fig.update_xaxes(tickvals=[5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000])
+        fig.update_traces(marker=dict(size=8, opacity=0.75, line=dict(width=0.5, color='white')))
+        sc_show(fig, height=max(SC_HEIGHT, 330 * int(np.ceil(len(pats) / 4))))
+```
+**Figure SC-S3. Phenotypic heterogeneity within clones.** One point per clone per sample (clones of ≥5 cells), showing the Shannon entropy of its cells' annotations: 0 means all cells share one state, and higher values mean the clone spans several states. Colour is the clone's dominant state. Large clones with low entropy are terminally committed (often effector or exhausted). Large clones with high entropy keep a multi-potent, memory-like structure.
+
+## CoNGA by cell state {#sec-sc-conga-states}
+
+```{python}
+#| output: asis
+#| echo: false
+
+if not sc_has_conga:
+    sc_note("CoNGA did not run for this run (it needs a GEX object), or produced no scores.")
+else:
+    t = sc_tcr.dropna(subset=['conga_score'])
+    d = (t.groupby(['sample', 'annot']).agg(cells=('cell_id', 'size'), hits=('conga_hit', 'mean'))
+          .reset_index())
+    d = d[d['cells'] >= SC_MIN_CELLS]
+    if d.empty or not d['hits'].gt(0).any():
+        sc_note("No CoNGA hits in any sample × cell-state group with enough cells.")
+    else:
+        d['label'] = d['sample'].map(sc_alias).fillna(d['sample'])
+        cols = [sc_alias.get(s, s) for s in sc_sample_order if s in set(d['sample'])]
+        rows = d.groupby('annot')['hits'].mean().sort_values(ascending=False).index[:25].tolist()
+        mat = d.pivot(index='annot', columns='label', values='hits').reindex(index=rows, columns=cols)
+        n = d.pivot(index='annot', columns='label', values='cells').reindex(index=rows, columns=cols)
+        fig = go.Figure(go.Heatmap(z=mat.values, x=cols, y=rows, colorscale='Purples', zmin=0,
+                                   colorbar=dict(title='CoNGA hits', tickformat='.0%'), customdata=n.values,
+                                   hovertemplate='%{y}<br>%{x}<br>%{z:.1%} of %{customdata} cells<extra></extra>'))
+        fig.update_layout(title='Share of TCR+ cells in CoNGA hit clonotypes, by cell state and sample')
+        sc_show(fig, height=max(SC_HEIGHT, 26 * len(rows) + 160))
+
+    if sc_has_emb:
+        e = sc_downsample(t, SC_MAX_POINTS, seed=2).copy()
+        # Non-hits (score >= 1) sit at 0; the scale tops out at the 99th percentile of hits
+        # so a handful of extreme scores do not wash out the rest.
+        e['neglog'] = -np.log10(pd.to_numeric(e['conga_score'], errors='coerce').clip(lower=1e-300, upper=1))
+        e = e.sort_values('neglog')
+        cmax = max(2.0, float(e.loc[e['neglog'] > 0, 'neglog'].quantile(0.99))) if (e['neglog'] > 0).any() else 2.0
+        fig = px.scatter(e, x='emb_1', y='emb_2', color='neglog', color_continuous_scale='Viridis',
+                         range_color=[0, cmax],
+                         hover_data={'annot': True, 'conga_score': ':.2e', 'emb_1': False, 'emb_2': False, 'neglog': False},
+                         labels={'neglog': '−log10 CoNGA', 'emb_1': '', 'emb_2': ''},
+                         title='CoNGA score on the cell-state map (all samples)', render_mode='webgl')
+        fig.update_traces(marker=dict(size=3))
+        fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
+        fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
+        fig.update_coloraxes(colorbar=dict(title='−log10 score<br>(>0 = hit)'))
+        sc_show(fig, height=520)
+```
+**Figure SC-S4. CoNGA by cell state.** The heatmap shows, for each sample and cell state, the share of TCR+ cells whose clonotype is a CoNGA hit (score < 1). The map colours every TCR+ cell by −log10 of its CoNGA score, so cells above 0 are hits and brighter cells are stronger hits. CoNGA hits that concentrate in one state point to a group of related receptors driving that programme. MAIT/iNKT-like invariant receptors are common hits in naive-like or innate states and are usually not antigen-specific.
+
+## TCRi: predicted versus observed phenotype {#sec-sc-tcri-confusion}
+
+```{python}
+#| output: asis
+#| echo: false
+
+def _tcri_conf(df, title):
+    d = df.dropna(subset=['tcri_predicted_phenotype'])
+    if d.empty:
+        print("No TCRi predictions.\n")
+        return
+    obs = d['annot'].value_counts().index[:15]
+    d = d[d['annot'].isin(obs)]
+    m = pd.crosstab(d['annot'], d['tcri_predicted_phenotype'])
+    frac = m.div(m.sum(axis=1), axis=0)
+    fig = go.Figure(go.Heatmap(z=frac.values, x=frac.columns.astype(str), y=frac.index.astype(str),
+                               colorscale='Blues', zmin=0, zmax=1, customdata=m.values,
+                               colorbar=dict(title='Row fraction', tickformat='.0%'),
+                               hovertemplate='observed %{y}<br>predicted %{x}<br>%{z:.1%} (%{customdata} cells)<extra></extra>'))
+    fig.update_layout(title=title, xaxis_title='TCRi-predicted phenotype', yaxis_title='Observed annotation')
+    sc_show(fig, height=max(SC_HEIGHT, 26 * len(frac) + 180))
+
+if not sc_has_tcri:
+    sc_note("TCRi did not run for this run (it needs a GEX object), or produced no scores.")
+else:
+    t = sc_tcr.dropna(subset=['tcri_score'])
+    print("::: {.panel-tabset}\n")
+    print("## All patients\n")
+    _tcri_conf(t, 'TCRi-predicted vs observed phenotype (all TCR+ cells)')
+    if len(sc_patients) > 1:
+        for p in sc_patients:
+            print(f"## {p}\n")
+            _tcri_conf(t[t[subject_col] == p], f'{p}: TCRi-predicted vs observed phenotype')
+    print(":::\n")
+
+    order = t.groupby('annot')['tcri_score'].median().sort_values(ascending=False).index[:15].tolist()
+    fig = px.box(t[t['annot'].isin(order)], x='annot', y='tcri_score', color='origin' if sc_multi_origin else None,
+                 category_orders={'annot': order}, points=False, color_discrete_map=sc_origin_colors,
+                 labels={'annot': '', 'tcri_score': 'TCRi score', 'origin': 'Origin'},
+                 title='TCRi score by observed cell state')
+    sc_show(fig, height=480)
+```
+**Figure SC-S5. TCRi.** The heatmap cross-tabulates the phenotype TCRi predicts from each receptor (columns) against the cell's observed annotation (rows), normalised per row. A strong diagonal means that, in this cohort, receptor sequence alone carries much of the information about cell fate. The box plot shows TCRi scores per observed state (split by compartment when there are several). States with high scores are those whose receptors are most distinctive.
