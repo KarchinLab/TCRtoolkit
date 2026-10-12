@@ -19,6 +19,7 @@ workflow COMPARE {
     take:
     concat_cdr3_sorted
     cdr3_pgen
+    samplesheet     // bulk-style samplesheet (patient / timepoint / origin per sample)
 
     main:
     TCRSHARING_OLGA_MERGE (concat_cdr3_sorted, cdr3_pgen)
@@ -29,7 +30,7 @@ workflow COMPARE {
 
     CLONAL_DYNAMICS(
         concat_cdr3_sorted,
-        file(params.samplesheet)
+        samplesheet
     )
 
     emit:

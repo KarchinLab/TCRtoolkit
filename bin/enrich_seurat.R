@@ -2,7 +2,8 @@
 # Bridge 2+: CLUSTER_TO_SC
 # Maps bulk GIANA / GLIPH2 / TCRdist3 cluster assignments onto single cells.
 # Adds metadata columns to the Seurat object and writes per-cell TSVs for
-# the Consensus Clustering module.
+# the Consensus Clustering module. The Seurat object is optional: without one
+# (bulk data, single-cell VDJ-only route) only the per-cell TSVs are written.
 #
 # Usage (called from within a Nextflow work directory):
 #   Rscript enrich_seurat.R \
@@ -11,7 +12,6 @@
 #       --tcrdist_radius <int>
 
 suppressPackageStartupMessages({
-    library(Seurat)
     library(dplyr)
     library(igraph)
     library(Matrix)
@@ -30,9 +30,12 @@ seurat_rds_path  <- get_arg(args, "--seurat_rds")
 export_cells_path <- get_arg(args, "--export_cells")
 tcrdist_radius   <- as.numeric(get_arg(args, "--tcrdist_radius", "24"))
 
-if (is.null(seurat_rds_path) || is.null(export_cells_path)) {
-    stop("Usage: enrich_seurat.R --seurat_rds <rds> --export_cells <tsv> [--tcrdist_radius <n>]")
+if (is.null(export_cells_path)) {
+    stop("Usage: enrich_seurat.R --export_cells <tsv> [--seurat_rds <rds>] [--tcrdist_radius <n>]")
 }
+# A staged NO_FILE placeholder (0 bytes) means "no GEX object".
+has_seurat <- !is.null(seurat_rds_path) && file.exists(seurat_rds_path) &&
+    file.size(seurat_rds_path) > 0
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 # scRepertoire's CTaa format is "A:<alpha_cdr3>|B:<beta_cdr3>" (pipe-delimited,
@@ -51,8 +54,13 @@ extract_beta_cdr3 <- function(ctaa) {
 }
 
 # ── Load inputs ───────────────────────────────────────────────────────────────
-message("[Bridge 2+] Loading Seurat object: ", seurat_rds_path)
-seurat_obj <- readRDS(seurat_rds_path)
+if (has_seurat) {
+    suppressPackageStartupMessages(library(Seurat))
+    message("[Bridge 2+] Loading Seurat object: ", seurat_rds_path)
+    seurat_obj <- readRDS(seurat_rds_path)
+} else {
+    message("[Bridge 2+] No Seurat object - writing per-cell cluster TSVs only")
+}
 
 message("[Bridge 2+] Loading export_cells: ", export_cells_path)
 cells <- tryCatch(
@@ -287,11 +295,13 @@ add_to_seurat <- function(seurat_obj, cells, cluster_map, col_name, barcode_col)
     seurat_obj
 }
 
-seurat_obj <- add_to_seurat(seurat_obj, cells, giana_map,   "giana_cluster",   barcode_col)
-seurat_obj <- add_to_seurat(seurat_obj, cells, gliph2_map,  "gliph2_cluster",  barcode_col)
-seurat_obj <- add_to_seurat(seurat_obj, cells, tcrdist_map, "tcrdist_cluster", barcode_col)
+if (has_seurat) {
+    seurat_obj <- add_to_seurat(seurat_obj, cells, giana_map,   "giana_cluster",   barcode_col)
+    seurat_obj <- add_to_seurat(seurat_obj, cells, gliph2_map,  "gliph2_cluster",  barcode_col)
+    seurat_obj <- add_to_seurat(seurat_obj, cells, tcrdist_map, "tcrdist_cluster", barcode_col)
 
-# ── Save enriched Seurat ──────────────────────────────────────────────────────
-message("[Bridge 2+] Saving enriched Seurat → enriched_seurat.rds")
-saveRDS(seurat_obj, "enriched_seurat.rds")
+    # ── Save enriched Seurat ──────────────────────────────────────────────────
+    message("[Bridge 2+] Saving enriched Seurat → enriched_seurat.rds")
+    saveRDS(seurat_obj, "enriched_seurat.rds")
+}
 message("[Bridge 2+] Done.")

@@ -10,6 +10,9 @@
  *   *_clone_df.csv                 - TCRdist3 per-sample clone table
  *   *_distance_matrix.*            - TCRdist3 per-sample distance matrix
  *
+ * The Seurat object is optional (NO_FILE on the VDJ-only route and for bulk data); then
+ * only the per-cell TSVs are written and enriched_seurat.rds is not emitted.
+ *
  * Outputs:
  *   enriched_seurat.rds        - Seurat with giana/gliph2/tcrdist cluster columns
  *   giana_export_cells.tsv     - per-cell TSV with giana_cluster column
@@ -34,7 +37,7 @@ process CLUSTER_TO_SC {
     val  tcrdist_radius
 
     output:
-    path "enriched_seurat.rds",       emit: enriched_seurat
+    path "enriched_seurat.rds",       emit: enriched_seurat, optional: true
     path "giana_export_cells.tsv",    emit: giana_export,    optional: true
     path "gliph2_export_cells.tsv",   emit: gliph2_export,   optional: true
     path "tcrdist_export_cells.tsv",  emit: tcrdist_export,  optional: true

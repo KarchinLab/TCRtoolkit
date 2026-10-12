@@ -164,12 +164,17 @@ def compute_dynamics(clonotypes_df, subject_col, origin_col, timepoint_col,
                 final_clones_df = final_clones_df[[c for c in cols if c in final_clones_df.columns]]
                 all_significant_results.append(final_clones_df)
 
-    counts_table = pd.DataFrame()
+    # Empty results still carry their header: a patient with one timepoint per origin
+    # (common - cohorts rarely share a sampling schedule) yields no comparisons, and a
+    # header-less CSV is unreadable downstream.
+    counts_table = pd.DataFrame(columns=[subject_col, origin_col, 't_pre', 't_post', count_key])
     if counts_list:
         counts_table = pd.concat(counts_list, ignore_index=True)
         counts_table = counts_table[[subject_col, origin_col, 't_pre', 't_post', count_key]]
 
-    detailed_table = pd.DataFrame()
+    detailed_table = pd.DataFrame(columns=CLONE_COLS + [
+        'count_pre', 'count_post', 'freq_pre', 'freq_post', 'total_pre', 'total_post',
+        'fold_change', 'p_value', subject_col, origin_col, 't_pre', 't_post', 'q_value'])
     if comparison_details:
         detailed_table = pd.concat(comparison_details, ignore_index=True)
         # fold_change is only ever inf for expansions (freq_pre == 0, a brand
@@ -180,7 +185,7 @@ def compute_dynamics(clonotypes_df, subject_col, origin_col, timepoint_col,
         for col in inf_cols:
             detailed_table[col] = detailed_table[col].replace([np.inf, -np.inf], np.nan)
 
-    summary_table = pd.DataFrame()
+    summary_table = pd.DataFrame(columns=[subject_col, origin_col] + CLONE_COLS)
     if all_significant_results:
         summary_table = pd.concat(all_significant_results, ignore_index=True).fillna(0)
         summary_table.rename(columns={t: f'freq_{t}' for t in summary_table.columns if t not in merge_cols}, inplace=True)

@@ -331,7 +331,17 @@
         "run_consensus": {
           "type": "boolean",
           "default": true,
-          "description": "Run consensus clustering (full-SC only)."
+          "description": "Run consensus clustering of GIANA / GLIPH2 / TCRdist3 (both modalities)."
+        },
+        "run_reports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Render the QC / discovery-brief / details report notebooks (both modalities)."
+        },
+        "run_clonotype_clustering": {
+          "type": "boolean",
+          "default": true,
+          "description": "Bulk: after COMPARE, run clonotype export -> CLUSTER_TO_SC -> consensus -> Master Summary."
         },
         "run_repertoire": {
           "type": "boolean",

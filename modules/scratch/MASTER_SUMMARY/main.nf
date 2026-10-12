@@ -43,6 +43,7 @@ process MASTER_SUMMARY {
 
     quarto render ${qmd} \\
       -P project_name="${project_name}" \\
+      -P modality="${(params.mode ?: 'bulk').toLowerCase()}" \\
       -P tables_dir="intables" \\
       -P seurat_rds="${seurat_rds}" \\
       -P export_cells_file="${export_cells}" \\

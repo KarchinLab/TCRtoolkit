@@ -18,6 +18,9 @@ execute:
   message: false
 params:
   project_name: "TCR-Toolkit-SCRATCH"
+  # "singlecell" or "bulk". Bulk runs have no cells: every export row is one sample x
+  # clonotype, so "cells" in this report then means clonotypes.
+  modality: "singlecell"
   outdir: "Master_Summary_Report"
 
   # Root of the staged per-module table directories (tables_dir/<module>/<file>).
@@ -342,7 +345,9 @@ clone_col   <- pick_col(export_cells, params$clone_id_col, params$clone_id_candi
 cons_col    <- pick_col(export_cells, params$consensus_cluster_col, params$consensus_cluster_candidates)
 
 has_gex <- !is.null(tcell_roll) || !is.null(cons_roll) || !is.null(conga_roll) || !is.null(tcri_roll)
-route   <- if (has_gex) "Full single-cell (GEX + VDJ)" else "VDJ-only (no GEX object)"
+is_bulk <- identical(tolower(as_str1(params$modality)), "bulk")
+route   <- if (is_bulk) "Bulk TCR repertoire (clonotype-level; no cells)" else
+           if (has_gex) "Full single-cell (GEX + VDJ)" else "VDJ-only (no GEX object)"
 ```
 
 ::: {.callout-tip appearance="simple"}

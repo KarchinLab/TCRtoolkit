@@ -304,9 +304,13 @@ first_existing_col <- function(df, preferred, candidates = character()) {
 # Input Loading
 ```{r}
 #| label: read-inputs
-require_file(params$seurat_rds, sprintf("Seurat RDS not found: %s", params$seurat_rds))
+# The Seurat object is optional. Without one (bulk data, or the single-cell VDJ-only
+# route; staged as a 0-byte NO_FILE) the consensus is built from the export table alone
+# and the embedding/Seurat-only steps are skipped.
+has_seurat <- !is.null(params$seurat_rds) && nzchar(as.character(params$seurat_rds)) &&
+  file.exists(params$seurat_rds) && file.size(params$seurat_rds) > 0
 
-seu <- readRDS(params$seurat_rds)
+seu <- if (has_seurat) readRDS(params$seurat_rds) else NULL
 export_cells_main <- safe_read_table(params$export_cells_file)
 gliph_export_tbl <- safe_read_table(params$gliph_export_cells_file)
 tcrdist_export_tbl <- safe_read_table(params$tcrdist_export_cells_file)
@@ -315,15 +319,20 @@ metadata_tbl <- safe_read_table(params$metadata_file)
 previous_summary_tbl <- safe_read_table(params$previous_summary_file)
 
 if (is.null(export_cells_main)) {
+  if (!has_seurat) stop("Neither a Seurat object nor an export_cells table was provided.")
   export_cells_main <- seu@meta.data %>% tibble::rownames_to_column("cell_id")
+}
+if (!has_seurat && !"cell_id" %in% colnames(export_cells_main)) {
+  stop("export_cells table must have a 'cell_id' column when no Seurat object is given.")
 }
 ```
 
 # Resolve Columns
 ```{r}
 #| label: resolve-columns
-md <- normalize_colnames(seu@meta.data)
-seu@meta.data <- md
+md <- if (has_seurat) normalize_colnames(seu@meta.data) else
+  normalize_colnames(as.data.frame(export_cells_main))
+if (has_seurat) seu@meta.data <- md
 
 label_col <- first_existing_col(md, params$label_col, params$label_candidates)
 sample_col <- first_existing_col(md, params$sample_col, params$sample_candidates)
@@ -346,13 +355,18 @@ giana_group_col <- first_existing_col(md, params$giana_group_col, params$giana_g
 if (is.null(label_col)) stop("Could not resolve an annotation label column in Seurat metadata.")
 if (is.null(sample_col)) stop("Could not resolve sample column in Seurat metadata.")
 if (is.null(patient_col)) stop("Could not resolve patient column in Seurat metadata.")
-if (is.null(condition_col)) stop("Could not resolve condition column in Seurat metadata.")
-if (is.null(timepoint_col)) stop("Could not resolve timepoint column in Seurat metadata.")
 if (is.null(clone_id_col)) stop("Could not resolve a clone ID column in Seurat metadata.")
 if (is.null(clone_size_col)) stop("Could not resolve a clone size column in Seurat metadata.")
-if (is.null(has_tcr_col)) stop("Could not resolve a has_tcr column in Seurat metadata.")
-if (is.null(paired_tcr_col)) stop("Could not resolve a paired_tcr column in Seurat metadata.")
+# Without a Seurat object the export table is the only metadata source, and condition /
+# timepoint / pairing are legitimately absent for bulk data - they become NA columns.
+if (has_seurat) {
+  if (is.null(condition_col)) stop("Could not resolve condition column in Seurat metadata.")
+  if (is.null(timepoint_col)) stop("Could not resolve timepoint column in Seurat metadata.")
+  if (is.null(has_tcr_col)) stop("Could not resolve a has_tcr column in Seurat metadata.")
+  if (is.null(paired_tcr_col)) stop("Could not resolve a paired_tcr column in Seurat metadata.")
+}
 
+if (has_seurat) {
 if (!"META_SAMPLE" %in% colnames(seu@meta.data) && !is.null(sample_col)) {
   seu$META_SAMPLE <- as.character(seu@meta.data[[sample_col]])
 }
@@ -367,6 +381,7 @@ if (!"META_TIMEPOINT" %in% colnames(seu@meta.data) && !is.null(timepoint_col)) {
 }
 if (!"META_BATCH" %in% colnames(seu@meta.data) && !is.null(batch_col)) {
   seu$META_BATCH <- as.character(seu@meta.data[[batch_col]])
+}
 }
 
 print(list(
@@ -394,6 +409,9 @@ print(list(
 ```{r}
 #| label: ensure-embedding
 reduction_to_use <- params$reduction_use
+if (!has_seurat) {
+  reduction_to_use <- "none"
+} else {
 if (!(reduction_to_use %in% names(seu@reductions)) && isTRUE(params$make_umap_if_missing)) {
   seu <- safe_make_umap(
     seu,
@@ -405,6 +423,7 @@ if (!(reduction_to_use %in% names(seu@reductions)) && isTRUE(params$make_umap_if
 if (!(reduction_to_use %in% names(seu@reductions))) {
   reduction_to_use <- if ("umap" %in% names(seu@reductions)) "umap" else if ("tsne" %in% names(seu@reductions)) "tsne" else if ("pca" %in% names(seu@reductions)) "pca" else stop("No usable embedding found.")
 }
+}
 ```
 
 # Build Export table
@@ -412,11 +431,19 @@ if (!(reduction_to_use %in% names(seu@reductions))) {
 # Build Export table
 ```{r}
 #| label: build-export
-embed_df <- as.data.frame(Embeddings(seu, reduction_to_use)) %>%
-  tibble::rownames_to_column("cell_id")
+embed_df <- if (has_seurat) {
+  as.data.frame(Embeddings(seu, reduction_to_use)) %>% tibble::rownames_to_column("cell_id")
+} else {
+  data.frame(cell_id = character())
+}
 
-export_cells <- seu@meta.data %>%
-  tibble::rownames_to_column("cell_id") %>%
+md_cells <- if (has_seurat) {
+  seu@meta.data %>% tibble::rownames_to_column("cell_id")
+} else {
+  md %>% mutate(cell_id = as.character(cell_id))
+}
+
+export_cells <- md_cells %>%
   transmute(
     cell_id,
     sample = if (!is.null(sample_col)) as.character(.data[[sample_col]]) else NA_character_,
@@ -477,7 +504,10 @@ if (!is.null(gliph_export_tbl) && "cell_id" %in% colnames(gliph_export_tbl)) {
     mutate(cell_id = as.character(cell_id)) %>%
     transmute(
       cell_id = cell_id,
-      gliph_cluster.gliph = if ("gliph_cluster" %in% colnames(.)) as.character(gliph_cluster) else NA_character_,
+      # CLUSTER_TO_SC writes the column as gliph2_cluster.
+      gliph_cluster.gliph = if ("gliph_cluster" %in% colnames(.)) as.character(gliph_cluster)
+                            else if ("gliph2_cluster" %in% colnames(.)) as.character(gliph2_cluster)
+                            else NA_character_,
       gliph_pattern.gliph = if ("gliph_pattern" %in% colnames(.)) as.character(gliph_pattern) else NA_character_,
       gliph_group.gliph = if ("gliph_group" %in% colnames(.)) as.character(gliph_group) else NA_character_,
       gliph_motif.gliph = if ("gliph_motif" %in% colnames(.)) as.character(gliph_motif) else NA_character_
@@ -590,21 +620,21 @@ consensus_base <- export_cells %>%
   )
 
 if (isTRUE(params$use_majority_vote)) {
-  consensus_base <- consensus_base %>%
-    rowwise() %>%
-    mutate(
-      consensus_raw = {
-        vals <- c(gliph_use, tcrdist_use, giana_use)
-        vals <- vals[!is.na(vals) & vals != ""]
-        if (length(vals) < params$consensus_min_methods) {
-          if (isTRUE(params$assign_singleton_consensus) && length(vals) == 1) vals[1] else NA_character_
-        } else {
-          tab <- sort(table(vals), decreasing = TRUE)
-          names(tab)[1]
-        }
-      }
-    ) %>%
-    ungroup()
+  # Vectorised form of the per-row vote (rowwise() does not scale to bulk data, which has
+  # one row per clonotype): the most frequent label wins; ties go to the alphabetically
+  # first label, as sort(table(vals), decreasing = TRUE) resolved them.
+  a <- consensus_base$gliph_use; b <- consensus_base$tcrdist_use; c3 <- consensus_base$giana_use
+  a[!is.na(a) & a == ""] <- NA; b[!is.na(b) & b == ""] <- NA; c3[!is.na(c3) & c3 == ""] <- NA
+  n_vals <- (!is.na(a)) + (!is.na(b)) + (!is.na(c3))
+  eq <- function(x, y) !is.na(x) & !is.na(y) & x == y
+  first_alpha <- suppressWarnings(pmin(a, b, c3, na.rm = TRUE))
+  voted <- ifelse(eq(a, b) | eq(a, c3), a, ifelse(eq(b, c3), b, first_alpha))
+  single <- if (isTRUE(params$assign_singleton_consensus)) first_alpha else NA_character_
+  consensus_base$consensus_raw <- ifelse(
+    n_vals == 0, NA_character_,
+    ifelse(n_vals < params$consensus_min_methods,
+           ifelse(n_vals == 1, single, NA_character_),
+           voted))
 } else {
   consensus_base <- consensus_base %>%
     mutate(
@@ -626,11 +656,17 @@ export_cells <- consensus_base %>%
   left_join(consensus_map, by = "consensus_raw")
 
 save_table_safe(consensus_map, "consensus_cluster_map.tsv")
+
+# Re-write the export now that it carries the consensus labels: the copy written in
+# build-export predates them, so downstream consumers (REPERTOIRE, MASTER_SUMMARY, the
+# report notebooks) never saw a consensus_cluster column.
+save_table_safe(export_cells, "consensus_export_cells.tsv")
 ```
 
 # Merge consensus back into Seurat
 ```{r}
 #| label: merge-consensus-into-seurat
+if (has_seurat) {
 seu_md <- seu@meta.data %>%
   tibble::rownames_to_column("cell_id") %>%
   left_join(
@@ -644,6 +680,7 @@ seu_md$cell_id <- NULL
 seu@meta.data <- as.data.frame(seu_md)
 
 save_rds_safe(seu, "seurat_with_consensus_clonotype_clusters.rds")
+}
 ```
 
 # Summary Tables
@@ -869,7 +906,9 @@ if (isTRUE(params$show_method_overlap_heatmap)) {
 #| fig-width: 12
 #| fig-height: 9
 
-if (isTRUE(params$show_consensus_umap) && any(!is.na(export_cells$consensus_cluster))) {
+if (!has_seurat) {
+  cat("No embedding overlay: no GEX/Seurat object was provided for this run.\n")
+} else if (isTRUE(params$show_consensus_umap) && any(!is.na(export_cells$consensus_cluster))) {
   p_consensus <- DimPlot(
     seu,
     reduction = reduction_to_use,
