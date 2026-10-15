@@ -1,0 +1,456 @@
+# Single-cell GEX: cell states and clonal programmes {#sec-sc-gex}
+
+::: {.callout-note collapse="true"}
+## About this section
+This section is present because the run supplied an annotated GEX object
+(`--input_annotated_object`). It joins every receptor to its cell's transcriptional state and
+asks which states carry the clonal expansion, which clones span several states, what the
+expanded cells express, and where CoNGA and TCRi place them. It is rendered both inside the
+Master Summary and as the standalone `SC_GEX_Report.html`.
+:::
+
+```{r}
+#| label: gex-load
+# Per-cell table: the T-cell integration export (cell state, clone, embedding), with the
+# CoNGA, TCRi and consensus per-cell calls joined on cell_id.
+gx <- T("tcell", "tcr_export_cells_with_embedding.tsv")
+gx_by_id <- function(module, name, keep) {
+  d <- T(module, name)
+  if (!have(d) || !"cell_id" %in% names(d)) return(NULL)
+  keep <- intersect(keep, names(d))
+  if (!length(keep)) return(NULL)
+  d <- d[, c("cell_id", keep), drop = FALSE]
+  d$cell_id <- as.character(d$cell_id)
+  d[!duplicated(d$cell_id), , drop = FALSE]
+}
+if (have(gx)) {
+  gx$cell_id <- as.character(gx$cell_id)
+  for (j in list(
+    gx_by_id("conga", "conga_export_cells.tsv", c("conga_score", "conga_gex_cluster", "conga_tcr_cluster")),
+    gx_by_id("tcri", "tcri_export_cells.tsv", c("tcri_score", "tcri_group", "tcri_predicted_phenotype")),
+    gx_by_id("consensus", "consensus_export_cells.tsv", c("consensus_cluster")))) {
+    if (!is.null(j)) gx <- left_join(gx[, setdiff(names(gx), setdiff(names(j), "cell_id")), drop = FALSE],
+                                     j, by = "cell_id")
+  }
+  gx$annot   <- if ("annot" %in% names(gx)) as.character(gx$annot) else "Unannotated"
+  gx$annot[is.na(gx$annot) | !nzchar(gx$annot)] <- "Unannotated"
+  gx$has_tcr <- if ("has_tcr" %in% names(gx)) toupper(as.character(gx$has_tcr)) %in% c("TRUE", "T", "1") else !is.na(gx$clone_id)
+  # The export's clone_size counts a clone across the whole cohort; expansion is judged
+  # within a sample, so recount there.
+  gx$clone_id[!gx$has_tcr] <- NA
+  gx <- gx %>% group_by(sample, clone_id) %>%
+    mutate(clone_size = ifelse(is.na(clone_id), NA_real_, as.numeric(n()))) %>% ungroup() %>%
+    as.data.frame()
+  gx$size_bin <- ifelse(!gx$has_tcr | is.na(gx$clone_size), "no TCR",
+                 as.character(cut(gx$clone_size, c(0, 1, 2, 5, 20, Inf),
+                                  labels = c("1 cell", "2 cells", "3-5 cells", "6-20 cells", ">20 cells"))))
+  gx$expanded <- gx$has_tcr & !is.na(gx$clone_size) & gx$clone_size >= 2
+  emb <- grep("^(umap|u|UMAP)_?[12]$", names(gx), value = TRUE, ignore.case = TRUE)
+  gx_emb <- if (length(emb) >= 2) emb[1:2] else NULL
+  gx_cond <- intersect(c("condition"), names(gx))
+  gx_cond <- if (length(gx_cond) && n_distinct_real(gx[[gx_cond]]) >= 2) gx_cond else NULL
+}
+gx_tcr <- if (have(gx)) gx[gx$has_tcr, , drop = FALSE] else NULL
+size_levels <- c("1 cell", "2 cells", "3-5 cells", "6-20 cells", ">20 cells", "no TCR")
+size_cols   <- c("#a6a6a6", "#9ecae1", "#4292c6", "#08519c", "#de2d26", "#ececec")
+state_cols  <- function(x) {
+  lv <- sort(unique(as.character(x)))
+  setNames(grDevices::colorRampPalette(c(pal, "#4d4d4d", "#b15928", "#6a3d9a", "#ff7f00"))(length(lv)), lv)
+}
+
+# Heatmap. m: numeric matrix with dimnames; hover text from fmt.
+hmap <- function(m, title, zlab, colorscale = "Viridis", height = 520, zmid = NULL, fmt = "%{z:.2f}") {
+  p <- plotly::plot_ly(x = colnames(m), y = rownames(m), z = m, type = "heatmap",
+                       colorscale = colorscale, zmid = zmid,
+                       colorbar = list(title = zlab),
+                       hovertemplate = paste0("%{y} / %{x}<br>", zlab, ": ", fmt, "<extra></extra>"))
+  pconf(plotly::layout(p, title = ttl(title), height = height,
+                       margin = list(l = 140, b = 120, t = 60),
+                       xaxis = list(title = "", tickangle = -45), yaxis = list(title = "")))
+}
+
+# Embedding scatter (WebGL), downsampled so the HTML stays light.
+emb_plot <- function(d, colour, cols, title, max_points = 30000, hover = NULL) {
+  set.seed(1)
+  if (nrow(d) > max_points) d <- d[sample.int(nrow(d), max_points), , drop = FALSE]
+  d$.x <- d[[gx_emb[1]]]; d$.y <- d[[gx_emb[2]]]; d$.c <- factor(d[[colour]], levels = names(cols))
+  d$.h <- if (is.null(hover)) paste0(d$annot, "<br>", d$size_bin) else hover(d)
+  d <- d[order(d$.c != "no TCR", d$clone_size, na.last = FALSE), , drop = FALSE]
+  pconf(plotly::plot_ly(d, x = ~.x, y = ~.y, color = ~.c, colors = cols,
+                        type = "scattergl", mode = "markers", marker = list(size = 3),
+                        text = ~.h, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(title = ttl(title), height = 560, margin = list(t = 60),
+                       xaxis = list(title = "", showticklabels = FALSE, zeroline = FALSE, showgrid = FALSE),
+                       yaxis = list(title = "", showticklabels = FALSE, zeroline = FALSE, showgrid = FALSE),
+                       legend = list(itemsizing = "constant")))
+}
+```
+
+```{r}
+#| label: gex-absent
+#| results: asis
+if (!have(gx)) cat(as.character(note(
+  "The T-cell integration export is missing, so no GEX section can be drawn.")))
+```
+
+## Overview {#sec-sc-gex-overview}
+
+```{r}
+#| label: gex-overview
+if (have(gx)) {
+  ov_gex <- data.frame(
+    Metric = c("Cells in the GEX object", "Cells with a productive TCR", "TCR+ fraction",
+               "Cells with paired alpha/beta", "Cells in expanded clones (>= 2 cells)",
+               "Distinct clonotypes", "Cell states", "Samples",
+               if (!is.null(gx_cond)) "Conditions"),
+    Value = c(format(nrow(gx), big.mark = ","), format(sum(gx$has_tcr), big.mark = ","),
+              percent(mean(gx$has_tcr), 0.1),
+              if ("paired_tcr" %in% names(gx)) format(sum(toupper(gx$paired_tcr) %in% c("TRUE", "T", "1")), big.mark = ",") else NA,
+              format(sum(gx$expanded), big.mark = ","),
+              format(dplyr::n_distinct(gx_tcr$clone_id), big.mark = ","),
+              as.character(dplyr::n_distinct(gx$annot)), as.character(n_distinct_real(gx$sample)),
+              if (!is.null(gx_cond)) paste(sort(unique(gx[[gx_cond]])), collapse = ", ")),
+    stringsAsFactors = FALSE)
+  save_table(ov_gex, "gex_overview.tsv")
+  itable(ov_gex, pageSize = 10)
+}
+```
+
+## The cell-state map {#sec-sc-gex-map}
+
+```{r}
+#| label: gex-umap-state
+if (have(gx)) {
+  if (is.null(gx_emb)) note("No embedding coordinates in the export; the cell-state map cannot be drawn.") else
+    emb_plot(gx, "annot", state_cols(gx$annot), "Cells coloured by cell state")
+}
+```
+
+```{r}
+#| label: gex-umap-size
+if (have(gx) && !is.null(gx_emb)) {
+  emb_plot(gx, "size_bin", setNames(size_cols, size_levels),
+           "Cells coloured by the size of their clone in the sample",
+           hover = function(d) paste0(d$annot, "<br>sample ", d$sample, "<br>clone size ", d$clone_size))
+}
+```
+
+Expanded clones (blue to red) that gather in one region share a transcriptional programme;
+clones scattered across the map span several states.
+
+## Cell-state composition {#sec-sc-gex-composition}
+
+```{r}
+#| label: gex-composition-sample
+if (have(gx)) {
+  d <- gx %>% count(sample, annot, name = "n") %>% group_by(sample) %>%
+    mutate(val = n / sum(n)) %>% ungroup() %>%
+    transmute(cat = sample, grp = annot, val,
+              hover = paste0(sample, "<br>", annot, ": ", percent(val, 0.1), " (", n, " cells)"))
+  save_table(d %>% select(sample = cat, annot = grp, fraction = val), "gex_state_composition_by_sample.tsv")
+  sbar(d, "Cell-state composition per sample", "Fraction of cells",
+       height = max(420, 26 * dplyr::n_distinct(d$cat) + 160))
+}
+```
+
+```{r}
+#| label: gex-composition-condition
+if (have(gx) && !is.null(gx_cond)) {
+  # One value per sample, so samples with many cells do not dominate the comparison.
+  d <- gx %>% count(sample, cond = .data[[gx_cond]], annot, name = "n") %>%
+    group_by(sample) %>% mutate(frac = n / sum(n)) %>% ungroup() %>%
+    tidyr::complete(tidyr::nesting(sample, cond), annot, fill = list(n = 0, frac = 0))
+  save_table(d, "gex_state_fraction_by_sample_condition.tsv")
+  pconf(plotly::plot_ly(d, x = ~annot, y = ~frac, color = ~cond, colors = pal, type = "box",
+                        boxpoints = "all", jitter = 0.3, pointpos = 0,
+                        text = ~paste0(sample, "<br>", annot, ": ", percent(frac, 0.1)),
+                        hoverinfo = "text") %>%
+        plotly::layout(boxmode = "group", title = ttl("Cell-state fractions per sample, by condition"),
+                       height = 480, margin = list(t = 60, b = 110),
+                       xaxis = list(title = "", tickangle = -30),
+                       yaxis = list(title = "Fraction of the sample's cells", tickformat = ".0%"),
+                       legend = list(orientation = "h", y = -0.3)))
+}
+```
+
+## Which cell states carry the clonal expansion {#sec-sc-gex-expansion}
+
+```{r}
+#| label: gex-expansion-state
+if (have(gx_tcr)) {
+  d <- gx_tcr %>% count(annot, size_bin, name = "n") %>% group_by(annot) %>%
+    mutate(val = n / sum(n)) %>% ungroup() %>%
+    mutate(grp = factor(size_bin, levels = size_levels[1:5])) %>%
+    transmute(cat = annot, grp, val,
+              hover = paste0(annot, "<br>", size_bin, ": ", percent(val, 0.1), " (", n, " cells)"))
+  save_table(d %>% select(annot = cat, size_bin = grp, fraction = val), "gex_clone_size_by_state.tsv")
+  pconf(plotly::plot_ly(d, x = ~val, y = ~cat, color = ~grp, colors = size_cols[1:5],
+                        type = "bar", orientation = "h",
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(barmode = "stack", title = ttl("Clone-size distribution of TCR+ cells per cell state"),
+                       height = max(420, 30 * dplyr::n_distinct(d$cat) + 160), margin = list(l = 140, t = 60),
+                       xaxis = list(title = "Fraction of TCR+ cells", tickformat = ".0%"),
+                       yaxis = list(title = ""), legend = list(orientation = "h", y = -0.15)))
+}
+```
+
+```{r}
+#| label: gex-expansion-condition
+if (have(gx_tcr) && !is.null(gx_cond)) {
+  d <- gx_tcr %>% group_by(sample, cond = .data[[gx_cond]], annot) %>%
+    summarise(cells = n(), frac_expanded = mean(expanded), .groups = "drop") %>%
+    filter(cells >= 10)
+  save_table(d, "gex_expanded_fraction_by_sample_state.tsv")
+  pconf(plotly::plot_ly(d, x = ~annot, y = ~frac_expanded, color = ~cond, colors = pal, type = "box",
+                        boxpoints = "all", jitter = 0.3, pointpos = 0,
+                        text = ~paste0(sample, "<br>", annot, ": ", percent(frac_expanded, 0.1),
+                                       " of ", cells, " TCR+ cells expanded"), hoverinfo = "text") %>%
+        plotly::layout(boxmode = "group", title = ttl("Expanded fraction per sample and cell state, by condition"),
+                       height = 480, margin = list(t = 60, b = 110),
+                       xaxis = list(title = "", tickangle = -30),
+                       yaxis = list(title = "TCR+ cells in clones of >= 2", tickformat = ".0%"),
+                       legend = list(orientation = "h", y = -0.3)))
+}
+```
+
+Each point is one sample's cells of that state (states with at least 10 TCR+ cells in the
+sample), so the comparison is not driven by the samples with the most cells.
+
+## Clones shared between cell states {#sec-sc-gex-sharing}
+
+```{r}
+#| label: gex-state-sharing
+if (have(gx_tcr) && dplyr::n_distinct(gx_tcr$annot) > 1) {
+  # A clone is counted per sample, so the same receptor in two patients is not a shared clone.
+  occ <- gx_tcr %>% filter(expanded) %>% distinct(sample, clone_id, annot)
+  if (!nrow(occ)) note("No expanded clones to compare across cell states.") else {
+    st <- sort(unique(gx_tcr$annot))
+    m <- matrix(0, length(st), length(st), dimnames = list(st, st))
+    pairs <- occ %>% inner_join(occ, by = c("sample", "clone_id"), relationship = "many-to-many")
+    tab <- pairs %>% count(annot.x, annot.y)
+    m[cbind(tab$annot.x, tab$annot.y)] <- tab$n
+    save_table(as.data.frame(m) %>% tibble::rownames_to_column("annot"), "gex_state_clone_sharing.tsv")
+    hmap(m, "Expanded clones found in both cell states", "Clones", colorscale = "Blues", fmt = "%{z}")
+  }
+}
+```
+
+The diagonal counts expanded clones with any cell in that state; off-diagonal cells count
+clones with cells in *both* states, the signature of one clone giving rise to several
+phenotypes.
+
+```{r}
+#| label: gex-plasticity
+if (have(gx_tcr)) {
+  d <- gx_tcr %>% filter(expanded) %>% group_by(sample, clone_id) %>%
+    summarise(cells = n(), states = dplyr::n_distinct(annot),
+              main_state = names(which.max(table(annot))),
+              main_frac = max(table(annot)) / n(), .groups = "drop") %>%
+    arrange(desc(cells))
+  save_table(d, "gex_clone_state_plasticity.tsv")
+  itable(head(d, 200), pageSize = 10)
+}
+```
+
+Expanded clones with the number of cell states they occupy and the share of their cells in
+the dominant state (top 200 by size).
+
+## Gene expression of cell states and expanded cells {#sec-sc-gex-genes}
+
+```{r}
+#| label: gex-genes
+gx_expr <- NULL
+.rds <- as_str1(params$seurat_rds)
+if (have(gx) && nzchar(.rds) && file.exists(.rds) && file.size(.rds) > 0) {
+  gx_expr <- tryCatch({
+    suppressPackageStartupMessages(library(Seurat))
+    seu <- readRDS(.rds)
+    genes <- c("CD8A", "CD8B", "CD4", "SELL", "CCR7", "TCF7", "IL7R", "GZMK", "GZMA", "GZMB",
+               "PRF1", "GNLY", "NKG7", "IFNG", "CX3CR1", "KLRG1", "ITGAE", "CD69", "ZNF683",
+               "PDCD1", "HAVCR2", "LAG3", "TIGIT", "CTLA4", "TOX", "CXCL13", "ENTPD1",
+               "KLRB1", "SLC4A10", "ZBTB16", "MKI67", "TOP2A", "FOXP3", "TRDC")
+    genes <- intersect(genes, rownames(seu))
+    cells <- intersect(gx$cell_id, colnames(seu))
+    if (length(genes) < 2 || length(cells) < 50) NULL else {
+      get_layer <- function(l) tryCatch(SeuratObject::LayerData(seu, layer = l),
+                                        error = function(e) tryCatch(Seurat::GetAssayData(seu, slot = l),
+                                                                     error = function(e) NULL))
+      dat <- suppressWarnings(get_layer("data"))
+      if (!is.null(dat) && all(dim(dat) > 0)) {
+        mat <- dat[genes, cells, drop = FALSE]
+      } else {
+        # Downstream objects can carry counts only: LogNormalize the panel genes against
+        # each cell's full library size, as Seurat's NormalizeData would.
+        cnt <- get_layer("counts")[, cells, drop = FALSE]
+        mat <- log1p(Matrix::t(Matrix::t(cnt[genes, , drop = FALSE]) / Matrix::colSums(cnt)) * 1e4)
+      }
+      rm(seu); invisible(gc())
+      list(mat = as.matrix(mat), meta = gx[match(cells, gx$cell_id), , drop = FALSE])
+    }
+  }, error = function(e) { message("GEX expression unavailable: ", conditionMessage(e)); NULL })
+}
+if (have(gx) && is.null(gx_expr)) note("The GEX object could not be read, or shares too few cells / marker genes with the export; expression panels are skipped.")
+```
+
+```{r}
+#| label: gex-markers-state
+if (!is.null(gx_expr)) {
+  g <- gx_expr$meta$annot
+  avg <- sapply(split(seq_along(g), g), function(i) Matrix::rowMeans(gx_expr$mat[, i, drop = FALSE]))
+  z <- t(scale(t(avg)))
+  z[is.na(z)] <- 0
+  save_table(as.data.frame(avg) %>% tibble::rownames_to_column("gene"), "gex_marker_mean_by_state.tsv")
+  hmap(t(z), "Canonical T-cell genes by cell state (row-scaled mean expression)", "z-score",
+       colorscale = "RdBu", zmid = 0, height = max(420, 32 * ncol(z) + 200))
+}
+```
+
+```{r}
+#| label: gex-markers-expanded
+if (!is.null(gx_expr)) {
+  md <- gx_expr$meta
+  ok <- md$has_tcr
+  st <- names(which(table(md$annot[ok & md$expanded]) >= 20 & table(md$annot[ok & !md$expanded]) >= 20))
+  if (!length(st)) note("Too few expanded and non-expanded cells per state to compare expression.") else {
+    lfc <- sapply(st, function(s) {
+      e <- ok & md$annot == s
+      Matrix::rowMeans(gx_expr$mat[, e & md$expanded, drop = FALSE]) -
+        Matrix::rowMeans(gx_expr$mat[, e & !md$expanded, drop = FALSE])
+    })
+    save_table(as.data.frame(lfc) %>% tibble::rownames_to_column("gene"), "gex_expanded_vs_singleton_by_state.tsv")
+    lim <- max(abs(lfc), na.rm = TRUE)
+    hmap(t(lfc), "Expanded vs singleton cells within each state (difference in mean log-expression)",
+         "Δ log-expr", colorscale = "RdBu", zmid = 0, height = max(420, 32 * length(st) + 200))
+  }
+}
+```
+
+Positive values (red) are genes higher in the cells of expanded clones than in singletons of
+the *same* state, which separates expansion-associated programmes (for example cytotoxicity
+or exhaustion) from differences between states. States need at least 20 cells of each kind.
+
+## CoNGA {#sec-sc-gex-conga}
+
+Graph-level correspondence between TCR similarity and transcriptional similarity. Clusters
+scoring highly here contain cells that are neighbours in *both* spaces — the strongest
+available evidence of antigen-driven clonal programmes.
+
+```{r}
+#| label: conga
+if (!have(conga_roll) && !have(conga_clusters)) {
+  note("CoNGA produced no output on this run.")
+} else {
+  if (have(conga_roll)) save_table(conga_roll, "master_conga_rollup.tsv")
+  if (have(conga_clusters)) save_table(conga_clusters, "master_conga_clusters.tsv")
+  itable(if (have(conga_roll)) conga_roll else conga_clusters, pageSize = 15)
+}
+```
+
+```{r}
+#| label: gex-conga-state
+if (have(gx_tcr) && "conga_score" %in% names(gx_tcr) && any(!is.na(gx_tcr$conga_score))) {
+  # CoNGA score is a Bonferroni-adjusted p-value: < 1 marks a GEX/TCR neighbourhood hit.
+  gx_tcr$conga_hit <- suppressWarnings(as.numeric(gx_tcr$conga_score)) < 1
+  d <- gx_tcr %>% filter(!is.na(conga_hit)) %>% group_by(annot) %>%
+    summarise(cells = n(), hits = sum(conga_hit), .groups = "drop") %>%
+    mutate(val = hits / cells)
+  save_table(d, "gex_conga_hits_by_state.tsv")
+  hbar(d %>% transmute(cat = annot, val, hover = paste0(annot, "<br>", hits, " / ", cells, " TCR+ cells (",
+                                                        percent(val, 0.1), ")")),
+       "CoNGA hits by cell state", "Fraction of TCR+ cells that are CoNGA hits",
+       tickformat = ".0%", height = max(400, 30 * nrow(d) + 140))
+} else if (have(gx_tcr)) note("No per-cell CoNGA scores were exported.")
+```
+
+```{r}
+#| label: gex-conga-umap
+if (have(gx) && !is.null(gx_emb) && "conga_score" %in% names(gx) && any(!is.na(gx$conga_score))) {
+  sc <- suppressWarnings(as.numeric(gx$conga_score))
+  gx$conga_lab <- ifelse(!is.na(sc) & sc < 1, "CoNGA hit", ifelse(gx$has_tcr, "TCR+, not a hit", "no TCR"))
+  emb_plot(gx, "conga_lab", c("CoNGA hit" = "#de2d26", "TCR+, not a hit" = "#9ecae1", "no TCR" = "#ececec"),
+           "CoNGA hits on the cell-state map",
+           hover = function(d) paste0(d$annot, "<br>", d$conga_lab, "<br>clone size ", d$clone_size))
+}
+```
+
+## TCRi {#sec-sc-gex-tcri}
+
+TCRi scores how strongly a receptor sequence predicts the phenotype its cell adopts. High
+scores mark clones whose fate appears written into the TCR.
+
+```{r}
+#| label: tcri
+#| results: asis
+if (!have(tcri_roll)) {
+  note("TCRi produced no output on this run.")
+} else {
+  save_table(tcri_roll, "master_tcri_rollup.tsv")
+  itable(tcri_roll, pageSize = 15)
+}
+```
+
+```{r}
+#| label: gex-tcri-state
+if (have(gx_tcr) && "tcri_score" %in% names(gx_tcr) && any(!is.na(gx_tcr$tcri_score))) {
+  d <- gx_tcr %>% filter(!is.na(tcri_score)) %>%
+    transmute(grp = annot, val = as.numeric(tcri_score),
+              hover = paste0(annot, "<br>", sample, "<br>TCRi ", round(val, 3)))
+  set.seed(1)
+  if (nrow(d) > 20000) d <- d[sample.int(nrow(d), 20000), ]
+  boxby(d, "TCRi score by cell state", "TCRi score", angle = -30)
+} else if (have(gx_tcr)) note("No per-cell TCRi scores were exported.")
+```
+
+```{r}
+#| label: tcri-clones
+if (have(tcri_scores)) {
+  save_table(tcri_scores, "master_tcri_high_clones.tsv")
+  d  <- tcri_scores
+  nc <- intersect(c("n_cells", "cells", "clone_size", "n"), names(d))
+  cc <- intersect(c("clone_id", "CTaa", "clonotype"), names(d))
+  if (!length(nc) || !length(cc)) {
+    itable(d, pageSize = 10)
+  } else {
+    dd <- data.frame(cat = as.character(d[[cc[1]]]), val = as.numeric(d[[nc[1]]]))
+    dd <- head(dd[order(-dd$val), , drop = FALSE], params$top_n_clusters)
+    dd$hover <- paste0(dd$cat, "<br>", dd$val, " cells")
+    hbar(dd, paste0("Top ", params$top_n_clusters, " high-TCRi clones"), "Cells", height = 560)
+  }
+}
+```
+
+## T-cell integration tables {#sec-sc-gex-tcell}
+
+```{r}
+#| label: tcell
+if (!have(tcell_roll)) {
+  note("No T-cell integration summary available.")
+} else {
+  save_table(tcell_roll, "master_tcell_rollup.tsv")
+  itable(tcell_roll, pageSize = 15)
+}
+```
+
+## Consensus clusters by cell state {#sec-sc-gex-consensus}
+
+```{r}
+#| label: gex-consensus-state
+if (have(gx_tcr) && "consensus_cluster" %in% names(gx_tcr)) {
+  d <- gx_tcr %>% filter(!is.na(consensus_cluster), nzchar(as.character(consensus_cluster)),
+                         !as.character(consensus_cluster) %in% c("NA", "none", "None"))
+  top <- d %>% count(consensus_cluster, sort = TRUE) %>% head(params$top_n_clusters)
+  if (!nrow(top)) note("No cells were assigned to a consensus cluster.") else {
+    d <- d %>% filter(consensus_cluster %in% top$consensus_cluster) %>%
+      count(consensus_cluster, annot, name = "n") %>% group_by(consensus_cluster) %>%
+      mutate(val = n / sum(n), tot = sum(n)) %>% ungroup() %>%
+      transmute(cat = paste0(consensus_cluster, " (", tot, ")"), grp = annot, val,
+                hover = paste0("cluster ", consensus_cluster, "<br>", annot, ": ", n, " cells"))
+    save_table(d, "gex_consensus_state_composition.tsv")
+    sbar(d, paste0("Cell-state make-up of the ", nrow(top), " largest consensus clusters"),
+         "Fraction of cells", height = max(440, 26 * nrow(top) + 160))
+  }
+} else if (have(gx_tcr)) note("No per-cell consensus labels were exported.")
+```
+
+Consensus clusters group receptors predicted to share specificity. A cluster concentrated in
+one state points to a specificity tied to that phenotype.

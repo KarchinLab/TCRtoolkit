@@ -86,6 +86,8 @@ Certain sub-reports are automatically appended based on input and workflow optio
 
 After the cohort comparison, both modalities run the same chain: a per-cell (single-cell) or per-clonotype (bulk) export → `CLUSTER_TO_SC` (GIANA / GLIPH2 / TCRdist3 clusters mapped onto those rows) → `CONSENSUS_CLUSTERING` → `CLUSTER_ROLLUP` → `MASTER_SUMMARY`. Without a GEX object these steps run on the export table alone. Bulk runs need `compare` plus `sample` and/or `patient`; disable with `--run_clonotype_clustering false`.
 
+With a GEX object (`--input_annotated_object`), `MASTER_SUMMARY` also renders `SC_GEX_Report.html` from `modules/scratch/MASTER_SUMMARY/_sc_gex.qmd` (cell-state map, composition by sample and condition, expansion and clone sharing by cell state, marker-gene expression of expanded cells, CoNGA, TCRi and consensus clusters by cell state), and the same section is appended to the Master Summary. Other routes get a short stub in its place.
+
 ## Key Parameters
  
 | Parameter | Default | Description |

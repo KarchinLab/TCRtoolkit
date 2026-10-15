@@ -1,0 +1,7 @@
+# Single-cell GEX analyses {#sec-sc-gex}
+
+::: {.callout-note appearance="simple"}
+No annotated GEX object was supplied (`--input_annotated_object`), so T-cell integration,
+CoNGA, TCRi and the cell-state views are skipped on this route. With a GEX object this
+section holds the contents of `SC_GEX_Report.html`.
+:::

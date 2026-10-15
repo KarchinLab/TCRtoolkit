@@ -28,7 +28,9 @@ process MASTER_SUMMARY {
       path tcri_tables,       stageAs: 'intables/tcri/*'
       path mergedvdj_tables,  stageAs: 'intables/mergedvdj/*'
 
-      path qmd
+      // Master_Summary_Report.qmd plus its partials (_ms_setup, _sc_gex, _sc_gex_stub) and
+      // the standalone SC_GEX_Report.qmd wrapper.
+      path qmd_files,         stageAs: 'src/*'
       val  barrier_done
       val  project_name
 
@@ -36,23 +38,39 @@ process MASTER_SUMMARY {
       path "Master_Summary_Report.html", emit: report_html
       path "Master_Summary_Report/tables/*",  emit: tables,  optional: true
       path "Master_Summary_Report/figures/*", emit: figures, optional: true
+      // GEX route only: the single-cell GEX section rendered on its own.
+      path "SC_GEX_Report.html",              emit: gex_html, optional: true
+      path "SC_GEX_Report/tables/*",          emit: gex_tables, optional: true
 
     script:
     """
     mkdir -p Master_Summary_Report/tables Master_Summary_Report/figures
+    cp -L src/*.qmd .
 
-    quarto render ${qmd} \\
-      -P project_name="${project_name}" \\
-      -P modality="${(params.mode ?: 'bulk').toLowerCase()}" \\
-      -P tables_dir="intables" \\
-      -P seurat_rds="${seurat_rds}" \\
-      -P export_cells_file="${export_cells}" \\
-      -P outdir="Master_Summary_Report" \\
-      -P label_col="${params.label_col}" \\
-      -P sample_col="${params.sample_col}" \\
-      -P patient_col="${params.patient_col}" \\
-      -P condition_col="${params.condition_col}" \\
-      -P timepoint_col="${params.timepoint_col}" \\
+    # The GEX section is a static include: the T-cell integration export only exists when a
+    # GEX object was supplied, so without it the stub stands in under the partial's name.
+    gex=false
+    if [ -s intables/tcell/tcr_export_cells_with_embedding.tsv ]; then gex=true; else cp _sc_gex_stub.qmd _sc_gex.qmd; fi
+
+    common=(
+      -P project_name="${project_name}"
+      -P modality="${(params.mode ?: 'bulk').toLowerCase()}"
+      -P tables_dir="intables"
+      -P seurat_rds="${seurat_rds}"
+      -P export_cells_file="${export_cells}"
+      -P label_col="${params.label_col}"
+      -P sample_col="${params.sample_col}"
+      -P patient_col="${params.patient_col}"
+      -P condition_col="${params.condition_col}"
+      -P timepoint_col="${params.timepoint_col}"
       -P tcrdist_radius=${params.tcrdist_radius}
+    )
+
+    quarto render Master_Summary_Report.qmd "\${common[@]}" -P outdir="Master_Summary_Report"
+
+    if [ "\$gex" = true ]; then
+      mkdir -p SC_GEX_Report/tables SC_GEX_Report/figures
+      quarto render SC_GEX_Report.qmd "\${common[@]}" -P outdir="SC_GEX_Report"
+    fi
     """
 }

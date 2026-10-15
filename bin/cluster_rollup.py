@@ -241,13 +241,19 @@ def first_col(df, candidates):
 
 
 def resolve_cdr3(df):
-    """Return a Series of CDR3b strings, falling back to the '<CDR3>_<TRBV>' clone_id form."""
+    """
+    Return a Series of CDR3b strings, falling back to the clone_id forms: bulk
+    '<CDR3>_<TRBV>' and single-cell 'A:<CDR3a>|B:<CDR3b>'.
+    """
     col = first_col(df, CDR3_COLS)
     if col is not None:
         return df[col].astype("string").str.strip()
     for key in ("clone_id", "CTaa", "clonotype"):
         if key in df.columns:
-            return df[key].astype("string").str.split("_", n=1).str[0].str.strip()
+            s = df[key].astype("string")
+            if s.str.contains("B:", regex=False, na=False).any():
+                return s.str.extract(r"B:([^|;_]+)", expand=False).str.strip()
+            return s.str.split("_", n=1).str[0].str.strip()
     return None
 
 

@@ -1,0 +1,70 @@
+---
+title: "TCR-Toolkit-SCRATCH: Single-cell GEX Report"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+    fig-width: 10
+    fig-height: 6
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  project_name: "TCR-Toolkit-SCRATCH"
+  # "singlecell" or "bulk". Bulk runs have no cells: every export row is one sample x
+  # clonotype, so "cells" in this report then means clonotypes.
+  modality: "singlecell"
+  outdir: "SC_GEX_Report"
+
+  # Root of the staged per-module table directories (tables_dir/<module>/<file>).
+  # Replaces the previous ~30 individually-wired file params: modules publish whole
+  # tables/ directories, so new upstream tables become available here without another
+  # round of process-input plumbing.
+  tables_dir: "intables"
+
+  seurat_rds: ""
+  export_cells_file: ""
+
+  # Column mapping / resolution
+  label_col: ""
+  sample_col: "sample"
+  patient_col: "patient"
+  condition_col: "condition"
+  timepoint_col: "timepoint"
+  clone_id_col: "clone_id"
+  clone_size_col: "clone_size"
+  consensus_cluster_col: "consensus_cluster"
+
+  label_candidates: "annot;Annotation;celltype;CellType;predicted.celltype.l2;celltypist;azimuth_labels;seurat_clusters"
+  sample_candidates: "sample;META_SAMPLE;orig.ident;sample_id"
+  patient_candidates: "patient;META_PATIENT;patient_id;subject;donor"
+  condition_candidates: "condition;META_TIMECOND;group;status"
+  timepoint_candidates: "timepoint;visit;day;META_TIMECOND"
+  clone_id_candidates: "clone_id;CTaa;clonotype;clone"
+  clone_size_candidates: "clone_size;CloneSize;clone_n"
+  consensus_cluster_candidates: "consensus_cluster;consensus;consensus_id"
+
+  tcrdist_radius: 24
+  top_n_annotations: 20
+  top_n_clusters: 20
+  top_n_genes: 25
+  base_size: 12
+---
+
+{{< include ./_ms_setup.qmd >}}
+
+{{< include ./_sc_gex.qmd >}}
+
+# Session info
+
+```{r}
+#| label: session
+sessionInfo()
+```

@@ -31,10 +31,11 @@ workflow MASTER_SUMMARY_SW {
     project_name
 
     main:
+    // The report plus its partials and the standalone GEX wrapper, staged together.
     ch_notebook = channel.fromPath(
-        "${projectDir}/modules/scratch/MASTER_SUMMARY/Master_Summary_Report.qmd",
+        "${projectDir}/modules/scratch/MASTER_SUMMARY/*.qmd",
         checkIfExists: true
-    )
+    ).collect()
 
     MASTER_SUMMARY(
         seurat_rds,
@@ -59,4 +60,5 @@ workflow MASTER_SUMMARY_SW {
     report_html = MASTER_SUMMARY.out.report_html
     tables      = MASTER_SUMMARY.out.tables
     figures     = MASTER_SUMMARY.out.figures
+    gex_html    = MASTER_SUMMARY.out.gex_html
 }
