@@ -23,7 +23,6 @@ process SC_REPORT_BUNDLE {
     path rollup_tables,     stageAs: 'in/rollup/*'
     path conga_tables,      stageAs: 'in/conga/*'
     path tcri_tables,       stageAs: 'in/tcri/*'
-    path repertoire_tables, stageAs: 'in/repertoire/*'
     val  route
 
     output:
@@ -32,7 +31,7 @@ process SC_REPORT_BUNDLE {
     script:
     """
     mkdir -p sc_bundle
-    for d in cells vdj_qc pseudobulk tcell mergedvdj consensus rollup conga tcri repertoire; do
+    for d in cells vdj_qc pseudobulk tcell mergedvdj consensus rollup conga tcri; do
         mkdir -p sc_bundle/\$d
         if [ -d in/\$d ]; then
             find -L in/\$d -maxdepth 1 -type f -size +0 -exec cp -L {} sc_bundle/\$d/ \\;

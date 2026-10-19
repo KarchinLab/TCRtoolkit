@@ -9,6 +9,7 @@ include { SC_TO_CDR3 } from '../../modules/bridges/sc_to_cdr3.nf'
  * Wraps SC_TO_CDR3 and emits:
  *   sample_map   — channel of [meta, file] tuples (one per sample)
  *   concat_cdr3  — single path to concatenated CDR3 file
+ *   paired_clones — cells per (unit, paired clone) for REPERTOIRE_METRICS
  *
  * Used in full-SC mode as a replacement for SC_TO_BULK_SW + ANNOTATE_PROCESS.
  */
@@ -44,4 +45,5 @@ workflow SC_TO_CDR3_SW {
     emit:
     sample_map
     concat_cdr3 = SC_TO_CDR3.out.concat_cdr3
+    paired_clones = SC_TO_CDR3.out.paired_clones
 }

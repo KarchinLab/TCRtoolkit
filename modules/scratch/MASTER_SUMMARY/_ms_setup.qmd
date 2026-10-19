@@ -238,15 +238,20 @@ tcrdist_detail <- T("rollup", "tcrdist_cluster_detail.tsv")
 giana_vgene    <- T("rollup", "giana_vgene_usage.tsv")
 gliph2_vgene   <- T("rollup", "gliph2_vgene_usage.tsv")
 
-# ── Repertoire ──
-rep_rollup     <- T("repertoire", "repertoire_summary_rollup.tsv")
-diversity      <- T("repertoire", "diversity_by_sample.tsv")
-div_patient    <- T("repertoire", "diversity_by_patient.tsv")
-clone_burden   <- T("repertoire", "clone_burden_cells_by_sample.tsv")
-overlap_mat    <- T("repertoire", "sample_overlap_matrix.tsv")
-top_shared     <- T("repertoire", "top_shared_clones.tsv")
-shareability   <- T("repertoire", "clone_shareability.tsv")
-pheno_flux     <- T("repertoire", "phenotypic_flux.tsv")
+# ── Repertoire metrics (REPERTOIRE_METRICS, shared engine) ──
+# Per-sample diversity is in sample_stats.csv; clone unit is TRB clonotypes for bulk and
+# paired clones (cells) for single-cell.
+rep_rollup     <- T("repertoire", "repertoire_summary.tsv")
+clone_burden   <- T("repertoire", "clone_size_bins.tsv")
+overlap_long   <- T("repertoire", "overlap_samples.tsv")
+clone_sharing  <- T("repertoire", "clone_sharing.tsv")
+top_shared     <- if (have(clone_sharing)) head(clone_sharing, 50) else NULL
+overlap_mat    <- if (have(overlap_long)) {
+  overlap_long %>%
+    select(sample_a, sample_b, jaccard) %>%
+    pivot_wider(names_from = sample_b, values_from = jaccard) %>%
+    rename(sample = sample_a)
+} else NULL
 
 # ── GEX-dependent ──
 tcell_roll     <- T("tcell", "tcell_summary_rollup.tsv")

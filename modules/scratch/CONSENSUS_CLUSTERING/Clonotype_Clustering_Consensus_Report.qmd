@@ -94,8 +94,6 @@ params:
   # Consensus controls
   # ======================================================
   consensus_min_methods: 2
-  prefer_method_order: "gliph;tcrdist;giana"
-  use_majority_vote: true
   consensus_label_prefix: "CONS"
   assign_singleton_consensus: false
   min_cells_per_group: 10
@@ -602,6 +600,13 @@ save_table_safe(pairwise_overlap_tbl, "pairwise_method_overlap.tsv")
 ```
 
 # Build consensus labels
+
+GIANA, GLIPH2 and TCRdist3 each cluster a patient's clonotypes with their own labels, so
+the labels themselves are never compared across methods. Instead, two clonotypes (patient,
+CDR3β) are linked when at least `consensus_min_methods` methods place them in the same
+cluster, and each connected group of two or more linked clonotypes is one consensus
+cluster. `consensus_methods` lists the methods whose agreement built each cluster.
+
 ```{r}
 #| label: build-consensus
 export_cells <- export_cells %>%
@@ -619,46 +624,107 @@ consensus_base <- export_cells %>%
     n_methods_nonmissing = as.integer(!is.na(gliph_use)) + as.integer(!is.na(tcrdist_use)) + as.integer(!is.na(giana_use))
   )
 
-if (isTRUE(params$use_majority_vote)) {
-  # Vectorised form of the per-row vote (rowwise() does not scale to bulk data, which has
-  # one row per clonotype): the most frequent label wins; ties go to the alphabetically
-  # first label, as sort(table(vals), decreasing = TRUE) resolved them.
-  a <- consensus_base$gliph_use; b <- consensus_base$tcrdist_use; c3 <- consensus_base$giana_use
-  a[!is.na(a) & a == ""] <- NA; b[!is.na(b) & b == ""] <- NA; c3[!is.na(c3) & c3 == ""] <- NA
-  n_vals <- (!is.na(a)) + (!is.na(b)) + (!is.na(c3))
-  eq <- function(x, y) !is.na(x) & !is.na(y) & x == y
-  first_alpha <- suppressWarnings(pmin(a, b, c3, na.rm = TRUE))
-  voted <- ifelse(eq(a, b) | eq(a, c3), a, ifelse(eq(b, c3), b, first_alpha))
-  single <- if (isTRUE(params$assign_singleton_consensus)) first_alpha else NA_character_
-  consensus_base$consensus_raw <- ifelse(
-    n_vals == 0, NA_character_,
-    ifelse(n_vals < params$consensus_min_methods,
-           ifelse(n_vals == 1, single, NA_character_),
-           voted))
-} else {
-  consensus_base <- consensus_base %>%
-    mutate(
-      consensus_raw = ifelse(
-        n_methods_nonmissing >= params$consensus_min_methods,
-        method_signature,
-        ifelse(isTRUE(params$assign_singleton_consensus), coalesce(gliph_use, tcrdist_use, giana_use), NA_character_)
-      )
-    )
+# Co-clustering consensus. Each method's labels are its own (GIANA "C1_G2", GLIPH2 motif
+# names, TCRdist3 "C1_T5"), so labels are never compared across methods. Instead two
+# clonotypes are linked when at least `consensus_min_methods` methods put them in the same
+# cluster, and each connected group of >= 2 linked clonotypes is one consensus cluster.
+# The clonotype is (patient, CDR3b): every method clusters within a patient and assigns
+# clusters by CDR3b, so all rows of a clonotype carry the same labels.
+cdr3_tbl <- bind_rows(lapply(list(gliph_export_tbl, tcrdist_export_tbl, giana_export_tbl), function(t) {
+  if (is.null(t) || !all(c("cell_id", "CDR3b") %in% colnames(t))) return(NULL)
+  t %>% transmute(cell_id = as.character(cell_id), CDR3b = toupper(as.character(CDR3b)))
+}))
+cdr3_tbl <- if (nrow(cdr3_tbl)) distinct(cdr3_tbl, cell_id, .keep_all = TRUE) else tibble(cell_id = character(), CDR3b = character())
+
+consensus_base <- consensus_base %>%
+  left_join(cdr3_tbl, by = "cell_id") %>%
+  mutate(.clone = ifelse(!is.na(CDR3b) & CDR3b != "",
+                         paste(coalesce(patient, "NA"), CDR3b, sep = "::"),
+                         ifelse(!is.na(clone_id), paste(coalesce(patient, "NA"), clone_id, sep = "::"), NA_character_)))
+
+method_cols <- c(GLIPH2 = "gliph_use", TCRdist3 = "tcrdist_use", GIANA = "giana_use")
+method_cols <- method_cols[vapply(method_cols, function(m) any(!is.na(consensus_base[[m]])), logical(1))]
+k_req <- as.integer(params$consensus_min_methods)
+
+clones <- consensus_base %>%
+  filter(!is.na(.clone)) %>%
+  select(.clone, all_of(unname(method_cols))) %>%
+  distinct(.clone, .keep_all = TRUE)
+clone_idx <- setNames(seq_len(nrow(clones)), clones$.clone)
+
+# Edges from every set of k methods: clonotypes sharing a cluster in all of them.
+combos <- if (length(method_cols) >= k_req && k_req >= 1) utils::combn(names(method_cols), k_req, simplify = FALSE) else list()
+edge_list <- list()
+for (cmb in combos) {
+  cols <- unname(method_cols[cmb])
+  d <- clones[stats::complete.cases(clones[, cols, drop = FALSE]), c(".clone", cols), drop = FALSE]
+  if (!nrow(d)) next
+  key <- do.call(paste, c(unname(as.list(d[, cols, drop = FALSE])), sep = "\r"))
+  grp <- split(d$.clone, key)
+  grp <- grp[lengths(grp) >= 2]
+  for (g in grp) {
+    edge_list[[length(edge_list) + 1]] <- tibble(
+      from = clone_idx[g[1]], to = clone_idx[g[-1]], methods = paste(cmb, collapse = "+"))
+  }
+}
+edges <- bind_rows(edge_list)
+
+clone_assign <- tibble(.clone = character(), consensus_raw = character(), consensus_methods = character())
+if (nrow(edges)) {
+  g <- igraph::graph_from_data_frame(
+    data.frame(from = edges$from, to = edges$to),
+    directed = FALSE, vertices = data.frame(name = seq_len(nrow(clones))))
+  memb <- igraph::components(g)$membership
+  comp_size <- table(memb)
+  in_cluster <- memb %in% as.integer(names(comp_size)[comp_size >= 2])
+  # Methods supporting each component: those of the method sets whose edges built it.
+  edges$comp <- memb[edges$from]
+  support <- edges %>%
+    group_by(comp) %>%
+    summarise(consensus_methods = paste(sort(unique(unlist(strsplit(methods, "+", fixed = TRUE)))), collapse = "+"),
+              .groups = "drop")
+  clone_assign <- tibble(.clone = clones$.clone, comp = memb) %>%
+    filter(in_cluster) %>%
+    left_join(support, by = "comp") %>%
+    mutate(consensus_raw = paste0("comp", comp)) %>%
+    select(.clone, consensus_raw, consensus_methods)
+}
+
+consensus_base <- consensus_base %>%
+  left_join(clone_assign, by = ".clone")
+
+# Optionally keep a single-method cluster for clonotypes no consensus covers.
+if (isTRUE(params$assign_singleton_consensus)) {
+  single <- coalesce(consensus_base$gliph_use, consensus_base$tcrdist_use, consensus_base$giana_use)
+  fill <- is.na(consensus_base$consensus_raw) & !is.na(single)
+  consensus_base$consensus_raw[fill] <- paste0("single:", single[fill])
+  consensus_base$consensus_methods[fill] <- "single method"
 }
 
 consensus_map <- consensus_base %>%
   filter(!is.na(consensus_raw), consensus_raw != "") %>%
-  count(consensus_raw, name = "n_cells") %>%
+  group_by(consensus_raw) %>%
+  summarise(n_cells = n(),
+            n_clonotypes = n_distinct(.clone),
+            patient = paste(sort(unique(na.omit(patient))), collapse = ";"),
+            consensus_methods = first(consensus_methods),
+            n_methods_support = ifelse(first(consensus_methods) == "single method", 1L,
+                                       lengths(strsplit(first(consensus_methods), "+", fixed = TRUE))),
+            gliph_clusters = paste(sort(unique(na.omit(gliph_use))), collapse = ";"),
+            tcrdist_clusters = paste(sort(unique(na.omit(tcrdist_use))), collapse = ";"),
+            giana_clusters = paste(sort(unique(na.omit(giana_use))), collapse = ";"),
+            .groups = "drop") %>%
   arrange(desc(n_cells)) %>%
   mutate(consensus_cluster = paste0(params$consensus_label_prefix, "_", row_number()))
 
 export_cells <- consensus_base %>%
-  left_join(consensus_map, by = "consensus_raw")
+  select(-.clone) %>%
+  left_join(consensus_map %>% select(consensus_raw, consensus_cluster), by = "consensus_raw")
 
 save_table_safe(consensus_map, "consensus_cluster_map.tsv")
 
 # Re-write the export now that it carries the consensus labels: the copy written in
-# build-export predates them, so downstream consumers (REPERTOIRE, MASTER_SUMMARY, the
+# build-export predates them, so downstream consumers (MASTER_SUMMARY, the
 # report notebooks) never saw a consensus_cluster column.
 save_table_safe(export_cells, "consensus_export_cells.tsv")
 ```
@@ -671,7 +737,7 @@ seu_md <- seu@meta.data %>%
   tibble::rownames_to_column("cell_id") %>%
   left_join(
     export_cells %>%
-      select(cell_id, consensus_raw, consensus_cluster, n_methods_nonmissing, method_signature),
+      select(cell_id, consensus_raw, consensus_cluster, consensus_methods, n_methods_nonmissing, method_signature),
     by = "cell_id"
   )
 
@@ -716,9 +782,9 @@ summary_rollup <- tibble(
 )
 save_table_safe(summary_rollup, "consensus_summary_rollup.tsv")
 
-consensus_cluster_summary <- export_cells %>%
-  filter(!is.na(consensus_cluster)) %>%
-  count(consensus_cluster, consensus_raw, n_methods_nonmissing, name = "n_cells") %>%
+consensus_cluster_summary <- consensus_map %>%
+  select(consensus_cluster, n_cells, n_clonotypes, patient, consensus_methods, n_methods_support,
+         gliph_clusters, tcrdist_clusters, giana_clusters, consensus_raw) %>%
   mutate(frac = n_cells / sum(n_cells)) %>%
   arrange(desc(n_cells))
 save_table_safe(consensus_cluster_summary, "consensus_cluster_summary.tsv")

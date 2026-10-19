@@ -2,7 +2,7 @@
 """
 Bridge: BULK_TO_EXPORT
 
-Builds a per-cell export table (the format CLUSTER_TO_SC / CONSENSUS / REPERTOIRE /
+Builds a per-cell export table (the format CLUSTER_TO_SC / CONSENSUS /
 MASTER_SUMMARY consume) from clonotype-level data, so those steps can run without a GEX
 Seurat object - on the single-cell VDJ-only route and on bulk TCR data.
 

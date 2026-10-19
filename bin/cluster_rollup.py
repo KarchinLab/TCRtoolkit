@@ -101,11 +101,11 @@ def read_gliph2(paths):
 
 
 def read_tcrdist(paths):
-    # SAMPLE emits clone_df.csv alongside the .hdf5/.csv distance matrices; only the
-    # clone tables are parseable here, so ignore everything else rather than warning on it.
+    # TCRDIST3_MATRIX writes one <patient>_tcrdist_patient_clones.csv per patient (plus
+    # per-sample blocks for the reports, which would double count here - skip them).
     frames = []
     for p in paths:
-        if not usable(p) or not p.endswith("_clone_df.csv"):
+        if not usable(p) or not p.endswith("_tcrdist_patient_clones.csv"):
             continue
         try:
             df = pd.read_csv(p, low_memory=False)
@@ -114,22 +114,18 @@ def read_tcrdist(paths):
             continue
         if df.empty:
             continue
-        df["__group"] = tag_from_name(p, "_clone_df.csv")
+        df["__group"] = tag_from_name(p, "_tcrdist_patient_clones.csv")
         frames.append(df)
     return pd.concat(frames, ignore_index=True) if frames else None
 
 
 def tcrdist_clusters(matrix_paths, radius):
     """
-    Threshold each sample's pairwise distance matrix at `radius` and count connected
-    components of size >= 2 - the same definition enrich_seurat.R uses.
+    Fallback when the export has no tcrdist_cluster column (consensus disabled): threshold
+    each patient's distance matrix at `radius` and count connected components of size >= 2,
+    the definition enrich_seurat.R uses.
 
-    Only the Full-SC route ran that clustering (it lives in enrich_seurat.R), so on the
-    VDJ-only route TCRdist3 produced distance matrices that were never thresholded and the
-    method reported 0 clusters. Doing it here makes TCRdist3 comparable to GIANA/GLIPH2 on
-    both routes.
-
-    Returns (n_clusters_total, {sample: n_clusters}, n_clustered_clones).
+    Returns (n_clusters_total, {patient: n_clusters}, n_clustered_clones, detail).
     """
     try:
         import numpy as np
@@ -148,12 +144,14 @@ def tcrdist_clusters(matrix_paths, radius):
         if not usable(p):
             continue
         name = os.path.basename(p)
-        sample = name.split("_distance_matrix")[0]
+        sample = name.split("_tcrdist_patient_matrix")[0]
         ext = os.path.splitext(p)[1].lower()
         try:
             if ext == ".csv":
                 full = np.loadtxt(p, delimiter=",")
-                adj = sp.csr_matrix((full <= radius) & (full > 0))
+                adj = (full <= radius)
+                np.fill_diagonal(adj, False)
+                adj = sp.csr_matrix(adj)
             elif ext == ".hdf5":
                 import h5py
                 with h5py.File(p, "r") as f:
@@ -161,10 +159,10 @@ def tcrdist_clusters(matrix_paths, radius):
                         (f["data"][:], f["indices"][:], f["indptr"][:]),
                         shape=tuple(f["shape"][:]),
                     )
-                # Stored sparse: an absent entry means "not within the sparsity cutoff",
-                # so only explicit non-zero entries can be within radius.
+                # Stored sparse: an absent entry means "beyond the sparsity cutoff" and a
+                # true zero distance is stored as -1.
                 coo = m.tocoo()
-                keep = (coo.data <= radius) & (coo.data > 0)
+                keep = (coo.data <= radius) & (coo.row != coo.col)
                 adj = sp.coo_matrix(
                     (np.ones(keep.sum()), (coo.row[keep], coo.col[keep])), shape=m.shape
                 ).tocsr()
@@ -180,7 +178,7 @@ def tcrdist_clusters(matrix_paths, radius):
         per_sample[sample] = int(len(real))
         total_clustered += int(real.sum())
         for cid, n in real.items():
-            detail_rows.append({"sample": sample, "cluster": int(cid), "n_members": int(n)})
+            detail_rows.append({"patient": sample, "cluster": int(cid), "n_members": int(n)})
 
     detail = pd.DataFrame(detail_rows).sort_values("n_members", ascending=False) \
              if detail_rows else None
@@ -301,7 +299,7 @@ def main():
     ap.add_argument("--gliph2", nargs="*", default=[])
     ap.add_argument("--tcrdist", nargs="*", default=[])
     ap.add_argument("--tcrdist-matrix", nargs="*", default=[],
-                    help="per-sample distance matrices (.hdf5/.csv) to threshold at --tcrdist-radius")
+                    help="per-patient distance matrices (.hdf5/.csv) to threshold at --tcrdist-radius")
     ap.add_argument("--tcrdist-radius", type=float, default=24.0)
     ap.add_argument("--export-cells", default=None)
     args = ap.parse_args()
@@ -372,43 +370,44 @@ def main():
                      vgene_usage(gliph, "TRBV", "GLIPH2"), "patient/V-gene rows")
 
     # ── TCRdist3 ─────────────────────────────────────────────────────────────
-    # clone_df carries no cluster labels (those come from thresholding the distance
-    # matrix in enrich_seurat.R), so cluster counts are taken from the per-cell export
-    # when CLUSTER_TO_SC has already written a tcrdist_cluster column.
+    # TCRdist3 clusters are the connected components enrich_seurat.R (CLUSTER_TO_SC) cuts
+    # from each patient's distance matrix and writes as the export's tcrdist_cluster
+    # column; the patient clone tables give the size of what was compared.
     if tcrd is not None:
         cdr3 = resolve_cdr3(tcrd)
-
-        # Prefer the per-cell tcrdist_cluster column when CLUSTER_TO_SC already wrote it
-        # (Full SC); otherwise threshold the distance matrices here so the VDJ-only route
-        # reports real cluster counts instead of 0.
         n_tcrdist_clusters = 0
-        per_sample = {}
         n_clustered_clones = 0
-        if export is not None and "tcrdist_cluster" in export.columns:
-            n_tcrdist_clusters = int(export["tcrdist_cluster"].nunique(dropna=True))
+        td_detail = None
+        if export is not None and "tcrdist_cluster" in export.columns and cdr3_export is not None:
+            lab = export["tcrdist_cluster"].astype("string")
+            members = pd.DataFrame({
+                "__group": lab.str.replace(r"_T\d+$", "", regex=True),
+                "tcrdist_cluster": lab,
+                "cdr3": cdr3_export.astype("string"),
+            }).dropna().drop_duplicates()
+            n_tcrdist_clusters = int(members["tcrdist_cluster"].nunique())
+            n_clustered_clones = int(len(members))
+            td_detail = cluster_detail(members, "tcrdist_cluster", members["cdr3"], "TCRdist3")
+            clustered["TCRdist3"] = set(members["cdr3"])
         elif args.tcrdist_matrix:
-            n_tcrdist_clusters, per_sample, n_clustered_clones, td_detail = tcrdist_clusters(
+            n_tcrdist_clusters, _per_patient, n_clustered_clones, td_detail = tcrdist_clusters(
                 args.tcrdist_matrix, args.tcrdist_radius
             )
-            write_detail(args.outdir, "tcrdist_cluster_detail.tsv", td_detail, "clusters")
+        write_detail(args.outdir, "tcrdist_cluster_detail.tsv", td_detail, "clusters")
 
+        per_patient_clones = tcrd.groupby("__group").size()
         rows = [
-            ("Samples analysed", tcrd["__group"].nunique()),
+            ("Patients analysed", tcrd["__group"].nunique()),
             ("Clones in distance matrices", int(len(tcrd))),
             ("Unique CDR3b", int(cdr3.nunique()) if cdr3 is not None else 0),
-            ("Median clones per sample", float(tcrd.groupby("__group").size().median())),
-            ("Max clones per sample", int(tcrd.groupby("__group").size().max())),
+            ("Median clones per patient", float(per_patient_clones.median())),
+            ("Max clones per patient", int(per_patient_clones.max())),
             (f"Clusters detected (radius {args.tcrdist_radius:g})", n_tcrdist_clusters),
         ]
         if n_clustered_clones:
-            rows.append(("Clones in a cluster", n_clustered_clones))
-        if per_sample:
-            rows.append(("Median clusters per sample",
-                         float(pd.Series(list(per_sample.values())).median())))
+            rows.append(("Clustered CDR3b (patient-scoped)", n_clustered_clones))
         write_rollup(args.outdir, "tcrdist3_summary_rollup.tsv", rows)
 
-        if cdr3 is not None:
-            clustered["TCRdist3"] = set(cdr3.dropna().unique())
         if n_tcrdist_clusters:
             counts["TCRdist3"] = n_tcrdist_clusters
 

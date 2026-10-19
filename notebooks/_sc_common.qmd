@@ -172,27 +172,10 @@ if _cells is not None and 'cell_id' in _cells.columns:
 
     _cons = sc_read('cells', 'consensus_export_cells.tsv')
     if _cons is not None and 'cell_id' in _cons.columns:
-        keep = [k for k in ('cell_id', 'consensus_cluster', 'n_methods_nonmissing',
+        keep = [k for k in ('cell_id', 'consensus_cluster', 'consensus_methods', 'n_methods_nonmissing',
                             'giana_cluster', 'gliph_cluster', 'tcrdist_cluster') if k in _cons.columns]
         _cons = _cons[keep].assign(cell_id=lambda d: d['cell_id'].astype(str))
         c = c.drop(columns=[k for k in keep if k != 'cell_id' and k in c.columns]).merge(_cons, on='cell_id', how='left')
-        # Exports written before the consensus labels existed lack consensus_cluster:
-        # rebuild it with the CONSENSUS module's default rule (majority vote across
-        # GLIPH2 / TCRdist3 / GIANA, at least two methods agreeing).
-        if 'consensus_cluster' not in c.columns:
-            labs = [c[k].astype('string').str.strip().replace('', pd.NA)
-                    for k in ('gliph_cluster', 'tcrdist_cluster', 'giana_cluster') if k in c.columns]
-            if len(labs) >= 2:
-                L = pd.concat(labs, axis=1)
-                L.columns = range(L.shape[1])
-                n = L.notna().sum(axis=1)
-                stacked = L.stack().rename('lab').reset_index()
-                top = (stacked.groupby(['level_0', 'lab']).size().rename('k').reset_index()
-                              .sort_values(['level_0', 'k', 'lab'], ascending=[True, False, True])
-                              .drop_duplicates('level_0').set_index('level_0'))
-                raw = top['lab'].reindex(L.index).where(n >= 2)
-                ids = {v: f'CONS_{i + 1}' for i, v in enumerate(raw.value_counts().index)}
-                c['consensus_cluster'] = raw.map(ids)
 
     _conga = sc_read('conga', 'conga_export_cells.tsv')
     if _conga is not None and 'conga_score' in _conga.columns:

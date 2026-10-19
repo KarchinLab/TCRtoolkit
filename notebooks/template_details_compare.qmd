@@ -2,37 +2,24 @@
 title: "Details — Comparison"
 format:
   html:
-    theme: flatly
     toc: true
-    toc_depth: 3
-    code-fold: true
-    embed-resources: true
+    toc-depth: 2
+    toc-location: left
     number-sections: true
-    smooth-scroll: true
-    grid:
-      body-width: 1000px
-      margin-width: 300px
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
 execute:
-  cache: false
-  warnings: false
+  echo: false
+  warning: false
+  message: false
 jupyter: python3
 ---
 
-Thank you for using TCRtoolkit! This report is generated from the data you provided. 
+{{< include ./_report_style.qmd >}}
 
-:::{.callout-note collapse="true"}
-## Document Information
-**Current Version:** 1.0-beta   
-**Last Updated:** March 2026  
-**Maintainer:** BTC Data Science Team   
-**Notes:** 
-:::
-
-::: {.callout-note collapse="true"}
-## Notebook Analysis Scope
-This notebook provides a detailed cross-sample and longitudinal comparison analysis
-(clonal dynamics, repertoire overlap, and TCR publicity).
-:::
+A detailed cross-sample and longitudinal comparison: clonal dynamics, repertoire overlap, and TCR publicity.
 
 ```{python}
 #| tags: [parameters]

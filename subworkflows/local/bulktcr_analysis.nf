@@ -9,6 +9,7 @@ include { ANNOTATE } from './annotate'
 include { SAMPLE }   from './sample'
 include { PATIENT }  from './patient'
 include { COMPARE }  from './compare'
+include { REPERTOIRE_METRICS } from '../../modules/local/sample/repertoire_metrics'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -37,6 +38,9 @@ workflow BULKTCR_ANALYSIS {
     convert_files       // channel: list of [meta, file] clonotype tables for the
                          //   discovery-brief report's VDJdb section
     report_samplesheet  // value channel: samplesheet the report notebooks read
+    repertoire_clones   // value channel: clone table for REPERTOIRE_METRICS - single-cell
+                        //   paired_clones.tsv, or NO_FILE for bulk (uses concat_cdr3_sorted)
+    run_tcrpheno        // bool: run TCRPHENO (bulk and single-cell VDJ-only; not VDJ+GEX)
 
     main:
     ANNOTATE( sample_map, concat_cdr3 )
@@ -63,30 +67,46 @@ workflow BULKTCR_ANALYSIS {
     def ch_shared_cdr3 = channel.empty()
     def ch_clonal_dynamics_files = channel.value([])
     def ch_reports = channel.empty()
+    def ch_sample_stats = channel.empty()
+    def ch_repertoire_tables = channel.empty()
 
     if (levels.contains('sample')) {
         SAMPLE(
             ANNOTATE.out.processed_samples,
             per_sample_stats,
             ANNOTATE.out.cdr3_pgen,
-            ANNOTATE.out.olga_stats
+            ANNOTATE.out.olga_stats,
+            run_tcrpheno
         )
 
         ch_sample_csv = SAMPLE.out.sample_csv
-        ch_tcrdist_clone_df = SAMPLE.out.tcrdist_clone_df
-        ch_tcrdist_output = SAMPLE.out.tcrdist_output
         ch_v_family = SAMPLE.out.v_family
         ch_j_family = SAMPLE.out.j_family
-        ch_tcrdist_files = SAMPLE.out.tcrdist_files
         ch_olga_files = SAMPLE.out.olga_files
         ch_vdjdb_files = SAMPLE.out.vdjdb_files
         ch_convergence_files = SAMPLE.out.convergence_files
         ch_tcrpheno_files = SAMPLE.out.tcrpheno_files
+
+        // Diversity, clone-size bins, overlap and sharing: computed once here and read by
+        // every report notebook and the Master Summary.
+        def metrics_clones = repertoire_clones
+            .combine(ANNOTATE.out.concat_cdr3_sorted)
+            .map { rc, concat -> rc.name == 'NO_FILE' ? concat : rc }
+        REPERTOIRE_METRICS(
+            SAMPLE.out.sample_csv.collectFile(name: "sample_calc_stats.csv", keepHeader: true, skip: 1, sort: true),
+            metrics_clones,
+            report_samplesheet
+        )
+        ch_sample_stats = REPERTOIRE_METRICS.out.sample_stats
+        ch_repertoire_tables = REPERTOIRE_METRICS.out.tables
     }
 
     if (levels.contains('patient')) {
         PATIENT( ANNOTATE.out.processed_samples )
 
+        ch_tcrdist_clone_df = PATIENT.out.tcrdist_patient_clones
+        ch_tcrdist_output = PATIENT.out.tcrdist_patient_matrix
+        ch_tcrdist_files = PATIENT.out.tcrdist_files
         ch_giana_clusters = PATIENT.out.giana_clusters
         ch_gliph2_cluster_details = PATIENT.out.gliph2_cluster_details
         ch_giana_files = PATIENT.out.giana_files
@@ -109,27 +129,35 @@ workflow BULKTCR_ANALYSIS {
 
     if (run_reports && levels.contains('sample')) {
 
-        def sample_stats_agg = ch_sample_csv
-            .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
+        def sample_stats_agg = ch_sample_stats
+        def overlap_tables = ch_repertoire_tables
+            .map { fs -> fs.findAll { f -> f.name in ['overlap_samples.tsv', 'overlap_patients.tsv'] } }
 
         // input_format can now only be adaptive/airr (cellranger removed), so the
         // single-cell phenotype notebook branch is dead: always use the bulk notebook,
         // and there are never pseudobulk-phenotype files to stage.
-        def pheno_notebook = file(params.template_pheno_bulk)
+        // Without TCRPHENO the discovery brief includes an empty stub instead.
+        def pheno_notebook = run_tcrpheno ? file(params.template_pheno_bulk)
+                                          : file("${file(params.template_qc).parent}/_tcrpheno_skipped.qmd")
         def pseudobulk_pheno_files = channel.value([])
         // Shared meta/timepoint-ranking setup, {{< include >}}'d by every report
         // notebook (and several of their nested templates) instead of each
         // carrying its own copy - stage it alongside every rendered notebook.
         def timepoint_order_partial = file("${file(params.template_qc).parent}/_timepoint_order.qmd")
+        // Shared Master Summary look (style, interactive-figures note, plot theme) of the
+        // QC and Details reports.
+        def report_style_partial = file("${file(params.template_qc).parent}/_report_style.qmd")
 
         ch_qc_report = sample_stats_agg
             .combine(ANNOTATE.out.concat_cdr3_sorted)
-            .map { sample_stats_csv, concat_cdr3_sorted ->
+            .combine(overlap_tables.map { l -> [l] })
+            .map { sample_stats_csv, concat_cdr3_sorted, overlap_l ->
                 tuple(
                     file(params.template_qc),
                     [sample_stats_csv,
                     concat_cdr3_sorted,
-                    timepoint_order_partial],
+                    timepoint_order_partial,
+                    report_style_partial] + overlap_l,
                     []
                 )
             }
@@ -144,7 +172,7 @@ workflow BULKTCR_ANALYSIS {
             .combine(ch_vdjdb_files.map { l -> [l] })
             .combine(ch_convergence_files.map { l -> [l] })
             .map { sample_stats_csv, concat_cdr3_sorted, v_family_file, j_family_file, tcrdist_files_l, olga_files_l, vdjdb_files_l, convergence_files_l ->
-                def include_files = [file("${file(params.template_details_sample).parent}/template_sample.qmd"), timepoint_order_partial]
+                def include_files = [file("${file(params.template_details_sample).parent}/template_sample.qmd"), timepoint_order_partial, report_style_partial]
                 def report_files = [sample_stats_csv, concat_cdr3_sorted, v_family_file, j_family_file] +
                     tcrdist_files_l + olga_files_l + vdjdb_files_l + convergence_files_l + include_files
                 def staged_layout = [
@@ -174,10 +202,11 @@ workflow BULKTCR_ANALYSIS {
                 .combine(ch_tcrpheno_files.map { l -> [l] })
                 .combine(pseudobulk_pheno_files.map { l -> [l] })
                 .combine(ch_clonal_dynamics_files.map { l -> [l] })
-                .map { sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, tcrdist_files_l, vdjdb_files_l, convert_files_l, tcrpheno_files_l, pseudobulk_files_l, clonal_dynamics_files_l ->
+                .combine(overlap_tables.map { l -> [l] })
+                .map { sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, tcrdist_files_l, vdjdb_files_l, convert_files_l, tcrpheno_files_l, pseudobulk_files_l, clonal_dynamics_files_l, overlap_l ->
                     // convert_files_l is [meta, file] pairs, staged as ${meta.sample}_airr.tsv regardless of source basename.
                     def report_files = [sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, pheno_notebook, timepoint_order_partial] +
-                        tcrdist_files_l + vdjdb_files_l + convert_files_l.collect { _meta, f -> f } + tcrpheno_files_l + pseudobulk_files_l + clonal_dynamics_files_l
+                        tcrdist_files_l + vdjdb_files_l + convert_files_l.collect { _meta, f -> f } + tcrpheno_files_l + pseudobulk_files_l + clonal_dynamics_files_l + overlap_l
                     def staged_layout = [
                         ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
                         ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name],
@@ -188,7 +217,8 @@ workflow BULKTCR_ANALYSIS {
                         convert_files_l.collect { meta, f -> ["${params.project_name}/convert/${meta.sample}_airr.tsv", f.name] } +
                         tcrpheno_files_l.collect { f -> ["${params.project_name}/tcrpheno/${f.name}", f.name] } +
                         pseudobulk_files_l.collect { f -> ["${params.project_name}/pseudobulk/${f.name}", f.name] } +
-                        clonal_dynamics_files_l.collect { f -> ["${params.project_name}/clonal_dynamics/${f.name}", f.name] }
+                        clonal_dynamics_files_l.collect { f -> ["${params.project_name}/clonal_dynamics/${f.name}", f.name] } +
+                        overlap_l.collect { f -> ["${params.project_name}/repertoire/${f.name}", f.name] }
                     tuple(
                         file(params.template_discovery_brief),
                         report_files,
@@ -207,7 +237,8 @@ workflow BULKTCR_ANALYSIS {
                     def include_files = [
                         file("${details_notebooks_dir}/template_overlap.qmd"),
                         file("${details_notebooks_dir}/template_sharing.qmd"),
-                        timepoint_order_partial
+                        timepoint_order_partial,
+                        report_style_partial
                     ]
                     tuple(
                         file(params.template_details_compare),
@@ -230,7 +261,8 @@ workflow BULKTCR_ANALYSIS {
             def patient_include_files = [
                 file("${patient_notebooks_dir}/template_giana.qmd"),
                 file("${patient_notebooks_dir}/template_gliph.qmd"),
-                timepoint_order_partial
+                timepoint_order_partial,
+                report_style_partial
             ]
 
             ch_details_patient_report = sample_stats_agg
@@ -273,8 +305,10 @@ workflow BULKTCR_ANALYSIS {
     olga_stats         = ANNOTATE.out.olga_stats
 
     sample_csv        = ch_sample_csv
-    tcrdist_clone_df  = ch_tcrdist_clone_df
-    tcrdist_output    = ch_tcrdist_output
+    sample_stats      = ch_sample_stats        // sample_stats.csv with diversity merged in
+    repertoire_tables = ch_repertoire_tables   // REPERTOIRE_METRICS *.tsv
+    tcrdist_clone_df  = ch_tcrdist_clone_df    // <patient>_tcrdist_patient_clones.csv
+    tcrdist_output    = ch_tcrdist_output      // [patient, <patient>_tcrdist_patient_matrix.*]
     v_family          = ch_v_family
     j_family          = ch_j_family
     tcrdist_files     = ch_tcrdist_files

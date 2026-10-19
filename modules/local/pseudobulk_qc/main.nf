@@ -11,7 +11,7 @@
  *                         (QC summary or V-family usage) for reporting.
  *
  * Diversity metrics (Shannon/Simpson/etc.) are deliberately NOT computed here —
- * the REPERTOIRE module already reports them on the same cell counts.
+ * REPERTOIRE_METRICS computes them once for the cohort.
  */
 
 process PSEUDOBULK_QC_CALC {

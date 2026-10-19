@@ -82,6 +82,9 @@ project_dir=f"{project_dir}/{project_name}"
 sample_stats_csv = f"{project_dir}/sample/sample_stats.csv"
 concat_file = f"{project_dir}/annotate/concatenated_cdr3_sorted.tsv"  
 pgen_csv = f"{project_dir}/tcrsharing/cdr3_sharing.tsv"
+# Pairwise overlap from REPERTOIRE_METRICS (same clone unit as sample_stats.csv).
+overlap_samples_file = f"{project_dir}/repertoire/overlap_samples.tsv"
+overlap_patients_file = f"{project_dir}/repertoire/overlap_patients.tsv"
 
 # Define dirs
 tcrdist_dir = f"{project_dir}/tcrdist3/"
@@ -205,7 +208,7 @@ group_opts_all = [
     col for col in df.columns
     if col not in exclude_cols
     and col not in exclude_from_all_samples
-    and df[col].nunique() < 35
+    and col in meta.columns and df[col].nunique() < 35
 ]
 
 # 3. Define Groups for "By Patient" Tab (Only timepoint)
@@ -479,69 +482,30 @@ Where $p_{ai}$ and $p_{bi}$ are the relative frequencies of the $i$-th clonotype
 #| fig-width: 7
 #| fig-height: 7
 
+import os
 import pandas as pd
 import numpy as np
-from scipy import sparse
-from sklearn.preprocessing import normalize
 from scipy.spatial.distance import pdist
 from scipy.cluster.hierarchy import linkage, leaves_list
 import plotly.express as px
 
-def calculate_overlaps(df, meta):
-    # --- 1. PREP DATA ---
-    # Ensure patient mapping is available
-    sample_to_patient = meta.set_index('sample')[subject_col].to_dict()
-    df[subject_col] = df['sample'].map(sample_to_patient)
-    df = df.dropna(subset=[subject_col, 'junction_aa', 'duplicate_count'])
-
-    samples = sorted(df['sample'].unique())
-    patients = sorted(df[subject_col].unique())
-    clones = sorted(df['junction_aa'].unique())
-
-    clone_map = {c: i for i, c in enumerate(clones)}
-    n_clones = len(clones)
-
-    # --- 2. MORISITA (Sample-level, Frequency-based) ---
-    sample_map = {s: i for i, s in enumerate(samples)}
-    row_idx_s = df['sample'].map(sample_map).values
-    col_idx_s = df['junction_aa'].map(clone_map).values
-    values_s = df['duplicate_count'].values
-    
-    mat_s = sparse.coo_matrix((values_s, (row_idx_s, col_idx_s)), shape=(len(samples), n_clones)).tocsr()
-    
-    mat_freq = normalize(mat_s, norm='l1', axis=1)
-    simpson = mat_freq.power(2).sum(axis=1).A1
-    num_m = 2 * mat_freq.dot(mat_freq.T).toarray()
-    den_m = simpson[:, None] + simpson[None, :]
-    
-    morisita = np.divide(num_m, den_m, out=np.zeros_like(num_m), where=den_m!=0)
-    morisita_df = pd.DataFrame(morisita, index=samples, columns=samples)
-
-    # --- 3. JACCARD (Patient-level, Binary-based) ---
-    # Aggregate counts by patient/junction_aa to get unique clones per patient
-    patient_df = df.groupby([subject_col, 'junction_aa']).size().reset_index()
-
-    pat_map = {p: i for i, p in enumerate(patients)}
-    row_idx_p = patient_df[subject_col].map(pat_map).values
-    col_idx_p = patient_df['junction_aa'].map(clone_map).values
-    
-    # Binary matrix: 1 if patient has clone, else 0
-    mat_p_bin = sparse.coo_matrix((np.ones(len(patient_df)), (row_idx_p, col_idx_p)), 
-                                  shape=(len(patients), n_clones)).tocsr()
-    
-    intersection = mat_p_bin.dot(mat_p_bin.T).toarray()
-    row_sums = mat_p_bin.sum(axis=1).A1
-    union_matrix = row_sums[:, None] + row_sums[None, :] - intersection
-    
-    jaccard = np.divide(intersection, union_matrix, 
-                        out=np.zeros_like(intersection, dtype=float), 
-                        where=union_matrix!=0)
-    jaccard_df = pd.DataFrame(jaccard, index=patients, columns=patients)
-
+def read_overlaps():
+    """Patient-level Jaccard and sample-level Morisita-Horn, computed by REPERTOIRE_METRICS."""
+    def square(path, a, b, value):
+        long = pd.read_csv(path, sep='\t')
+        m = long.pivot(index=a, columns=b, values=value)
+        return m.loc[m.index, m.index]
+    morisita_df = square(overlap_samples_file, 'sample_a', 'sample_b', 'morisita_horn')
+    jaccard_df = (square(overlap_patients_file, 'patient_a', 'patient_b', 'jaccard')
+                  if os.path.isfile(overlap_patients_file) else pd.DataFrame())
     return jaccard_df, morisita_df
 
 # --- EXECUTION ---
-jaccard_df, morisita_df = calculate_overlaps(concat_df, meta)
+jaccard_df, morisita_df = read_overlaps()
+
+# Later sections group concat_df by patient (previously added as a side effect of the
+# in-notebook overlap calculation).
+concat_df[subject_col] = concat_df['sample'].map(meta.set_index('sample')[subject_col].to_dict())
 
 # --- RENAME MORISITA SAMPLES TO ALIAS (If applicable) ---
 if alias_col in meta.columns:
@@ -1457,13 +1421,13 @@ print(":::\n")
 Scatter plots depicting the relative frequency of individual clones between two distinct timepoints for each patient and sample origin.
 
 
-## Similar TCR sequences within samples {#sec-tcrdist}
+## Similar TCR sequences within patients {#sec-tcrdist}
 
 [TCRdist](https://elifesciences.org/articles/68605) is a **metric that quantifies the similarity between any two T-cell receptors (TCRs) by calculating a biochemically-aware distance based on their amino acid sequences**. Instead of just checking if two TCR sequences are identical, **TCRdist focuses on the key regions that bind to antigens: Complementarity-Determining Regions (CDRs).** It compares the amino acid sequences of the CDR1, CDR2 (obtained from the V gene), and especially the hypervariable CDR3 loops of two TCRs. The "distance" is calculated using a substitution matrix (like BLOSUM62) that scores how similar two different amino acids are in their biochemical properties. Swapping two functionally similar amino acids results in a small distance penalty, while swapping two very different ones results in a large penalty. The total distance is a weighted sum of these scores, with the CDR3 distance contributing the most.
 
 **Why This Metric Is Helpful?** 🌐  
 The primary benefit of TCRdist is its ability to identify groups of T-cells that are likely to recognize the same antigen, even if their TCRs are not identical. This phenomenon is known as cross-reactivity.
-By calculating the distance between all TCRs in your sample, you can move beyond analyzing single, identical clones and instead identify functional "neighborhoods" of similar TCRs. This provides a much more comprehensive and biologically accurate picture of an immune response. It allows you to group related T-cells together to see the full breadth of the response to a specific antigen, rather than just the single most expanded clone.
+By calculating the distance between all TCRs of a patient (all of its samples together), you can move beyond analyzing single, identical clones and instead identify functional "neighborhoods" of similar TCRs. This provides a much more comprehensive and biologically accurate picture of an immune response. It allows you to group related T-cells together to see the full breadth of the response to a specific antigen, rather than just the single most expanded clone.
 
 **What is similar enough?**   
 Clonotypes were grouped into meta-clonotypes using TCRdist3 with a similarity radius threshold of 24 units. This threshold was selected to permit minor biochemical variations (approximately 1–2 amino acid substitutions within the CDR3 loop) while maintaining high sequence specificity. While this radius is permissive enough to capture chemically similar motifs, it is stringent enough to exclude unrelated sequences in the local density space. Users are encouraged to examine the nearest-neighbor distance distribution of their own datasets (first tab on Figure below) to validate that this threshold effectively separates clonal variants from the background repertoire.
@@ -1622,32 +1586,25 @@ else:
                 )
             ]
 
-            patient_samples = patient_df['sample'].unique()
-            for sample_id in patient_samples:
-                dist_file = os.path.join(tcrdist_dir, f'{sample_id}_distance_matrix.hdf5')
-                clone_file = os.path.join(tcrdist_dir, f'{sample_id}_clone_df.csv')
-
-                if not os.path.exists(dist_file) or not os.path.exists(clone_file): continue
-
+            # One TCRdist3 matrix per patient (all its samples), so similar TCRs are linked
+            # across timepoints as well as within them. Rows sharing a CDR3b share a node.
+            patient_dist = os.path.join(tcrdist_dir, f'{patient}_tcrdist_patient_matrix.hdf5')
+            patient_clones = os.path.join(tcrdist_dir, f'{patient}_tcrdist_patient_clones.csv')
+            if os.path.exists(patient_dist) and os.path.exists(patient_clones):
                 try:
-                    with h5py.File(dist_file, 'r') as hf:
-                        data = hf['data'][:]
-                        indices = hf['indices'][:]
-                        indptr = hf['indptr'][:]
-                        dist_matrix = csr_matrix((data, indices, indptr)).toarray()
-
-                    sample_clones_df = pd.read_csv(clone_file)
-                    tcr_names = sample_clones_df['cdr3_b_aa'].tolist()
-                    valid_indices = [i for i, t in enumerate(tcr_names) if t in tcr_to_idx]
-
-                    for i, j in itertools.combinations(valid_indices, 2):
-                        distance = dist_matrix[i, j]
-                        if 0 < distance <= DISTANCE_THRESHOLD:
-                            u = tcr_to_idx[tcr_names[i]]
-                            v = tcr_to_idx[tcr_names[j]]
+                    with h5py.File(patient_dist, 'r') as hf:
+                        dist_matrix = csr_matrix((hf['data'][:], hf['indices'][:], hf['indptr'][:]),
+                                                 shape=tuple(hf['shape'][:])).tocoo()
+                    tcr_names = pd.read_csv(patient_clones)['cdr3_b_aa'].to_numpy()
+                    # Stored entries are within the sparsity cutoff; -1 marks a zero distance.
+                    keep = (dist_matrix.data <= DISTANCE_THRESHOLD) & (dist_matrix.row < dist_matrix.col)
+                    for i, j in zip(dist_matrix.row[keep], dist_matrix.col[keep]):
+                        u = tcr_to_idx.get(tcr_names[i])
+                        v = tcr_to_idx.get(tcr_names[j])
+                        if u is not None and v is not None and u != v:
                             g.add_edge(u, v)
                 except Exception as e:
-                    print(f"Skipping {sample_id} due to error: {e}")
+                    print(f"Skipping {patient} due to error: {e}")
 
             g.simplify()
             g.delete_vertices(g.vs.select(_degree=0))

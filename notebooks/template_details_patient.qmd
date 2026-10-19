@@ -2,37 +2,24 @@
 title: "Details — Patient"
 format:
   html:
-    theme: flatly
     toc: true
-    toc_depth: 3
-    code-fold: true
-    embed-resources: true
+    toc-depth: 2
+    toc-location: left
     number-sections: true
-    smooth-scroll: true
-    grid:
-      body-width: 1000px
-      margin-width: 300px
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
 execute:
-  cache: false
-  warnings: false
+  echo: false
+  warning: false
+  message: false
 jupyter: python3
 ---
 
-Thank you for using TCRtoolkit! This report is generated from the data you provided. 
+{{< include ./_report_style.qmd >}}
 
-:::{.callout-note collapse="true"}
-## Document Information
-**Current Version:** 1.0-beta   
-**Last Updated:** March 2026  
-**Maintainer:** BTC Data Science Team   
-**Notes:** 
-:::
-
-::: {.callout-note collapse="true"}
-## Notebook Analysis Scope
-This notebook provides patient-level clonotype clustering analysis (GIANA, and GLIPH2
-when `--use_gliph2` is enabled), aggregating all samples belonging to each individual.
-:::
+Patient-level clonotype clustering (GIANA, and GLIPH2 when `--use_gliph2` is enabled), aggregating all samples belonging to each individual.
 
 ```{python}
 #| tags: [parameters]

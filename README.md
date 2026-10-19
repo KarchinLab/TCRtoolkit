@@ -56,7 +56,7 @@ The pipeline supports multiple levels of analysis, controlled by `--workflow_lev
 | Level | Description |
 |---|---|
 | `sample` | Per-sample QC and repertoire statistics |
-| `patient` | Patient-level clonotype aggregation and comparison |
+| `patient` | Patient-level clonotype clustering: GIANA, GLIPH2 (`--use_gliph2`) and TCRdist3, each over all of a patient's samples |
 | `compare` | Cross-cohort repertoire comparison and overlap |
  
 Levels can be combined: `--workflow_level sample,patient,compare`
@@ -77,14 +77,33 @@ After the pipeline finishes, `TCRtoolkit` generates interactive HTML reports usi
  
 Certain sub-reports are automatically appended based on input and workflow options:
  
-- `--input_format adaptive` → includes bulk phenotype report
+- TCRpheno (phenotype predicted from the TCR β sequence) runs on bulk data and the single-cell VDJ-only route, and its section is added to the discovery brief. It is skipped on the single-cell VDJ+GEX route, where the GEX object gives each cell's measured phenotype.
+- The per-sample TCRdist3 sections read each sample's block of its patient's TCRdist3 matrix, so they need `patient` in `--workflow_level`.
 - `--workflow_level` includes `sample` and `patient` → renders `template_details_patient.qmd` (patient-level clonotype analysis)
 - `--use_gliph2` → additionally includes GLIPH2 clustering in the patient details report
 - `--mode singlecell` → the same five notebooks are rendered, each with a single-cell section appended (`notebooks/_sc_*.qmd`): VDJ / GEX-matching QC, cell states of expanded and dynamically changing clones, CoNGA and TCRi, blood vs tissue, clone tracking over time, and cell-level consensus clusters. The report samplesheet is built from `--sample_sheet` (`patient_id`, `timepoint`, `origin`/`tissue` columns).
 
+### Repertoire metrics (both modalities)
+
+Diversity, clone-size bins, overlap and clone sharing are computed once, by `REPERTOIRE_METRICS` (`bin/repertoire_metrics.py`) in the `sample` stage, and every report notebook and the Master Summary reads its tables instead of recomputing them:
+
+| Output | Contents |
+|---|---|
+| `sample/sample_stats.csv` | Per-sample stats with diversity: `num_clones`, `num_TCRs`, `clonality`, `simpson_index[_corrected]`, `shannon_entropy`, `inverse_simpson`, `gini_coefficient`, `hill_q0`–`hill_q2`, `clone_unit` |
+| `repertoire/diversity_by_group.tsv` | The same metrics on clones pooled per patient / condition / timepoint / origin |
+| `repertoire/clone_size_bins.tsv` | Clones and TCRs per frequency bin (`--clone_bin_breaks`, `--clone_bin_labels`) |
+| `repertoire/overlap_samples.tsv` | Every sample pair: shared clones, Jaccard, Sørensen, Morisita-Horn (within-patient pairs included) |
+| `repertoire/overlap_patients.tsv` | Every patient pair (clones pooled per patient): shared clones, Jaccard |
+| `repertoire/clone_sharing.tsv` | Per clone: samples, patients, conditions and timepoints it occurs in |
+| `repertoire/repertoire_summary.tsv` | Cohort rollup |
+
+The clone unit depends on the modality: bulk counts TRB clonotypes (reads/templates), and single-cell counts paired clones (`A:<CDR3a>|B:<CDR3b>`, cells), taken from `paired_clones.tsv` written by the route's bridge (`SC_TO_CDR3` or `VDJ_TO_BULK`), which define the clone identically. The public-clone analysis in `tcrsharing` stays on TRB CDR3 because generation probability (OLGA) is defined per CDR3.
+
 ### Clonotype clustering and Master Summary (both modalities)
 
 After the cohort comparison, both modalities run the same chain: a per-cell (single-cell) or per-clonotype (bulk) export → `CLUSTER_TO_SC` (GIANA / GLIPH2 / TCRdist3 clusters mapped onto those rows) → `CONSENSUS_CLUSTERING` → `CLUSTER_ROLLUP` → `MASTER_SUMMARY`. Without a GEX object these steps run on the export table alone. Bulk runs need `compare` plus `sample` and/or `patient`; disable with `--run_clonotype_clustering false`.
+
+All three methods cluster per patient, over all of that patient's samples, and their clusters are mapped onto the rows of that patient only (matched on patient and CDR3β). TCRdist3 clusters are the connected components of the patient's distance matrix at `--tcrdist_radius`, with at least two distinct CDR3β. Because the three methods label clusters independently, the consensus does not compare labels: two clonotypes are linked when at least `--consensus_min_methods` methods (default 2) place them in the same cluster, and each connected group of linked clonotypes is one consensus cluster. `consensus_cluster_map.tsv` lists, per consensus cluster, its clonotypes, cells, the methods whose agreement built it (`consensus_methods`) and the member clusters of each method.
 
 With a GEX object (`--input_annotated_object`), `MASTER_SUMMARY` also renders `SC_GEX_Report.html` from `modules/scratch/MASTER_SUMMARY/_sc_gex.qmd` (cell-state map, composition by sample and condition, expansion and clone sharing by cell state, marker-gene expression of expanded cells, CoNGA, TCRi and consensus clusters by cell state), and the same section is appended to the Master Summary. Other routes get a short stub in its place.
 

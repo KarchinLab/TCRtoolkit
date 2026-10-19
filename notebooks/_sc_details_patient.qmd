@@ -4,11 +4,12 @@
 
 ::: {.callout-note collapse="true"}
 ## About this section
-This section is added because the run used **single-cell** TCR data. GIANA and GLIPH2 (per
-patient) and TCRdist3 (per sample) group clonotypes by receptor similarity, on the reasoning
-that similar receptors are likely to recognise the same antigen. Their assignments were mapped
-back onto cells (`CLUSTER_TO_SC`) and reconciled into one **consensus cluster** per cell: the
-label at least `consensus_min_methods` methods agree on. This section reports how much of each
+This section is added because the run used **single-cell** TCR data. GIANA, GLIPH2 and
+TCRdist3 (each per patient) group clonotypes by receptor similarity, on the reasoning that
+similar receptors are likely to recognise the same antigen. Their assignments were mapped back
+onto cells (`CLUSTER_TO_SC`) and reconciled into **consensus clusters**: two clonotypes are
+linked when at least `consensus_min_methods` methods put them in the same cluster, and each
+connected group of linked clonotypes is one consensus cluster. This section reports how much of each
 patient's repertoire was clustered, which cell states the consensus clusters occupy, how they
 persist across samples, and, when available, how they relate to CoNGA and TCRi.
 :::

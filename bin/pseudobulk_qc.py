@@ -9,7 +9,7 @@ table produced by either single-cell → bulk bridge:
   - SC_TO_CDR3            :  CDR3b,       TRBV,   TRBJ,   counts
 
 Metrics (intentionally minimal — diversity metrics such as Shannon/Simpson are
-NOT computed here because the REPERTOIRE module already reports them):
+NOT computed here; REPERTOIRE_METRICS computes them once for the cohort):
 
   n_clones : number of unique clonotype rows
   n_cells  : total cells (sum of the per-clone count column)

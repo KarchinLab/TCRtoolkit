@@ -27,8 +27,8 @@ workflow CLONOTYPE_CLUSTERING {
     export_cells        // channel: per-cell / per-clonotype export table
     giana_clusters      // channel: *_giana.txt (per patient)
     gliph2_details      // channel: cluster_member_details (per patient)
-    tcrdist_clone_df    // channel: *_clone_df.csv (per sample)
-    tcrdist_output      // channel: [meta, distance matrix] (per sample)
+    tcrdist_clone_df    // channel: <patient>_tcrdist_patient_clones.csv (per patient)
+    tcrdist_output      // channel: [patient, distance matrix] (per patient)
     project_name        // value channel
 
     main:
@@ -65,7 +65,7 @@ workflow CLONOTYPE_CLUSTERING {
         if (has_seurat) rep_seurat = CONSENSUS_SW.out.seurat_with_consensus
     }
 
-    // GIANA / GLIPH2 / TCRdist3 write raw per-patient / per-sample output but no rollup
+    // GIANA / GLIPH2 / TCRdist3 write raw per-patient output but no rollup
     // table; this summarises them into the files the Master Summary reads.
     CLUSTER_ROLLUP(
         giana_clusters.collect().ifEmpty([]),

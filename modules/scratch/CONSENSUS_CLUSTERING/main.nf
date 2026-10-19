@@ -47,7 +47,6 @@ process CONSENSUS_CLUSTERING {
       -P umap_nfeatures=${params.umap_nfeatures} \\
       -P raster_large_umap=${params.raster_large_umap} \\
       -P consensus_min_methods=${params.consensus_min_methods} \\
-      -P use_majority_vote=${params.consensus_use_majority_vote} \\
       -P assign_singleton_consensus=${params.consensus_assign_singleton} \\
       -P consensus_label_prefix="${params.consensus_label_prefix}" \\
       -P min_cells_per_group=${params.consensus_min_cells_per_group} \\

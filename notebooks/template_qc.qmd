@@ -2,42 +2,24 @@
 title: "Quality Control"
 format:
   html:
-    theme: flatly
     toc: true
-    toc_depth: 3
-    code-fold: true
-    embed-resources: true
+    toc-depth: 2
+    toc-location: left
     number-sections: true
-    smooth-scroll: true
-    grid:
-      body-width: 1000px
-      margin-width: 300px
-
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    theme: cosmo
+execute:
+  echo: false
+  warning: false
+  message: false
 jupyter: python3
 ---
 
-<style>
-  /* Shrink the tab buttons */
-  .panel-tabset .nav-link {
-    font-size: 0.9rem !important;  /* Make text smaller */
-    padding: 0.4rem 0.7rem !important; /* Make buttons less "fat" */
-  }
+{{< include ./_report_style.qmd >}}
 
-  /* Optional: Shrink the active tab slightly to differentiate */
-  .panel-tabset .nav-link.active {
-    font-weight: bold;
-  }
-</style>
-
-Thank you for using TCRtoolkit! This report is generated from the data provided. 
-
-:::{.callout-note collapse="true"}
-## Document Information
-**Current Version:** 1.0-beta   
-**Last Updated:** March 2026  
-**Maintainer:** BTC Data Science Team   
-**Notes:** 
-:::
+Technical and biological quality checks of every sample: repertoire diversity, overlap between samples, productivity, sequencing depth and outliers.
 
 ```{python}
 #| tags: [parameters]
@@ -71,6 +53,8 @@ subject_col = 'patient'
 # Define files 
 sample_stats_csv = "sample_stats.csv"
 concat_file = "concatenated_cdr3_sorted.tsv"
+# Pairwise overlap, from REPERTOIRE_METRICS (same clone unit as sample_stats.csv).
+overlap_samples_file = "overlap_samples.tsv"
 
 
 ```
@@ -138,7 +122,7 @@ concat_df = pd.read_csv(concat_file, sep='\t')
 
 ```
 
-# Technical QC & Biological Relevance 🚩/🦠 {#sec-qc-bio}
+# Technical QC & Biological Relevance {#sec-qc-bio}
 ## Diversity metrics {#sec-div-metrics}
 
 Analyzing the architecture of a T-cell repertoire requires moving beyond simply counting the total number of unique sequences (Richness). A healthy immune system is highly diverse and relatively evenly distributed. However, upon antigen encounter, specific T-cells rapidly proliferate, causing the repertoire to become highly skewed.  
@@ -200,44 +184,13 @@ For $q=0$, this simplifies to $R$ (Total unique clonotypes). For $q=1$, the limi
 #| label: diversity-nested
 #| output: asis
 
-# --- 1. CALCULATION FUNCTION ---
-def calculate_diversity_metrics(df):
-    results = []
-    count_col = 'duplicate_count' if 'duplicate_count' in df.columns else df.columns[0] # Fallback
-
-    grouped = df.groupby('sample')
-    for sample, data in grouped:
-        counts = data[count_col].values
-        if counts.sum() == 0: continue
-
-        p = counts / counts.sum()
-        shannon = -np.sum(p * np.log(p))
-        inv_simpson = 1.0 / np.sum(p**2)
-        sorted_p = np.sort(p)
-        n = len(p)
-        index = np.arange(1, n + 1)
-        gini = ((2 * index - n - 1) * sorted_p).sum() / (n * sorted_p.sum())
-        q0 = len(p)
-        q1 = np.exp(shannon)
-        q2 = inv_simpson
-        results.append({
-            'sample': sample,
-            'shannon_entropy': shannon,
-            'inverse_simpson': inv_simpson,
-            'gini_coefficient': gini,
-            'hill_q0': q0,
-            'hill_q1': q1,
-            'hill_q2': q2
-        })
-    return pd.DataFrame(results).set_index('sample')
-
-# --- 2. DATA PREPARATION ---
-metrics = calculate_diversity_metrics(concat_df)
-metrics = metrics.reset_index()
-
-# Ensure numeric columns are float
-num_cols = metrics.select_dtypes(include=[np.number]).columns
-metrics[num_cols] = metrics[num_cols].astype(float)
+# --- 1. DIVERSITY METRICS ---
+# Computed once by REPERTOIRE_METRICS and carried in sample_stats.csv, on the run's
+# clone unit: TRB clonotypes for bulk, paired clones (cells) for single-cell.
+diversity_cols = ['shannon_entropy', 'inverse_simpson', 'gini_coefficient',
+                  'hill_q0', 'hill_q1', 'hill_q2']
+metrics = pd.read_csv(sample_stats_csv, sep=',')[['sample'] + diversity_cols]
+metrics[diversity_cols] = metrics[diversity_cols].astype(float)
 
 # Merge with metadata
 plot_df = pd.merge(metrics, meta, on='sample', how='inner')
@@ -564,7 +517,7 @@ exclude_cols = ['sample', 'file', 'total_counts', 'filename', 'sample_id', 'alia
 
 group_opts = [
     col for col in plot_df.columns
-    if col not in exclude_cols and plot_df[col].nunique() < 35
+    if col not in exclude_cols and col in meta.columns and plot_df[col].nunique() < 35
 ]
 
 sns.set_theme(style="whitegrid", context="paper", font_scale=1.1)
@@ -774,7 +727,7 @@ exclude_cols = ['sample', 'file', 'total_counts', 'timepoint_order', 'filename',
 
 group_opts = [
     col for col in plot_df.columns
-    if col not in exclude_cols and plot_df[col].nunique() < 35
+    if col not in exclude_cols and col in meta.columns and plot_df[col].nunique() < 35
 ]
 
 # 2. Start Quarto Tabset
@@ -848,7 +801,7 @@ exclude_cols = ['sample', 'file', 'total_counts', 'timepoint_order', 'filename',
 # Automatically detect categorical columns with reasonable cardinality
 group_opts = [
     col for col in plot_df.columns
-    if col not in exclude_cols and plot_df[col].nunique() < 35
+    if col not in exclude_cols and col in meta.columns and plot_df[col].nunique() < 35
 ]
 
 # ==============================================================================
@@ -1028,39 +981,10 @@ Where $|A \cap B|$ is the count of unique clonotypes shared by both samples, and
 #| fig-width: 7
 #| fig-height: 7
 
-# --- 1. CALCULATION FUNCTION (Only Jaccard) ---
-def calculate_overlaps(df):
-    samples = sorted(df['sample'].unique())
-    clones = sorted(df['junction_aa'].unique())
-
-    sample_map = {s: i for i, s in enumerate(samples)}
-    clone_map = {c: i for i, c in enumerate(clones)}
-
-    row_idx = df['sample'].map(sample_map).values
-    col_idx = df['junction_aa'].map(clone_map).values
-    values = df['duplicate_count'].values
-
-    n_samples = len(samples)
-    n_clones = len(clones)
-
-    mat = sparse.coo_matrix((values, (row_idx, col_idx)), shape=(n_samples, n_clones)).tocsr()
-
-    # Jaccard (Binary)
-    mat_bin = mat.copy()
-    mat_bin.data[:] = 1
-    intersection = mat_bin.dot(mat_bin.T).toarray()
-    row_sums = mat_bin.sum(axis=1).A1
-    union_matrix = row_sums[:, None] + row_sums[None, :] - intersection
-
-    jaccard = np.divide(intersection, union_matrix,
-                        out=np.zeros_like(intersection, dtype=float),
-                        where=union_matrix!=0)
-
-    return pd.DataFrame(jaccard, index=samples, columns=samples)
-
-
-# --- 2. EXECUTE CALCULATION ---
-jaccard_df = calculate_overlaps(concat_df)
+# --- 1. JACCARD MATRIX (computed by REPERTOIRE_METRICS) ---
+overlap_samples = pd.read_csv(overlap_samples_file, sep='\t')
+jaccard_df = overlap_samples.pivot(index='sample_a', columns='sample_b', values='jaccard')
+jaccard_df = jaccard_df.loc[jaccard_df.index, jaccard_df.index]
 
 # --- 3. RENAME TO ALIAS ---
 if alias_col in meta.columns:
@@ -1142,7 +1066,7 @@ Once technical artifacts are ruled out, overlap quantifies stability and shared 
     - Interpretation: A very faint Jaccard signal (0.001 - 0.01) across a cohort can indicate a shared antigen exposure (e.g., a common viral infection in the population) or convergent recombination events.
 
 
-# Technical QC Relevance (🚩)  {#sec-qc}  
+# Technical QC Relevance {#sec-qc}  
 The following section presents metrics designed to assess the processing quality of the samples. These technical QC checks are essential for differentiating between genuine biological signals and technical artifacts, including library failures, undersampling, batch effects, and outliers. However, we acknowledge that some of these metrics can also carry biological meaning, depending on the specific biological context of the analysis.
 
 ## Percent of productive TCRs {#sec-cdr3-prod}
@@ -1188,7 +1112,7 @@ group_opts_all = [
     col for col in df.columns
     if col not in exclude_cols
     and col not in exclude_from_all_samples
-    and df[col].nunique() < 35
+    and col in meta.columns and df[col].nunique() < 35
 ]
 
 # 3. Define Groups for "By Patient" Tab (Only timepoint)
@@ -1476,7 +1400,7 @@ group_opts_all = [
     col for col in df.columns
     if col not in exclude_cols
     and col not in exclude_from_all_samples
-    and df[col].nunique() < 35
+    and col in meta.columns and df[col].nunique() < 35
 ]
 
 # 3. Define Groups for "By Patient" Tab (Only timepoint)
@@ -1763,7 +1687,7 @@ if 'timepoint_order_col' in locals() or 'timepoint_order_col' in globals():
 # Automatically grab any categorical columns with reasonable cardinality (< 35 unique values)
 group_opts = [
     col for col in df.columns
-    if col not in exclude_cols and df[col].nunique() < 35
+    if col not in exclude_cols and col in meta.columns and df[col].nunique() < 35
 ]
 
 # --- 3. DEFINE PLOTTING FUNCTION ---
@@ -1861,7 +1785,7 @@ exclude_cols = ['sample', 'file', 'total_counts', 'filename', 'sample_id',
 
 group_opts = [
     col for col in bias_plot_df.columns
-    if col not in exclude_cols and bias_plot_df[col].nunique() < 35
+    if col not in exclude_cols and col in meta.columns and bias_plot_df[col].nunique() < 35
 ]
 
 # --- 3. CALCULATE UNIFIED AXIS LIMITS ---
@@ -2299,7 +2223,9 @@ def analyze_cdr3_lengths(df):
     return stats
 
 def run_qc_pipeline(df):
-    div_df = calculate_diversity_metrics(df)
+    # Diversity comes from sample_stats.csv (REPERTOIRE_METRICS), not recomputed here.
+    div_df = pd.read_csv(sample_stats_csv, sep=',').set_index('sample')[
+        ['shannon_entropy', 'inverse_simpson', 'gini_coefficient', 'hill_q0', 'hill_q1', 'hill_q2']]
     len_df = analyze_cdr3_lengths(df)
     _, pca_df = analyze_v_usage(df)
 

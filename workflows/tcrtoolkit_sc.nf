@@ -3,8 +3,9 @@
  *
  * Unified spine (see IMPLEMENTATION_SPEC.md §1.3). Both routes converge after their
  * pseudobulk step into: PSEUDOBULK_QC → ANNOTATE → full shared bulk engine
- * (SAMPLE + PATIENT + COMPARE + report notebooks) → CLONOTYPE_CLUSTERING (shared with
- * bulk) → repertoire/summary.
+ * (SAMPLE + REPERTOIRE_METRICS + PATIENT + COMPARE + report notebooks) →
+ * CLONOTYPE_CLUSTERING (shared with bulk) → summary. REPERTOIRE_METRICS counts paired
+ * clones (paired_clones.tsv from the route's bridge) rather than beta CDR3s.
  *
  *   Full SC   (--input_annotated_object provided):
  *     VDJ_QC → TCELL_INTEGRATION → SC_TO_CDR3 (phenotype pseudobulk)
@@ -12,7 +13,7 @@
  *            → SAMPLE + PATIENT + COMPARE + report notebooks   (shared engine)
  *            → CLUSTER_TO_SC → CONSENSUS → CLUSTER_ROLLUP       (shared, on the Seurat)
  *            → CONGA, TCRI                                      (GEX-only)
- *            → REPERTOIRE (cell-level) → MASTER_SUMMARY (full)
+ *            → MASTER_SUMMARY (full)
  *
  *   VDJ-only  (--input_annotated_object absent):
  *     VDJ_QC → VDJ_TO_BULK (pseudobulk from contigs)
@@ -20,7 +21,7 @@
  *            → SAMPLE + PATIENT + COMPARE + report notebooks   (shared engine)
  *            → BULK_TO_EXPORT (per-cell export from clonotypes)
  *            → CLUSTER_TO_SC → CONSENSUS → CLUSTER_ROLLUP       (shared, table-only)
- *            → REPERTOIRE (clonotype-level) → MASTER_SUMMARY (CoNGA-excluded)
+ *            → MASTER_SUMMARY (CoNGA-excluded)
  *            (only TCELL_INTEGRATION / CONGA / TCRI are skipped — they need the GEX substrate)
  */
 
@@ -28,7 +29,6 @@
 include { VDJ_QC_SW }            from '../subworkflows/scratch/vdj_qc.nf'
 include { TCELL_INTEGRATION_SW } from '../subworkflows/scratch/tcell_integration.nf'
 include { CONGA_SW }             from '../subworkflows/scratch/conga.nf'
-include { REPERTOIRE_SW }        from '../subworkflows/scratch/repertoire.nf'
 include { TCRI_SW }             from '../subworkflows/scratch/tcri.nf'
 include { MASTER_SUMMARY_SW }    from '../subworkflows/scratch/master_summary.nf'
 
@@ -107,12 +107,14 @@ workflow TCRTOOLKIT_SC {
         VDJ_TO_BULK_SW( vdj_qc_out.contigs_after_qc )
         pseudobulk_map = VDJ_TO_BULK_SW.out.sample_map
         sc_samplesheet = VDJ_TO_BULK_SW.out.samplesheet_utf8
+        paired_clones  = VDJ_TO_BULK_SW.out.paired_clones
     } else {
         tcell_out = TCELL_INTEGRATION_SW(
             vdj_qc_out.contigs_after_qc, ch_annotated_obj, ch_project_name
         )
         SC_TO_CDR3_SW( tcell_out.export_cells )
         pseudobulk_map = SC_TO_CDR3_SW.out.sample_map
+        paired_clones  = SC_TO_CDR3_SW.out.paired_clones
     }
 
     // ── Step 2b: merged per-cell TCR object, pre- and post-QC ─────────────
@@ -171,7 +173,11 @@ workflow TCRTOOLKIT_SC {
         ['sample', 'patient', 'compare'],
         enabled(params.run_reports),
         report_clonotype_files,
-        report_samplesheet
+        report_samplesheet,
+        // Single-cell repertoire metrics count paired clones in cells, not beta CDR3s.
+        paired_clones.first(),
+        // TCRpheno predicts phenotype from the TCR; with a GEX object it is measured instead.
+        vdjOnly
     )
 
     def concat_cdr3_sorted = BULKTCR_ANALYSIS.out.concat_cdr3_sorted
@@ -228,16 +234,10 @@ workflow TCRTOOLKIT_SC {
         }
     }
 
-    // ── Step 7: REPERTOIRE + MASTER_SUMMARY — BOTH routes ─────────────────
-    // Cell-level + full with a GEX object; clonotype-level repertoire and a CoNGA-excluded
-    // summary without one (only CoNGA and the cell-cluster mapping are truly GEX-gated).
-    repertoire_report = channel.empty()
-    repertoire_tables = channel.empty()
-    if (enabled(params.run_repertoire)) {
-        REPERTOIRE_SW( rep_seurat, rep_export, ch_project_name )
-        repertoire_report = REPERTOIRE_SW.out.report_html
-        repertoire_tables = REPERTOIRE_SW.out.tables
-    }
+    // ── Step 7: report notebooks + MASTER_SUMMARY — BOTH routes ───────────
+    // Repertoire metrics (diversity, clone-size bins, overlap, sharing) come from the
+    // shared engine's REPERTOIRE_METRICS, on paired clones.
+    def repertoire_tables = BULKTCR_ANALYSIS.out.repertoire_tables
 
     // ── Step 7a: report notebooks + their single-cell sections ───────────
     // The QC / discovery-brief / details notebooks come from the shared engine; each gets
@@ -257,7 +257,6 @@ workflow TCRTOOLKIT_SC {
             CLONOTYPE_CLUSTERING.out.rollup_tables,
             conga_tables.flatten().collect().ifEmpty([]),
             tcri_tables.flatten().collect().ifEmpty([]),
-            repertoire_tables.flatten().collect().ifEmpty([]),
             vdjOnly ? 'vdj_only' : 'full'
         )
         REPORT( BULKTCR_ANALYSIS.out.reports, report_samplesheet, SC_REPORT_BUNDLE.out.bundle )
@@ -265,14 +264,9 @@ workflow TCRTOOLKIT_SC {
 
     if (enabled(params.run_master_summary)) {
         master_barrier = channel.empty()
-            .mix(conga_report, consensus_report, repertoire_report, tcri_report)
+            .mix(conga_report, consensus_report, tcri_report)
             .collect()
             .ifEmpty([nofile])
-
-        // Aggregated per-sample stats, built here rather than emitted from the shared
-        // engine so no bulk-side file needs changing.
-        def sample_stats_agg = BULKTCR_ANALYSIS.out.sample_csv
-            .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
 
         def rollup_tables = CLONOTYPE_CLUSTERING.out.rollup_tables
 
@@ -281,7 +275,7 @@ workflow TCRTOOLKIT_SC {
             .collect().ifEmpty([])
 
         def sample_tables = channel.empty()
-            .mix(sample_stats_agg, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
+            .mix(BULKTCR_ANALYSIS.out.sample_stats, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
             .collect().ifEmpty([])
 
         MASTER_SUMMARY_SW(

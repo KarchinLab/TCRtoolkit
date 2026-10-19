@@ -23,6 +23,7 @@ process VDJ_TO_BULK {
     output:
     path "bulk_samples/*.tsv",        emit: bulk_tsv_files
     path "synthetic_samplesheet.csv", emit: samplesheet
+    path "paired_clones.tsv",         emit: paired_clones
 
     script:
     def ss = (sample_sheet && sample_sheet.name != 'NO_FILE') ? "--sample-sheet ${sample_sheet}" : ""

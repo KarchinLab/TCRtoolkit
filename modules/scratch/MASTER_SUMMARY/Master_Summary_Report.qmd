@@ -362,11 +362,13 @@ clones — typically the signal of interest in an antigen-driven response.
 
 ```{r}
 #| label: diversity
-if (!have(diversity)) {
-  note("No diversity table available. This is produced by the Repertoire module.")
+metrics <- c("shannon_entropy", "simpson_index", "inverse_simpson", "gini_coefficient", "hill_q0")
+diversity <- if (have(sample_stats)) sample_stats[, intersect(c("sample", metrics), names(sample_stats)), drop = FALSE] else NULL
+if (!have(diversity) || ncol(diversity) < 2) {
+  note("No diversity columns in the sample statistics table.")
 } else {
   save_table(diversity, "master_diversity_by_sample.tsv")
-  metrics <- intersect(c("shannon", "simpson", "inv_simpson", "richness"), names(diversity))
+  metrics <- intersect(metrics, names(diversity))
   d <- diversity %>%
     pivot_longer(all_of(metrics), names_to = "metric", values_to = "value") %>%
     transmute(grp = metric, val = value,
@@ -415,10 +417,10 @@ mass into the large-clone bins is undergoing clonal expansion.
 ```{r}
 #| label: clone-burden
 if (!have(clone_burden)) {
-  note("No clone burden table available. This is produced by the Repertoire module.")
+  note("No clone burden table available (produced by REPERTOIRE_METRICS).")
 } else {
   save_table(clone_burden, "master_clone_burden.tsv")
-  fc <- intersect(c("frac_cells", "frac_clones"), names(clone_burden))
+  fc <- intersect(c("frac_tcrs", "frac_clones"), names(clone_burden))
   if (!("clone_bin" %in% names(clone_burden)) || !length(fc)) {
     note("Clone burden table lacks the expected clone_bin / fraction columns.")
   } else {
@@ -427,7 +429,7 @@ if (!have(clone_burden)) {
     dd <- d %>% transmute(cat = sample, val = .f, grp = clone_bin,
                           hover = paste0(sample, "<br>", clone_bin, "<br>",
                                          percent(.f, accuracy = 0.1)))
-    sbar(dd, "Clonal burden across samples", "Fraction of cells")
+    sbar(dd, "Clonal burden across samples", "Fraction of TCRs (cells or templates)")
   }
 }
 ```
@@ -439,10 +441,10 @@ indicates a diverse, largely unexpanded repertoire.
 
 ```{r}
 #| label: rank-abundance
-ra <- if (have(vdj_rank)) vdj_rank else T("repertoire", "clone_rank_abundance.tsv")
+ra <- vdj_rank
 if (!have(ra)) note("No clone rank abundance table available.") else {
   rc <- intersect(c("rank", "clone_rank"), names(ra))
-  nc <- intersect(c("n", "cells", "count", "clone_size", "size"), names(ra))
+  nc <- intersect(c("n_cells", "n", "cells", "count", "clone_size", "size"), names(ra))
   if (!length(rc) || !length(nc)) note("Rank abundance table lacks rank/size columns.") else {
     d <- ra
     d$.r <- as.numeric(d[[rc[1]]]); d$.n <- as.numeric(d[[nc[1]]])
@@ -466,7 +468,7 @@ clonotypes with high generation probability rather than a shared response.
 ```{r}
 #| label: overlap-heatmap
 if (!have(overlap_mat)) {
-  note("No sample overlap matrix available. This is produced by the Repertoire module.")
+  note("No sample overlap table available (produced by REPERTOIRE_METRICS).")
 } else {
   save_table(overlap_mat, "master_sample_overlap.tsv")
   m <- overlap_mat
@@ -475,7 +477,7 @@ if (!have(overlap_mat)) {
   plot_ly(
     x = colnames(mat), y = rownames(mat), z = mat,
     type = "heatmap", colors = colorRamp(c("white", "#fee391", "#cb181d")),
-    hovertemplate = "%{y} vs %{x}<br>overlap: %{z:.3f}<extra></extra>"
+    hovertemplate = "%{y} vs %{x}<br>Jaccard: %{z:.3f}<extra></extra>"
   ) %>%
     layout(title = "Sample repertoire overlap",
            xaxis = list(title = "", tickangle = -45), yaxis = list(title = "")) %>%
@@ -522,7 +524,7 @@ if (!have(sharing)) note("No clonotype sharing table available (produced by COMP
 Three complementary approaches to grouping clonotypes by receptor similarity: **GIANA**
 (isometric distance on CDR3β + V gene), **GLIPH2** (shared local motif enrichment) and
 **TCRdist3** (pairwise TCR distance, thresholded at radius `r params$tcrdist_radius`).
-GIANA and GLIPH2 run per patient; TCRdist3 runs per sample.
+All three run per patient, on all of that patient's samples together.
 
 ## Method coverage
 

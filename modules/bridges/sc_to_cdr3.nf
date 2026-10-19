@@ -21,6 +21,7 @@ process SC_TO_CDR3 {
     path "per_sample/*_cdr3.tsv", emit: per_sample
     path "concat_cdr3.tsv",       emit: concat_cdr3
     path "unit_map.csv",          emit: unit_map
+    path "paired_clones.tsv",     emit: paired_clones
 
     script:
     def by_pheno = params.pseudobulk_by_phenotype ? "--by-phenotype" : ""

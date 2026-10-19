@@ -343,11 +343,6 @@
           "default": true,
           "description": "Bulk: after COMPARE, run clonotype export -> CLUSTER_TO_SC -> consensus -> Master Summary."
         },
-        "run_repertoire": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run repertoire analysis."
-        },
         "run_master_summary": {
           "type": "boolean",
           "default": true,
@@ -680,10 +675,6 @@
       "type": "integer",
       "default": 2
     },
-    "consensus_use_majority_vote": {
-      "type": "boolean",
-      "default": true
-    },
     "consensus_assign_singleton": {
       "type": "boolean"
     },
@@ -703,33 +694,15 @@
       "type": "integer",
       "default": 20
     },
-    "repertoire_min_cells_per_clone_plot": {
-      "type": "integer",
-      "default": 2
-    },
-    "repertoire_top_n_shared_clones": {
-      "type": "integer",
-      "default": 50
-    },
-    "repertoire_top_n_flux_clones": {
-      "type": "integer",
-      "default": 30
-    },
-    "repertoire_shareability_min_n_groups": {
-      "type": "integer",
-      "default": 2
-    },
-    "repertoire_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "repertoire_overlap_metric": {
+    "clone_bin_breaks": {
       "type": "string",
-      "default": "jaccard"
+      "default": "0;1e-4;0.001;0.01;0.1;1.0",
+      "description": "Clone-frequency bin breaks (';'-separated fractions of a sample's TCRs) for REPERTOIRE_METRICS."
     },
-    "repertoire_use_relative_clone_freqs": {
-      "type": "boolean",
-      "default": true
+    "clone_bin_labels": {
+      "type": "string",
+      "default": "Rare;Small;Medium;Large;Hyperexpanded",
+      "description": "One label per clone-frequency bin."
     },
     "tcri_high_cutoff": {
       "type": "number",

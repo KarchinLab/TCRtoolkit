@@ -32,8 +32,8 @@ process CLUSTER_TO_SC {
     path export_cells
     path giana_files        // collected *_giana.txt files (one per patient)
     path gliph2_files       // collected cluster_member_details dirs/files
-    path tcrdist_clone_dfs  // collected *_clone_df.csv files (one per sample)
-    path tcrdist_matrices   // collected *_distance_matrix.* files (one per sample)
+    path tcrdist_clone_dfs  // collected <patient>_tcrdist_patient_clones.csv files
+    path tcrdist_matrices   // collected <patient>_tcrdist_patient_matrix.* files
     val  tcrdist_radius
 
     output:

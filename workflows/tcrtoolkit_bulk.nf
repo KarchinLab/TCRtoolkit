@@ -92,7 +92,9 @@ workflow TCRTOOLKIT_BULK {
             levels,
             run_reports,
             convert_files,
-            channel.value(file(params.samplesheet))
+            channel.value(file(params.samplesheet)),
+            channel.value(file("${projectDir}/assets/NO_FILE")),
+            true
         )
 
         // Report notebooks; NO_FILE = no single-cell data, so the SC sections stay empty.
@@ -131,20 +133,17 @@ workflow TCRTOOLKIT_BULK {
             )
 
             if (enabled(params.run_master_summary)) {
-                def sample_stats_agg = BULKTCR_ANALYSIS.out.sample_csv
-                    .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true)
-
                 MASTER_SUMMARY_SW(
                     channel.value(nofile),
                     CLONOTYPE_CLUSTERING.out.rep_export,
                     channel.value([]),
                     channel.value([]),
                     channel.empty()
-                        .mix(sample_stats_agg, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
+                        .mix(BULKTCR_ANALYSIS.out.sample_stats, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
                         .collect().ifEmpty([]),
                     BULKTCR_ANALYSIS.out.shared_cdr3.flatten().collect().ifEmpty([]),
                     CLONOTYPE_CLUSTERING.out.rollup_tables,
-                    channel.value([]),
+                    BULKTCR_ANALYSIS.out.repertoire_tables.flatten().collect().ifEmpty([]),
                     channel.value([]),
                     channel.value([]),
                     CLONOTYPE_CLUSTERING.out.consensus_tables.flatten().collect().ifEmpty([]),

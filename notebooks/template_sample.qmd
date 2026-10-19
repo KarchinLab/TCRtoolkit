@@ -1008,7 +1008,8 @@ exclude_cols = ['sample', 'file', 'M_total_nt', 'raw_events', 'convergence_OE_ra
 group_opts = []
 
 for col in merged_df.columns:
-    if col in exclude_cols:
+    # Samplesheet metadata only (merged_df also carries the convergence metrics).
+    if col in exclude_cols or col not in meta.columns:
         continue
     # Check unique count
     if merged_df[col].nunique() < 30:
@@ -1140,7 +1141,7 @@ group_opts_all = [
     col for col in df.columns 
     if col not in exclude_cols 
     and col not in exclude_from_all_samples 
-    and df[col].nunique() < 35
+    and col in meta.columns and df[col].nunique() < 35
 ]
 
 # 3. Define Groups for "By Patient" Tab (Only timepoint)
