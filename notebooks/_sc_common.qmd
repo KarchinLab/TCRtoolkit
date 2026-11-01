@@ -5,8 +5,8 @@
 # SINGLE-CELL SECTION SETUP (shared by the _sc_*.qmd sections)
 # -----------------------------------------------------------------------------
 # Included at the end of a main report notebook when the run has single-cell data.
-# Reads the per-module tables RENDER_NOTEBOOK stages under sc_bundle/<module>/
-# (see modules/bridges/sc_report_bundle.nf) and builds one per-cell table,
+# Reads the per-module tables RENDER_NOTEBOOK stages under report_bundle/<module>/
+# (see modules/bridges/report_bundle.nf) and builds one per-cell table,
 # `sc_cells`, with sample metadata joined from the report samplesheet.
 #
 # Sampling is rarely balanced: patients have different timepoints, and blood /
@@ -23,7 +23,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from IPython.display import display, Markdown, HTML
 
-SC_DIR = 'sc_bundle'
+SC_DIR = 'report_bundle'
 SC_MAX_POINTS = 40000        # cap on points per embedding plot (keeps the HTML light)
 SC_MIN_CELLS = 10            # minimum cells for a per-group fraction to be shown
 SC_EXPANDED_MIN = 2          # a clone with >= this many cells in a sample is "expanded"
@@ -173,7 +173,8 @@ if _cells is not None and 'cell_id' in _cells.columns:
     _cons = sc_read('cells', 'consensus_export_cells.tsv')
     if _cons is not None and 'cell_id' in _cons.columns:
         keep = [k for k in ('cell_id', 'consensus_cluster', 'consensus_methods', 'n_methods_nonmissing',
-                            'giana_cluster', 'gliph_cluster', 'tcrdist_cluster') if k in _cons.columns]
+                            'giana_cluster', 'gliph_cluster', 'tcrdist_cluster', 'conga_cluster')
+                if k in _cons.columns]
         _cons = _cons[keep].assign(cell_id=lambda d: d['cell_id'].astype(str))
         c = c.drop(columns=[k for k in keep if k != 'cell_id' and k in c.columns]).merge(_cons, on='cell_id', how='left')
 

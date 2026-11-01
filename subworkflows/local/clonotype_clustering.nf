@@ -5,7 +5,8 @@
     Shared by both modalities, after the bulk engine's SAMPLE / PATIENT / COMPARE stages:
 
         CLUSTER_TO_SC  -> map GIANA / GLIPH2 / TCRdist3 clusters onto the export rows
-        CONSENSUS      -> reconcile the three methods into one consensus cluster per row
+        CONSENSUS      -> reconcile the methods into one consensus cluster per row: GIANA,
+                          GLIPH2, TCRdist3, plus CoNGA hit clusters on the VDJ+GEX route
         CLUSTER_ROLLUP -> per-method summary tables for the Master Summary
 
     `seurat_rds` is the GEX Seurat object on the full single-cell route, and NO_FILE
@@ -29,6 +30,7 @@ workflow CLONOTYPE_CLUSTERING {
     gliph2_details      // channel: cluster_member_details (per patient)
     tcrdist_clone_df    // channel: <patient>_tcrdist_patient_clones.csv (per patient)
     tcrdist_output      // channel: [patient, distance matrix] (per patient)
+    conga_export        // channel: CoNGA per-cell export (VDJ+GEX route), or NO_FILE
     project_name        // value channel
 
     main:
@@ -57,6 +59,7 @@ workflow CLONOTYPE_CLUSTERING {
             CLUSTER_TO_SC_SW.out.gliph2_export.ifEmpty(nofile),
             CLUSTER_TO_SC_SW.out.tcrdist_export.ifEmpty(nofile),
             CLUSTER_TO_SC_SW.out.giana_export.ifEmpty(nofile),
+            conga_export,
             project_name
         )
         consensus_report = CONSENSUS_SW.out.report_html

@@ -145,7 +145,7 @@ workflow BULKTCR_ANALYSIS {
         // carrying its own copy - stage it alongside every rendered notebook.
         def timepoint_order_partial = file("${file(params.template_qc).parent}/_timepoint_order.qmd")
         // Shared Master Summary look (style, interactive-figures note, plot theme) of the
-        // QC and Details reports.
+        // QC, Discovery Brief and Details reports.
         def report_style_partial = file("${file(params.template_qc).parent}/_report_style.qmd")
 
         ch_qc_report = sample_stats_agg
@@ -167,21 +167,19 @@ workflow BULKTCR_ANALYSIS {
             .combine(ANNOTATE.out.concat_cdr3_sorted)
             .combine(ch_v_family)
             .combine(ch_j_family)
-            .combine(ch_tcrdist_files.map { l -> [l] })
             .combine(ch_olga_files.map { l -> [l] })
             .combine(ch_vdjdb_files.map { l -> [l] })
             .combine(ch_convergence_files.map { l -> [l] })
-            .map { sample_stats_csv, concat_cdr3_sorted, v_family_file, j_family_file, tcrdist_files_l, olga_files_l, vdjdb_files_l, convergence_files_l ->
+            .map { sample_stats_csv, concat_cdr3_sorted, v_family_file, j_family_file, olga_files_l, vdjdb_files_l, convergence_files_l ->
                 def include_files = [file("${file(params.template_details_sample).parent}/template_sample.qmd"), timepoint_order_partial, report_style_partial]
                 def report_files = [sample_stats_csv, concat_cdr3_sorted, v_family_file, j_family_file] +
-                    tcrdist_files_l + olga_files_l + vdjdb_files_l + convergence_files_l + include_files
+                    olga_files_l + vdjdb_files_l + convergence_files_l + include_files
                 def staged_layout = [
                     ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
                     ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name],
                     ["${params.project_name}/sample/${v_family_file.name}", v_family_file.name],
                     ["${params.project_name}/sample/${j_family_file.name}", j_family_file.name]
-                ] + tcrdist_files_l.collect { f -> ["${params.project_name}/tcrdist3/${f.name}", f.name] } +
-                    olga_files_l.collect { f -> ["${params.project_name}/olga/${f.name}", f.name] } +
+                ] + olga_files_l.collect { f -> ["${params.project_name}/olga/${f.name}", f.name] } +
                     vdjdb_files_l.collect { f -> ["${params.project_name}/vdjdb/${f.name}", f.name] } +
                     convergence_files_l.collect { f -> ["${params.project_name}/convergence/${f.name}", f.name] }
                 tuple(
@@ -205,7 +203,7 @@ workflow BULKTCR_ANALYSIS {
                 .combine(overlap_tables.map { l -> [l] })
                 .map { sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, tcrdist_files_l, vdjdb_files_l, convert_files_l, tcrpheno_files_l, pseudobulk_files_l, clonal_dynamics_files_l, overlap_l ->
                     // convert_files_l is [meta, file] pairs, staged as ${meta.sample}_airr.tsv regardless of source basename.
-                    def report_files = [sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, pheno_notebook, timepoint_order_partial] +
+                    def report_files = [sample_stats_csv, concat_cdr3_sorted, shared_cdr3_file, pheno_notebook, timepoint_order_partial, report_style_partial] +
                         tcrdist_files_l + vdjdb_files_l + convert_files_l.collect { _meta, f -> f } + tcrpheno_files_l + pseudobulk_files_l + clonal_dynamics_files_l + overlap_l
                     def staged_layout = [
                         ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
@@ -253,7 +251,7 @@ workflow BULKTCR_ANALYSIS {
             ch_reports = ch_reports.mix(ch_details_compare_report)
         }
 
-        // Patient-level details report (GIANA, plus GLIPH2 when --use_gliph2). Rendered
+        // Patient-level details report (GIANA, TCRdist3, plus GLIPH2 when --use_gliph2). Rendered
         // when the patient stage ran (this block already requires run_reports && sample);
         // it does not additionally depend on the compare stage.
         if (levels.contains('patient')) {
@@ -268,13 +266,14 @@ workflow BULKTCR_ANALYSIS {
             ch_details_patient_report = sample_stats_agg
                 .combine(ANNOTATE.out.concat_cdr3_sorted)
                 .combine(ch_giana_files.map { l -> [l] })
+                .combine(ch_tcrdist_files.map { l -> [l] })
                 .combine(ch_gliph2_all_motifs.map { l -> [l] })
                 .combine(ch_gliph2_clone_network.map { l -> [l] })
                 .combine(ch_gliph2_cluster_member_details.map { l -> [l] })
                 .combine(ch_gliph2_global_similarities.map { l -> [l] })
-                .map { sample_stats_csv, concat_cdr3_sorted, giana_files_l,
+                .map { sample_stats_csv, concat_cdr3_sorted, giana_files_l, tcrdist_files_l,
                        all_motifs_pairs, clone_network_pairs, cluster_member_pairs, global_sim_pairs ->
-                    def report_files = [sample_stats_csv, concat_cdr3_sorted] + giana_files_l +
+                    def report_files = [sample_stats_csv, concat_cdr3_sorted] + giana_files_l + tcrdist_files_l +
                         all_motifs_pairs.collect { p -> p[1] } +
                         clone_network_pairs.collect { p -> p[1] } +
                         cluster_member_pairs.collect { p -> p[1] } +
@@ -284,6 +283,7 @@ workflow BULKTCR_ANALYSIS {
                         ["${params.project_name}/sample/${sample_stats_csv.name}", sample_stats_csv.name],
                         ["${params.project_name}/annotate/${concat_cdr3_sorted.name}", concat_cdr3_sorted.name]
                     ] + giana_files_l.collect { f -> ["${params.project_name}/giana/${f.name}", f.name] } +
+                        tcrdist_files_l.collect { f -> ["${params.project_name}/tcrdist3/${f.name}", f.name] } +
                         all_motifs_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
                         clone_network_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +
                         cluster_member_pairs.collect { p -> ["${params.project_name}/gliph2/${p[0]}/${p[1].name}", p[1].name] } +

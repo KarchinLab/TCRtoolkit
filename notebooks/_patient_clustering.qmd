@@ -1,0 +1,460 @@
+{{< include ./_report_bundle.qmd >}}
+
+<!-- TCRdist3, the cross-method comparison and the consensus, after the GIANA and GLIPH2
+     sections (template_giana.qmd, template_gliph.qmd). From the CLUSTER_ROLLUP and CONSENSUS
+     tables; the single-cell cell-level views follow in _sc_details_patient.qmd. -->
+
+## TCRdist3: receptor-distance neighbourhoods {#sec-tcrdist3-clusters}
+
+```{python}
+#| output: asis
+#| echo: false
+
+rb_text("TCRdist3 (Mayer-Blackwell *et al.*, *eLife* 2021, "
+        "[doi:10.7554/eLife.68605](https://doi.org/10.7554/eLife.68605)) scores the distance between "
+        "two receptors from their CDR1, CDR2 (given by the V gene) and CDR3 loops, weighting "
+        "biochemically similar amino-acid substitutions lightly. Clonotypes within radius "
+        f"{rb_info.get('tcrdist_radius', '')} of each other are linked, and each connected group is a "
+        "cluster, computed per patient over all of that patient's samples. Clusters of distinct CDR3s "
+        "are candidate groups of receptors recognising the same epitope.")
+_tsum = rb_read('rollup', 'tcrdist3_summary_rollup.tsv')
+_tdet = rb_read('rollup', 'tcrdist_cluster_detail.tsv')
+if _tsum is None and _tdet is None:
+    rb_note("TCRdist3 produced no clusters on this run.")
+else:
+    if _tsum is not None:
+        rb_table(_tsum)
+        rt_caption("TCRdist3 run summary",
+                   "Over all patients: the clonotypes and distinct CDR3βs in the distance matrices, the "
+                   "number of neighbourhoods (clusters) at this radius, and how many CDR3βs fall in one.",
+                   kind='Table')
+    if _tdet is not None:
+        t = _tdet.nlargest(RB_TOP_CLUSTERS, 'n_members')
+        rb_hbar(pd.DataFrame({'cat': [f"{c}  ({p})" for c, p in zip(t['cluster'], t['patient'])],
+                              'val': t['n_members'],
+                              'hover': [f"cluster {c}<br>patient {p}<br>{n} members, {u} distinct CDR3b<br>{s} sample(s)"
+                                        for c, p, n, u, s in zip(t['cluster'], t['patient'], t['n_members'],
+                                                                 t['n_unique_cdr3'], t['n_samples'])]}),
+                f"Top {RB_TOP_CLUSTERS} TCRdist3 clusters", "Members", colour="#7570b3", height=560)
+        rt_caption("Largest TCRdist3 clusters",
+                   f"The {RB_TOP_CLUSTERS} TCRdist3 neighbourhoods with the most member clonotypes, labelled "
+                   "cluster (patient). Hover a bar for the number of distinct CDR3βs and of samples it spans: "
+                   "a large cluster of many distinct CDR3βs seen in several samples is a persistent family of "
+                   "similar receptors, while one of a single CDR3β is the same clonotype seen repeatedly.")
+        rb_table(_tdet.sort_values('n_members', ascending=False))
+        rt_caption("All TCRdist3 clusters",
+                   "Every neighbourhood with its patient, members, distinct CDR3βs and samples; "
+                   "`n_samples` > 1 means the neighbourhood was recovered in several of the patient's samples.",
+                   kind='Table')
+```
+
+
+
+### Distance distributions within samples {#sec-tcrdist}
+
+{{< include ./_violin_heatmap.qmd >}}
+
+{{< include ./_timepoint_order.qmd >}}
+
+The clusters above are built from all pairwise TCRdist3 distances. This view shows those
+distances directly: for each sample, the distribution of distances between its clonotypes
+(a random 1,000 pairs per sample), grouped by sample metadata or, per patient, by timepoint. A
+sample whose distribution sits lower holds receptors that are more alike, as expected when a
+response focuses on a few epitopes; a higher, broader distribution means a more diverse
+repertoire. The inset gives the pairwise Mann-Whitney significance between groups.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import os
+import glob
+import h5py
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from scipy.stats import mannwhitneyu
+from scipy.sparse import csr_matrix
+
+tcrdist_dir = f"{project_dir}/tcrdist3/"
+
+def create_distance_tabs_with_heatmap(meta_df, origin_col='origin'):
+    """
+    Generates multi-tabbed violin plots for TCR Distances.
+    - Tab 1: All Samples (Grouped by Metadata) -> With Pairwise Heatmap Inset
+    - Tab 2: By Patient (Grouped by Timepoint) -> With Pairwise Heatmap Inset & Origin Dropdown
+    """
+    
+    # --- 1. FIND AND LOAD DATA ---
+    file_pattern = os.path.join(tcrdist_dir, '*_distance_matrix.hdf5')
+    patient_files = sorted(glob.glob(file_pattern))
+
+    if not patient_files:
+        print("No TCRdist3 distance matrices were found for this run.")
+        return
+
+    all_data_list = []
+
+    for file_path in patient_files:
+        filename = os.path.basename(file_path)
+        sample_id = filename.replace('_distance_matrix.hdf5', '')
+
+        try:
+            with h5py.File(file_path, 'r') as f:
+                data = f['data'][:]
+                indices = f['indices'][:]
+                indptr = f['indptr'][:]
+
+            sparse_matrix = csr_matrix((data, indices, indptr))
+            dense_matrix = sparse_matrix.toarray()
+            # Symmetrize
+            dense_matrix = np.maximum(dense_matrix, dense_matrix.T)
+
+            # Extract upper triangle (exclude diagonal 0 and lower triangle)
+            upper_triangle = dense_matrix[np.triu_indices(dense_matrix.shape[0], k=1)]
+
+            # Filter valid (ignore -1 or 0 if those indicate missing/self)
+            valid_distances = upper_triangle[(upper_triangle != -1) & (upper_triangle != 0)]
+
+            if len(valid_distances) > 0:
+                # --- SAFETY DOWNSAMPLING ---
+                # Critical for performance in browser-based plots
+                if len(valid_distances) > 1000:
+                    valid_distances = np.random.choice(valid_distances, 1000, replace=False)
+
+                temp_df = pd.DataFrame({
+                    'distance': valid_distances,
+                    'sample': sample_id
+                })
+                all_data_list.append(temp_df)
+
+        except Exception as e:
+            continue
+
+    if not all_data_list:
+        print("No valid data found.")
+        return
+
+    # --- 2. MERGE METADATA ---
+    dist_df = pd.concat(all_data_list, ignore_index=True)
+    
+    cols_to_use = ['sample', subject_col, alias_col, timepoint_order_col]
+    
+    plot_df = dist_df.merge(meta_df, on='sample', how='inner')
+
+    exclude_cols = ['sample', 'file', 'filename', 'filepath', alias_col, timepoint_order_col, subject_col, timepoint_col]
+    group_opts = [c for c in meta_df.columns if c not in exclude_cols and meta_df[c].nunique() < 35]
+
+    # --- HELPER 1: STANDARD PLOT WITH HEATMAP ---
+    def plot_violin_with_heatmap(data, x_col, title, x_order=None):
+        _violin_with_heatmap_figure(data, x_col, 'distance', title, "Distance", "TCR Distance", "distance_violin_heatmap", x_order=x_order)
+
+    # --- HELPER 2: PATIENT PLOT WITH ORIGIN DROPDOWN ---
+    def plot_patient_with_dropdown(pat_df, title_prefix):
+        _violin_with_heatmap_dropdown(pat_df, title_prefix, 'distance', "Distance", "TCR Distance", "distance_violin_heatmap", origin_col)
+
+    # --- 3. GENERATE TABS ---
+    print("::: {.panel-tabset}\n")
+
+    # =========================================================
+    # TAB 1: ALL SAMPLES
+    # =========================================================
+    print("## All Samples\n")
+    print("::: {.panel-tabset}\n")
+    
+    for group in group_opts:
+        print(f"### By {group}\n")
+        group_df = plot_df.dropna(subset=[group]).copy()
+        group_df[group] = group_df[group].astype(str)
+        plot_violin_with_heatmap(group_df, group, f"Distance Distribution by {group}")
+        print("\n")
+        
+    print(":::\n")
+
+    # =========================================================
+    # TAB 2: BY PATIENT
+    # =========================================================
+    print("## By Patient\n")
+    print("::: {.panel-tabset}\n")
+
+    unique_patients = sorted(plot_df[subject_col].unique())
+    
+    for pat in unique_patients:
+        print(f"### {pat}\n")
+        pat_df = plot_df[plot_df[subject_col] == pat].copy()
+        
+        # Pass to the new dropdown wrapper
+        plot_patient_with_dropdown(pat_df, title_prefix=f"Distance Distribution: {pat}")
+            
+        print("\n")
+
+    print(":::\n")
+    print(":::\n")
+
+# --- Execute ---
+create_distance_tabs_with_heatmap(meta, origin_col='origin')
+
+```
+
+**Figure `{python} fig_no()`. TCRdist3 distances within samples.** Left: violins show the
+distribution of pairwise TCRdist3 distances between the clonotypes of each sample (or group of
+samples, by the metadata variable of the tab). Right: the heatmap marks pairs of groups whose
+distributions differ (\* p < 0.05 to \*\*\*\* p < 0.0001). A distribution shifted towards
+low distances means a repertoire of more similar receptors, as after the expansion of related
+clones; the bump below the clustering radius is the share of receptors with a close neighbour.
+Compare groups within a patient first: repertoire size and sequencing depth also shift these
+distributions. The figure is wider than the page: scroll sideways inside the box.
+
+## Comparing the methods {#sec-sequence-clustering}
+
+GIANA (CDR3β isometric distance + V gene), GLIPH2 (shared local motifs) and TCRdist3
+(pairwise receptor distance) define similarity differently, so their clusters agree only in
+part. This section sets them side by side.
+
+### Method coverage
+
+Fraction of cells (clonotype rows for bulk data) whose clonotype was assigned to a cluster
+by each method, and how many clusters each produced. Large disagreements between methods
+are expected, since they optimise for different notions of similarity, but a method at or
+near zero is worth investigating.
+
+```{python}
+#| output: asis
+#| echo: false
+
+_mp = rb_first(['consensus', 'rollup'], 'method_presence_summary.tsv')
+if _mp is None:
+    rb_note("No method coverage table available.")
+else:
+    rb_hbar(pd.DataFrame({'cat': _mp['method'], 'val': _mp['frac_cells'],
+                          'hover': [f"{m}<br>{f:.1%} of cells" for m, f in zip(_mp['method'], _mp['frac_cells'])]}),
+            "Cell coverage by method", "Fraction of cells", height=380, tickformat='.0%')
+    rt_caption("Coverage of each clustering method",
+               "The share of cells (single-cell data) or clonotype rows (bulk data) whose clonotype the "
+               "method placed in a cluster. The consensus is lower than any method because it needs "
+               "agreement.")
+_mc = rb_first(['consensus', 'rollup'], 'method_cluster_counts.tsv')
+if _mc is None:
+    rb_note("No cluster count table available.")
+else:
+    rb_hbar(pd.DataFrame({'cat': _mc['method'], 'val': _mc['n_clusters'],
+                          'hover': [f"{m}<br>{n} clusters" for m, n in zip(_mc['method'], _mc['n_clusters'])]}),
+            "Clusters detected by method", "Clusters", colour="#d95f02", height=380)
+    rt_caption("Clusters detected by each method",
+               "The number of clusters each method formed over all patients. Many small clusters "
+               "(GLIPH2 motifs, for example) and a few large ones describe the same repertoire at "
+               "different resolutions.")
+```
+
+### Per-method summaries
+
+```{python}
+#| output: asis
+#| echo: false
+
+_rolls = {'GIANA': rb_read('rollup', 'giana_summary_rollup.tsv'),
+          'GLIPH2': rb_read('rollup', 'gliph2_summary_rollup.tsv'),
+          'TCRdist3': rb_read('rollup', 'tcrdist3_summary_rollup.tsv')}
+_rolls = {k: v for k, v in _rolls.items() if rb_have(v)}
+if not _rolls:
+    rb_note("No clustering roll-ups available.")
+else:
+    rb_table(pd.concat([v.assign(method=k)[['method'] + list(v.columns)] for k, v in _rolls.items()],
+                       ignore_index=True))
+    rt_caption("Per-method clustering summaries",
+               "The run-level metrics of each method (rows grouped by method): patients with clusters, "
+               "clonotypes and distinct CDR3βs clustered, clusters detected and their size. A method that "
+               "clusters far fewer CDR3βs than the others is using a stricter notion of similarity; one "
+               "with many clonotypes but few distinct CDR3βs is mostly grouping the same receptor seen in "
+               "several samples.", kind='Table')
+```
+
+::: {.callout-note appearance="simple"}
+GIANA receives one row per unique clonotype. Before this was enforced, the same clonotype
+seen in several samples of a patient arrived as duplicate rows and GIANA reported those
+duplicates as clusters, inflating cluster counts and producing no output at all for
+patients with a single sample.
+:::
+
+### Cluster composition
+
+Every cluster from each method, sized by membership. `n_unique_cdr3` separates real
+sequence similarity from duplicate detection: a cluster whose members all share one CDR3β
+is the same clonotype seen in several samples, not a similarity group.
+
+```{python}
+#| output: asis
+#| echo: false
+
+_det = {'GIANA': rb_read('rollup', 'giana_cluster_detail.tsv'),
+        'GLIPH2': rb_read('rollup', 'gliph2_motif_detail.tsv'),
+        'TCRdist3': rb_read('rollup', 'tcrdist_cluster_detail.tsv')}
+_det = {k: v for k, v in _det.items() if rb_have(v)}
+if not _det:
+    rb_note("No cluster detail tables available.")
+else:
+    d = pd.concat([pd.DataFrame({'method': k, 'size': pd.to_numeric(v['n_members'], errors='coerce')})
+                   for k, v in _det.items()])
+    d = d.groupby(['method', 'size']).size().rename('n_clusters').reset_index().sort_values('size')
+    rb_gbar(pd.DataFrame({'cat': d['size'].astype(int), 'val': d['n_clusters'], 'grp': d['method'],
+                          'hover': [f"{m}<br>{n} cluster(s) of size {s:.0f}" for m, n, s
+                                    in zip(d['method'], d['n_clusters'], d['size'])]}),
+            "Cluster size distribution by method", "Members per cluster", "Clusters")
+    rt_caption("Cluster size distribution by method",
+               "For each method, the number of clusters (y) of each size (x, member clonotypes). Most "
+               "clusters are pairs or triplets; the few large clusters on the right are the dominant "
+               "receptor families of the cohort.")
+
+    _g = _det.get('GLIPH2')
+    if _g is None:
+        rb_note("No GLIPH2 motif detail available.")
+    else:
+        t = _g.nlargest(RB_TOP_CLUSTERS, 'n_members')
+        rb_hbar(pd.DataFrame({'cat': [f"{c}  ({p})" for c, p in zip(t['cluster'], t['patient'])],
+                              'val': t['n_members'],
+                              'hover': [f"motif {c}<br>patient {p}<br>{n} members, {u} distinct CDR3b<br>{s} sample(s)"
+                                        for c, p, n, u, s in zip(t['cluster'], t['patient'], t['n_members'],
+                                                                 t['n_unique_cdr3'], t['n_samples'])]}),
+                f"Top {RB_TOP_CLUSTERS} GLIPH2 motif clusters", "Members", colour="#d95f02", height=560)
+        rt_caption("Largest GLIPH2 motif clusters",
+                   f"The {RB_TOP_CLUSTERS} GLIPH2 specificity groups with the most members, labelled motif "
+                   "(patient); hover for distinct CDR3βs and samples.")
+
+    rows = [dict(method=k, frac=(pd.to_numeric(v['n_samples'], errors='coerce') > 1).mean(), n=len(v))
+            for k, v in _det.items() if 'n_samples' in v.columns]
+    if rows:
+        d = pd.DataFrame(rows)
+        rb_hbar(pd.DataFrame({'cat': d['method'], 'val': d['frac'],
+                              'hover': [f"{m}<br>{f:.1%} of {n} clusters span >1 sample"
+                                        for m, f, n in zip(d['method'], d['frac'], d['n'])]}),
+                "Clusters spanning more than one sample", "Fraction of clusters", height=380, tickformat='.0%')
+        rt_caption("Clusters spanning more than one sample",
+                   "The share of each method's clusters whose members come from more than one sample. "
+                   "A cluster spanning several samples is the interesting case: the same or a similar "
+                   "receptor recovered independently, rather than confined to one library.")
+
+    if 'GIANA' in _det:
+        rb_table(_det['GIANA'])
+        rt_caption("All GIANA clusters",
+                   "Every GIANA cluster with its patient, members, distinct CDR3βs and samples.", kind='Table')
+```
+
+### V-gene usage within clusters
+
+Germline V-gene composition of the clustered clonotypes. A motif family dominated by one
+V gene is a stronger structural signal than one drawn from many.
+
+```{python}
+#| output: asis
+#| echo: false
+
+_vg = {'GIANA': rb_read('rollup', 'giana_vgene_usage.tsv'), 'GLIPH2': rb_read('rollup', 'gliph2_vgene_usage.tsv')}
+_vg = {k: v for k, v in _vg.items() if rb_have(v)}
+if not _vg:
+    rb_note("No V-gene usage tables available for the clustering methods.")
+else:
+    d = pd.concat([v.assign(method=k) for k, v in _vg.items()], ignore_index=True)
+    d = d.sort_values('n_clonotypes', ascending=False).groupby('method').head(RB_TOP_GENES)
+    rb_gbar(pd.DataFrame({'cat': d['vgene'], 'val': d['n_clonotypes'], 'grp': d['method'],
+                          'hover': [f"{m}<br>{g}<br>patient {p}<br>{n} clonotypes" for m, g, p, n
+                                    in zip(d['method'], d['vgene'], d['patient'], d['n_clonotypes'])]}),
+            "V-gene usage among clustered clonotypes", "", "Clonotypes", height=520)
+```
+
+**Figure `{python} fig_no()`. V-gene usage among clustered clonotypes.** The most frequent TRBV genes among the
+clonotypes each method placed in a cluster (top 25 per method). A cluster's receptors share CDR1
+and CDR2 only if they use the same V gene, so a V gene that dominates the clustered clonotypes but
+not the whole repertoire (Sample notebook, gene usage) points to a structurally constrained,
+likely antigen-driven response.
+
+## Consensus clustering {#sec-consensus-clustering}
+
+```{python}
+#| output: asis
+#| echo: false
+
+_mp = rb_read('consensus', 'method_presence_summary.tsv')
+_methods = list(_mp['method']) if _mp is not None else ['GIANA', 'GLIPH2', 'TCRdist3']
+rb_text("No single method is reliable on its own, so the consensus keeps the clusters that methods "
+        f"agree on. The methods on this run are **{', '.join(_methods)}**"
+        + (" (CoNGA takes part on the single-cell VDJ+GEX route only: a CoNGA hit clonotype is "
+           "labelled by its gene-expression and TCR cluster pair)." if 'CoNGA' not in _methods else
+           "; CoNGA hit clonotypes are labelled by their gene-expression and TCR cluster pair.")
+        + " Two clonotypes (patient, CDR3β) are linked when at least `consensus_min_methods` methods "
+        "(default 2) put them in the same cluster, and each connected group of linked clonotypes is one "
+        "consensus cluster. A consensus cluster is therefore a group of receptors that independent "
+        "definitions of similarity agree on, the most trustworthy candidates for shared specificity.")
+rb_text("**What follows.** First how much the methods agree with each other (the raw material of the "
+        "consensus), then which combinations of methods support the consensus clusters, the largest "
+        "clusters, and a table of all of them. The cluster names (for example `C12`) are the same in "
+        "the single-cell section below and in the Master Summary, so a cluster can be followed across "
+        "reports.")
+
+_cs = rb_read('consensus', 'consensus_cluster_summary.tsv')
+_po = rb_read('consensus', 'pairwise_method_overlap.tsv')
+if _po is not None:
+    rb_hbar(pd.DataFrame({'cat': _po['comparison'].str.replace('_vs_', ' & '), 'val': _po['n_overlap'],
+                          'hover': [f"{c.replace('_vs_', ' & ')}<br>{n:,} rows clustered by both"
+                                    for c, n in zip(_po['comparison'], _po['n_overlap'])]}),
+            "Rows clustered by both methods of each pair", "Cells (single-cell) or clonotype rows (bulk)",
+            colour="#1b9e77", height=380)
+    rt_caption("Agreement between pairs of methods",
+               "For each pair of methods, the cells (single-cell) or clonotype rows (bulk) that both placed "
+               "in a cluster. Large overlaps mean the methods see the same receptor families; this overlap is "
+               "the raw material of the consensus.")
+    rb_text("**How to read it.** Compare each overlap with how much each method clusters on its own "
+            "(Clustering coverage above): two methods that each cluster thousands of rows but share only "
+            "a few hundred see different receptor families, and the consensus will be small. A large "
+            "overlap means the two definitions of similarity (shared CDR3β geometry for GIANA, shared "
+            "motifs for GLIPH2, distance over the CDR loops for TCRdist3) converge on the same groups, "
+            "which is what you expect for genuinely convergent, antigen-driven receptors. Overlaps "
+            "involving CoNGA are smaller by design, since CoNGA only labels hit clonotypes.")
+if _cs is None:
+    rb_note("No consensus cluster was formed on this run: no two clonotypes were put together by "
+            "enough methods. Lowering `--consensus_min_methods` makes the consensus less strict.")
+else:
+    d = _cs.groupby('consensus_methods').agg(clusters=('consensus_cluster', 'size'),
+                                             rows=('n_cells', 'sum')).reset_index()
+    rb_hbar(pd.DataFrame({'cat': d['consensus_methods'].str.replace('+', ' + ', regex=False), 'val': d['clusters'],
+                          'hover': [f"{m}<br>{c} clusters, {r:,} rows" for m, c, r
+                                    in zip(d['consensus_methods'], d['clusters'], d['rows'])]}),
+            "Consensus clusters by the methods that support them", "Clusters", colour="#e7298a", height=380)
+    rt_caption("Consensus clusters by supporting methods",
+               "The number of consensus clusters supported by each combination of methods. Clusters "
+               "supported by more methods are more robust; on the VDJ+GEX route, clusters that include "
+               "CoNGA also have transcriptional support.")
+    rb_text("**How to read it.** The bars show how the consensus was built. If nearly all clusters "
+            "rest on one pair of methods (for example GIANA + TCRdist3), the consensus mostly reflects "
+            "that pair's notion of similarity; clusters that every method supports are the core set to "
+            "prioritise. With the default of 2 methods, a cluster supported by only two is still well "
+            "supported; raising `--consensus_min_methods` keeps only the clusters further up this list.")
+    t = _cs.nlargest(RB_TOP_CLUSTERS, 'n_cells')
+    rb_hbar(pd.DataFrame({'cat': [f"{c}  ({p})" for c, p in zip(t['consensus_cluster'], t['patient'])],
+                          'val': t['n_cells'],
+                          'hover': [f"{c}<br>patient {p}<br>{n:,} rows, {k} clonotypes<br>{m}"
+                                    for c, p, n, k, m in zip(t['consensus_cluster'], t['patient'], t['n_cells'],
+                                                             t['n_clonotypes'], t['consensus_methods'])]}),
+            f"Top {RB_TOP_CLUSTERS} consensus clusters", "Cells (single-cell) or clonotype rows (bulk)",
+            colour="#e7298a", height=560)
+    rt_caption("Largest consensus clusters",
+               f"The {RB_TOP_CLUSTERS} consensus clusters with the most cells (single-cell) or clonotype "
+               "rows (bulk), labelled cluster (patient); hover for the number of clonotypes and the "
+               "supporting methods.")
+    rb_text("**How to read it.** A cluster's size mixes two things: how many different receptors it "
+            "holds (clonotypes, in the hover) and how expanded they are. A large cluster made of one or "
+            "two clonotypes is essentially one expanded clone with a few close relatives, and its size "
+            "reflects proliferation. A cluster of many distinct clonotypes is convergent selection: "
+            "several independent T cells arrived at similar receptors, the strongest sign of a shared "
+            "antigen. Prefer the second kind when choosing candidates, and check whether any member "
+            "matches a known epitope (VDJdb, Sample notebook).")
+    rb_table(_cs.drop(columns=[c for c in ('consensus_raw', 'frac') if c in _cs.columns]))
+    rt_caption("All consensus clusters",
+               "Every consensus cluster with its patient, size, supporting methods and the cluster each "
+               "method gave its members.", kind='Table')
+    rb_text("**How to use the table.** Sort by `n_clonotypes` to find the most convergent clusters, or "
+            "by `n_cells` for the most expanded. `consensus_methods` lists the methods that support the "
+            "cluster, and the per-method columns give the cluster each method assigned, so a consensus "
+            "cluster can be looked up in the GIANA, GLIPH2 and TCRdist3 sections above. The full table is "
+            "`consensus_cluster_summary.tsv` from the consensus step.")
+```

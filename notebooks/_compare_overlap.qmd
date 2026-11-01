@@ -1,0 +1,54 @@
+{{< include ./_report_bundle.qmd >}}
+
+<!-- Cohort-wide overlap and sharing (moved from the Master Summary). Sharing versus
+     generation probability is in template_sharing.qmd, with the convergent-selection plot. -->
+
+# Repertoire overlap {#sec-overlap-sharing}
+
+Clonotypes seen in more than one sample. Within a patient this reflects genuine clonal
+persistence across timepoints or tissues; across patients it usually reflects public
+clonotypes with high generation probability rather than a shared response.
+
+## Sample overlap
+
+```{python}
+#| output: asis
+#| echo: false
+
+_ol = rb_read('repertoire', 'overlap_samples.tsv')
+if _ol is None or not {'sample_a', 'sample_b', 'jaccard'} <= set(_ol.columns):
+    rb_note("No sample overlap table available (produced by REPERTOIRE_METRICS).")
+else:
+    m = _ol.pivot_table(index='sample_a', columns='sample_b', values='jaccard', aggfunc='first')
+    m.index = rb_label(m.index)
+    m.columns = rb_label(m.columns)
+    fig = go.Figure(go.Heatmap(z=m.values, x=list(m.columns), y=list(m.index),
+                               colorscale=[[0, 'white'], [0.5, '#fee391'], [1, '#cb181d']],
+                               hovertemplate='%{y} vs %{x}<br>Jaccard: %{z:.3f}<extra></extra>'))
+    _rb_layout(fig, "Sample repertoire overlap (Jaccard)", 560, xaxis=dict(title='', tickangle=-45),
+               yaxis=dict(title=''))
+```
+
+**Figure `{python} fig_no()`. Sample overlap.** Jaccard index between every pair of samples
+(labelled by alias): the share of unique clonotypes found in both (0 = none, 1 = identical); hover
+a tile for the exact value. Expect a visible block within each patient
+(clones persisting across timepoints or tissues) and near-zero values between patients; a bright
+cell between two patients suggests contamination or a sample swap.
+
+## Most shared clonotypes
+
+```{python}
+#| output: asis
+#| echo: false
+
+_cs = rb_read('repertoire', 'clone_sharing.tsv')
+if _cs is None:
+    rb_note("No top shared clones table available.")
+else:
+    rb_text(f"The 50 clonotypes found in the most samples ({len(_cs):,} shared clonotypes in total).")
+    rb_table(_cs.head(50))
+```
+
+**Table `{python} tab_no()`. Most shared clonotypes**, ordered by the number of samples they occur in. Clonotypes
+shared between patients are usually public sequences with a high generation probability (see
+the convergent-selection plot above); those shared only within one patient are persistent clones.

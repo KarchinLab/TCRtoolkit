@@ -1,53 +1,31 @@
 {{< include ./_sc_common.qmd >}}
 
-# Single-cell longitudinal and compartment comparison {#sec-sc-compare}
+## Cell states over time and across compartments {#sec-sc-compare}
 
-::: {.callout-note collapse="true"}
-## About this section
-This section is added because the run used **single-cell** TCR data. The overlap, sharing and
-clonal-dynamics analyses above follow clones between samples by frequency. Here the same
-comparisons are made at cell level: how a patient's cell-state make-up changes over time, what
-happens to the phenotype of clones found in more than one sample, how much of a tissue
-repertoire is also detected in blood, and how specific clones (the largest, the CoNGA hits,
-the high-TCRi clones) change in frequency across a patient's samples.
+The same longitudinal and compartment questions as above, answered at cell level: what happens to the phenotype of clones found
+in more than one sample, how much of a tissue repertoire is also detected in blood, and how
+individual clones (the largest, the CoNGA hits, the high-TCRi clones) change across samples.
+Patients are compared only with themselves; a clone counts as absent only from samples that
+were collected, and timepoints a patient was never sampled at are left blank, never zero. The
+cell-state make-up of every sample is in the Master Summary (cell-state composition).
 
-**Uneven sampling.** Patients are compared only with themselves. A clone counts as *absent*
-only from samples that were actually collected: timepoints or compartments a patient was never
-sampled at are left blank, never treated as zero.
-:::
+### Phenotypic fate of persistent clones {#sec-sc-fate}
 
-## Cell-state composition over time {#sec-sc-composition-time}
+**Which clones are shown.** A clone is one paired TCR (the same CDR3α and CDR3β). For each
+patient, the samples are put in order (by timepoint, then compartment), and every pair of
+neighbouring samples in that order is compared: a clone is drawn if it has at least one
+TCR+ cell in both samples of the pair. No size threshold is applied, so a clone seen in a single
+cell in each sample counts, and a clone found in samples 1 and 3 but not 2 is not drawn. In each
+sample, a clone is placed in its **dominant state**: the cell-state annotation that most of its
+cells carry there (a tie goes to the state seen first). Each clone is counted once per pair
+of samples, however many cells it has.
 
-```{python}
-#| output: asis
-#| echo: false
-
-def _composition(p):
-    d = sc_tcr[sc_tcr[subject_col] == p]
-    top = sc_tcr['annot'].value_counts().index[:12]
-    d = d.assign(annot=d['annot'].where(d['annot'].isin(top), 'Other'))
-    g = d.groupby(['origin', 'tp_label', 'tp_rank', 'sample', 'annot']).size().rename('cells').reset_index()
-    g['frac'] = g['cells'] / g.groupby('sample')['cells'].transform('sum')
-    tps = g.sort_values('tp_rank')['tp_label'].unique().tolist()
-    origins = sorted(g['origin'].unique())
-    fig = px.bar(g, x='tp_label', y='frac', color='annot', facet_row='origin' if len(origins) > 1 else None,
-                 category_orders={'tp_label': tps, 'origin': origins},
-                 color_discrete_map=sc_annot_colors(list(top) + ['Other']),
-                 hover_data={'cells': True, 'frac': ':.1%', 'sample': True},
-                 labels={'tp_label': 'Timepoint', 'frac': 'Fraction of TCR+ cells', 'annot': 'Annotation'},
-                 title=f'{p}: cell-state composition of TCR+ cells')
-    fig.update_yaxes(tickformat='.0%')
-    fig.for_each_annotation(lambda a: a.update(text=a.text.split('=')[-1]))
-    sc_show(fig, height=max(SC_HEIGHT, 260 * len(origins) + 120))
-
-if sc_tcr is None or not sc_has_annot:
-    sc_note("Needs cell-type annotations (a GEX object).")
-else:
-    sc_patient_tabs(_composition)
-```
-**Figure SC-C1. Cell-state composition over time.** The TCR+ cells of each sample, split by annotation, with one row per compartment. Only timepoints at which the patient was sampled in that compartment appear. Shifts between timepoints, for example from naive/memory toward effector or exhausted states, show the repertoire being remodelled. Comparing rows at the same timepoint contrasts blood with tissue.
-
-## Phenotypic fate of persistent clones {#sec-sc-fate}
+**How to read it.** Each column is one sample, each block in a column a cell state, and each
+band a group of clones moving from one state to another between neighbouring samples.
+Mostly horizontal bands mean shared clones keep their phenotype; bands that cross to another
+state mean clones whose cells now look different. Because small clones are included and their
+dominant state rests on one or two cells, thin crossing bands can come from sampling noise;
+wide bands are the robust ones.
 
 ```{python}
 #| output: asis
@@ -108,7 +86,7 @@ def _fate(p):
     for i, lab in enumerate(labels):
         fig.add_annotation(x=i / max(len(samples) - 1, 1), y=1.08, xref='paper', yref='paper',
                            text=f'<b>{lab}</b>', showarrow=False, font=dict(size=11))
-    fig.update_layout(title=f'{p}: dominant state of clones shared between consecutive samples')
+    fig.update_layout(title=None)
     sc_show(fig, height=max(SC_HEIGHT, 30 * len(states) + 260))
 
 if sc_tcr is None or not sc_has_annot:
@@ -116,9 +94,9 @@ if sc_tcr is None or not sc_has_annot:
 else:
     sc_patient_tabs(_fate)
 ```
-**Figure SC-C2. Phenotypic fate of persistent clones.** The patient's samples are columns, ordered by timepoint and then compartment, so at a single timepoint blood and tissue sit next to each other. Each flow joins a clone detected in two consecutive samples, going from its dominant state in the first sample to its dominant state in the second, with width proportional to the number of clones. Horizontal flows within one state show phenotypic stability. Diagonal flows show clones changing state, for example memory clones whose cells have become effector or exhausted at a later timepoint, or blood clones that look different once in tissue.
+**Figure `{python} fig_no()`. Phenotypic fate of persistent clones.** One tab per patient. The patient's samples are columns (labelled by alias), ordered by timepoint and then compartment, so at a single timepoint blood and tissue sit next to each other. Each flow joins clones detected in two neighbouring samples (at least one cell in each), going from their dominant state in the first sample to their dominant state in the second, with width proportional to the number of clones; hover a block or flow for its count. Horizontal flows within one state show phenotypic stability. Diagonal flows show clones changing state, for example memory clones whose cells have become effector or exhausted at a later timepoint, or blood clones that look different once in tissue.
 
-## Blood and tissue {#sec-sc-blood-tissue}
+### Blood and tissue {#sec-sc-blood-tissue}
 
 ```{python}
 #| output: asis
@@ -189,9 +167,23 @@ else:
                 fig.for_each_annotation(lambda a: a.update(text=a.text.split('=')[-1]))
                 sc_show(fig, height=max(SC_HEIGHT, 330 * int(np.ceil(len(pats) / 4))))
 ```
-**Figure SC-C3. Blood and tissue.** The bars show, for each tissue sample, the fraction of its TCR+ cells whose clone (CDR3β) is also detected in the same patient's blood: at the same timepoint (when blood was collected then), at any timepoint, and among expanded tissue clones only. The stacked bars compare the cell states of tissue cells from blood-shared and tissue-restricted clones. Expanded tissue clones that are detectable in blood are candidates for blood-based monitoring of the tissue response. Tissue-restricted clones are often tissue-resident (T~RM~-like) or exhausted.
+**Figure `{python} fig_no()`. Blood and tissue.** The bars show, for each tissue sample, the fraction of its TCR+ cells whose clone (CDR3β) is also detected in the same patient's blood: at the same timepoint (when blood was collected then), at any timepoint, and among expanded tissue clones only. The stacked bars compare the cell states of tissue cells from blood-shared and tissue-restricted clones. Expanded tissue clones that are detectable in blood are candidates for blood-based monitoring of the tissue response. Tissue-restricted clones are often tissue-resident (T~RM~-like) or exhausted.
 
-## Following individual clones over time {#sec-sc-clone-tracking}
+### Following individual clones over time {#sec-sc-clone-tracking}
+
+**Which clones are shown.** Up to 10 clones per patient (one paired CDR3α/CDR3β TCR each), chosen
+separately in each tab from all the patient's TCR+ cells, pooling every sample:
+
+- **Largest clones:** clones that are expanded (at least 2 cells) in at least one sample,
+  ranked by their number of cells summed over the samples where they are expanded.
+- **CoNGA hits:** clones with at least one CoNGA-hit cell (CoNGA score < 1, a significant
+  overlap of TCR and gene-expression neighbourhoods), ranked by their best (lowest) score.
+- **High TCRi:** clones ranked by their number of cells in the High TCRi group.
+
+A clone is chosen once for the whole patient and then followed into every sample, including those
+where it was not detected (drawn at 0). The lines are therefore comparable across timepoints and
+compartments. Pooling favours clones that are large in a sample with many cells, so a clone that
+dominates a small sample can be missing from the Largest-clones tab.
 
 ```{python}
 #| output: asis
@@ -264,4 +256,4 @@ else:
 
     sc_patient_tabs(_track_tabs)
 ```
-**Figure SC-C4. Individual clones across a patient's samples.** One line per clone, showing its share of the sample's TCR+ cells at each sampled timepoint, with one panel per compartment. A clone not detected in a collected sample is drawn at 0. Timepoints with no sample are skipped, never drawn as 0. Hovering a point gives the clone's dominant cell state in that sample. The tabs select which clones are followed: the patient's largest clones, its strongest CoNGA hits, or the clones with most High-TCRi cells. Clones that persist across timepoints and appear in both blood and tissue are the most robust candidates for follow-up.
+**Figure `{python} fig_no()`. Individual clones across a patient's samples.** One line per clone, showing its share of the sample's TCR+ cells at each sampled timepoint, with one panel per compartment. A clone not detected in a collected sample is drawn at 0. Timepoints with no sample are skipped, never drawn as 0. Hovering a point gives the clone's dominant cell state in that sample. The tabs select which clones are followed (see *Which clones are shown* above): up to 10 of the patient's largest expanded clones, its strongest CoNGA hits, or the clones with most High-TCRi cells, each chosen from all the patient's cells pooled. Clones that persist across timepoints and appear in both blood and tissue are the most robust candidates for follow-up.

@@ -1,60 +1,15 @@
 <!--
-Shared look of the QC and Details reports, matching the Master Summary
+Shared look of the QC & Run Info and Details reports, matching the Master Summary
 (modules/scratch/MASTER_SUMMARY): cosmo theme and left TOC (set in each notebook's YAML),
-the interactive-figures note, Master Summary table styling, and its plot palette and
-left-aligned titles as the default Plotly / matplotlib style.
+the interactive-figures note, table styling, and the plot palette. The Discovery Brief,
+embedded in the Master Summary, takes only the CSS and plot theme.
 -->
 
-<style>
-  /* Compact tab buttons (many per-patient / per-sample tabs). */
-  .panel-tabset .nav-link {
-    font-size: 0.9rem !important;
-    padding: 0.4rem 0.7rem !important;
-  }
-  .panel-tabset .nav-link.active { font-weight: 600; }
-  /* Tables styled like the Master Summary's reactable tables. */
-  .cell-output-display table {
-    font-size: 0.9rem;
-    border-collapse: collapse;
-    margin-bottom: 1rem;
-  }
-  .cell-output-display table thead th {
-    background: #f7f7f8;
-    font-weight: 600;
-    border-bottom: 1px solid #dee2e6;
-  }
-  .cell-output-display table td,
-  .cell-output-display table th { padding: 0.35rem 0.6rem; }
-  .cell-output-display table tbody tr:nth-child(even) { background: #fafafa; }
-</style>
+{{< include ./_report_css.qmd >}}
 
 ::: {.callout-tip appearance="simple"}
 **Most figures in this report are interactive.** Hover a point or bar for exact values, drag
 to zoom, double-click to reset, and click legend entries to show or hide series.
 :::
 
-```{python}
-#| include: false
-import matplotlib as _mpl
-import plotly.graph_objects as _go
-import plotly.io as _pio
-
-# Master Summary palette and layout (pal / ttl in _ms_setup.qmd).
-_REPORT_PALETTE = ["#2c7fb8", "#d95f02", "#7570b3", "#1b9e77",
-                   "#e7298a", "#66a61e", "#e6ab02", "#a6761d"]
-_pio.templates["tcrtoolkit"] = _go.layout.Template(layout=dict(
-    font=dict(family='"Source Sans Pro", -apple-system, "Segoe UI", Roboto, sans-serif',
-              size=13, color="#373a3c"),
-    title=dict(x=0, xanchor="left", font=dict(size=16)),
-    colorway=_REPORT_PALETTE,
-))
-_pio.templates.default = "plotly_white+tcrtoolkit"
-
-_mpl.rcParams.update({
-    "axes.prop_cycle": _mpl.cycler(color=_REPORT_PALETTE),
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.titlelocation": "left",
-    "font.size": 11,
-})
-```
+{{< include ./_report_theme.qmd >}}

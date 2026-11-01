@@ -1,0 +1,165 @@
+<!-- Master Summary plot palette and left-aligned titles as the default Plotly / matplotlib style,
+     and the figure, table and caption helpers the report notebooks share. -->
+
+```{python}
+#| include: false
+import matplotlib as _mpl
+import pandas as _pd
+import plotly.graph_objects as _go
+import plotly.io as _pio
+from IPython.display import HTML as _HTML
+
+# Master Summary palette and layout (pal / ttl in _ms_setup.qmd).
+_REPORT_PALETTE = ["#2c7fb8", "#d95f02", "#7570b3", "#1b9e77",
+                   "#e7298a", "#66a61e", "#e6ab02", "#a6761d"]
+_pio.templates["tcrtoolkit"] = _go.layout.Template(layout=dict(
+    font=dict(family='"Source Sans Pro", -apple-system, "Segoe UI", Roboto, sans-serif',
+              size=13, color="#373a3c"),
+    title=dict(x=0, xanchor="left", font=dict(size=16)),
+    colorway=_REPORT_PALETTE,
+))
+_pio.templates.default = "plotly_white+tcrtoolkit"
+
+_mpl.rcParams.update({
+    "axes.prop_cycle": _mpl.cycler(color=_REPORT_PALETTE),
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.titlelocation": "left",
+    "font.size": 11,
+})
+
+# ---- Figure and table numbers ------------------------------------------------
+# Called from the captions (`{python} fig_no()`), which Quarto evaluates in document order,
+# so the numbers stay consecutive when a section is left out.
+_rt_counts = {'fig': 0, 'tab': 0}
+
+
+def fig_no():
+    _rt_counts['fig'] += 1
+    return _rt_counts['fig']
+
+
+def tab_no():
+    _rt_counts['tab'] += 1
+    return _rt_counts['tab']
+
+
+def rt_caption(title, text='', kind='Figure'):
+    """A numbered caption printed from an `output: asis` cell (for figures drawn conditionally)."""
+    n = fig_no() if kind == 'Figure' else tab_no()
+    print(f"\n**{kind} {n}. {title}.** {text}\n")
+
+
+# ---- Colours -----------------------------------------------------------------
+def rt_colors(values):
+    """One colour per category: the palette plus four extra hues, interpolated when there are
+    more categories than colours (state_cols() of the Master Summary)."""
+    lv = [str(v) for v in values]
+    base = _REPORT_PALETTE + ["#4d4d4d", "#b15928", "#6a3d9a", "#ff7f00"]
+    if len(lv) <= len(base):
+        return dict(zip(lv, base))
+    rgb = [tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) for c in base]
+    out = []
+    for k in range(len(lv)):
+        t = k * (len(rgb) - 1) / (len(lv) - 1)
+        i = min(int(t), len(rgb) - 2)
+        f = t - i
+        out.append('#%02x%02x%02x' % tuple(round(a + (b - a) * f) for a, b in zip(rgb[i], rgb[i + 1])))
+    return dict(zip(lv, out))
+
+
+# ---- Figures -------------------------------------------------------------------
+RT_CONFIG = dict(displaylogo=False, modeBarButtonsToRemove=['select2d', 'lasso2d'],
+                 toImageButtonOptions=dict(format='png', scale=2))
+
+
+def rt_show(fig):
+    fig.show(config=RT_CONFIG)
+    print("\n")
+
+
+def rt_show_wide(fig):
+    """A figure wider than the page, in a box that scrolls sideways (`output: asis` cells only)."""
+    print("\n::: {.fig-scroll}\n")
+    fig.show(config=RT_CONFIG)
+    print("\n:::\n")
+
+
+def rt_show_box(fig):
+    """A figure outside a tabset, framed like one (`output: asis` cells only)."""
+    print("\n::: {.fig-box}\n")
+    fig.show(config=RT_CONFIG)
+    print("\n:::\n")
+
+
+def rt_sbar(df, title, xlab, colors=None, cat_order=None, grp_order=None, legend_title='',
+            tickformat='.0%', height=None):
+    """Stacked horizontal bars in the Master Summary style (sbar() in _ms_setup.qmd): one bar
+    per category, the first category on top, hover text on every segment, legend on the right.
+    df: cat, grp, val (fractions), hover."""
+    d = df.copy()
+    d['cat'] = d['cat'].astype(str)
+    d['grp'] = d['grp'].astype(str)
+    cats = [str(c) for c in cat_order] if cat_order is not None else list(dict.fromkeys(d['cat']))
+    grps = [str(g) for g in grp_order] if grp_order is not None else list(dict.fromkeys(d['grp']))
+    colors = colors or rt_colors(grps)
+    fig = _go.Figure()
+    for g in grps:
+        s = d[d['grp'] == g]
+        if s.empty:
+            continue
+        fig.add_trace(_go.Bar(x=s['val'], y=s['cat'], orientation='h', name=g,
+                              marker_color=colors.get(g), text=s['hover'], textposition='none',
+                              hovertemplate='%{text}<extra></extra>'))
+    fig.update_layout(barmode='stack', title=dict(text=title, x=0, xanchor='left'),
+                      height=height or max(420, 26 * len(cats) + 160),
+                      margin=dict(l=140, t=60),
+                      xaxis=dict(title=xlab, tickformat=tickformat),
+                      yaxis=dict(title='', type='category', categoryorder='array',
+                                 categoryarray=cats, autorange='reversed'),
+                      legend=dict(orientation='v', x=1.02, y=1, yanchor='top',
+                                  title=dict(text=legend_title), traceorder='normal'))
+    return fig
+
+
+# ---- Tables ------------------------------------------------------------------
+def rt_table(df, title='', max_height='400px', formatter=None):
+    """A table styled like the Master Summary's (light grey header, striped compact rows, text
+    left- and numbers right-aligned) in a scrollable box. Returns HTML for display()."""
+    if df is None or df.empty:
+        print(f"{title}: No data to display.")
+        return None
+    styles = [
+        dict(selector="", props=[("border-collapse", "collapse"), ("width", "100%"),
+                                 ("font-size", "0.875rem")]),
+        dict(selector="th", props=[("background-color", "#f7f7f8"), ("text-align", "left"),
+                                   ("font-weight", "600"), ("padding", "6px 8px"),
+                                   ("border-bottom", "2px solid #e1e1e1"),
+                                   ("position", "sticky"), ("top", "0")]),
+        dict(selector="td", props=[("text-align", "left"), ("padding", "6px 8px"),
+                                   ("border-bottom", "1px solid #f0f0f0"), ("white-space", "nowrap")]),
+        dict(selector="tbody tr:nth-child(odd) td", props=[("background-color", "rgba(0, 0, 0, 0.03)")]),
+        dict(selector="tbody tr:hover td", props=[("background-color", "rgba(0, 0, 0, 0.06)")]),
+        dict(selector="caption", props=[("caption-side", "top"), ("font-size", "1.05em"),
+                                        ("font-weight", "600"), ("text-align", "left"),
+                                        ("color", "#212529"), ("margin-bottom", "8px")]),
+    ]
+    styler = df.style.set_table_styles(styles).set_caption(title).hide(axis='index')
+    # Text left-aligned, numbers right-aligned (!important: the table-wide td rule is more specific).
+    num_cols = [c for c in df.columns if _pd.api.types.is_numeric_dtype(df[c])]
+    if num_cols:
+        styler = styler.set_properties(subset=num_cols, **{'text-align': 'right !important'})
+    # Whole numbers without decimals, other numbers to 4 significant digits, unless given.
+    fmt = {}
+    for c in df.columns:
+        if _pd.api.types.is_integer_dtype(df[c]):
+            fmt[c] = '{:,.0f}'
+        elif _pd.api.types.is_float_dtype(df[c]):
+            v = df[c].dropna()
+            fmt[c] = '{:,.0f}' if len(v) and (v == v.round()).all() and v.abs().max() >= 1 else '{:.4g}'
+    fmt.update(formatter or {})
+    if fmt:
+        styler = styler.format(fmt, na_rep="NA")
+    return _HTML(f'<div style="max-height: {max_height}; overflow: auto; border: 1px solid #e6e6e6; '
+                 f'border-radius: 4px; margin-bottom: 1rem;">{styler.to_html()}</div>')
+```

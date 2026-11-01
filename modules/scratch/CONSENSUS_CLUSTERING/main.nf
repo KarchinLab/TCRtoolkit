@@ -13,6 +13,8 @@ process CONSENSUS_CLUSTERING {
       path gliph_export_cells,   stageAs: 'in_gliph_export_cells.tsv'
       path tcrdist_export_cells, stageAs: 'in_tcrdist_export_cells.tsv'
       path giana_export_cells,   stageAs: 'in_giana_export_cells.tsv'
+      // CoNGA per-cell export on the VDJ+GEX route; NO_FILE elsewhere.
+      path conga_export_cells,   stageAs: 'in_conga_export_cells.tsv'
       path qmd
       val  project_name
 
@@ -34,6 +36,7 @@ process CONSENSUS_CLUSTERING {
       -P gliph_export_cells_file=${gliph_export_cells} \\
       -P tcrdist_export_cells_file=${tcrdist_export_cells} \\
       -P giana_export_cells_file=${giana_export_cells} \\
+      -P conga_export_cells_file=${conga_export_cells} \\
       -P outdir=Clonotype_Clustering_Consensus_Report \\
       -P label_col="${params.label_col}" \\
       -P sample_col="${params.sample_col}" \\

@@ -1,4 +1,4 @@
-# Single-cell GEX analyses {#sec-sc-gex}
+# Single-cell GEX: cell states and clonal programmes {#sec-sc-gex}
 
 ::: {.callout-note appearance="simple"}
 No annotated GEX object was supplied (`--input_annotated_object`), so T-cell integration,

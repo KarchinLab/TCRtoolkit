@@ -28,6 +28,9 @@ params:
   gliph_export_cells_file: ""
   tcrdist_export_cells_file: ""
   giana_export_cells_file: ""
+  # CoNGA per-cell export (single-cell VDJ+GEX route only). CoNGA hit clonotypes take their
+  # (GEX cluster, TCR cluster) pair as a fourth method's cluster label.
+  conga_export_cells_file: ""
 
   # Optional previous outputs
   metadata_file: ""
@@ -253,11 +256,12 @@ safe_make_umap <- function(seu, reduction_name = "umap", dims = 1:30, nfeatures 
   seu
 }
 
-make_method_signature <- function(gliph, tcrdist, giana) {
+make_method_signature <- function(gliph, tcrdist, giana, conga = NA_character_) {
   paste0(
     "GLIPH:", ifelse(is.na(gliph) | gliph == "", "NA", gliph),
     "|TCRdist:", ifelse(is.na(tcrdist) | tcrdist == "", "NA", tcrdist),
-    "|GIANA:", ifelse(is.na(giana) | giana == "", "NA", giana)
+    "|GIANA:", ifelse(is.na(giana) | giana == "", "NA", giana),
+    ifelse(is.na(conga) | conga == "", "", paste0("|CoNGA:", conga))
   )
 }
 
@@ -313,6 +317,7 @@ export_cells_main <- safe_read_table(params$export_cells_file)
 gliph_export_tbl <- safe_read_table(params$gliph_export_cells_file)
 tcrdist_export_tbl <- safe_read_table(params$tcrdist_export_cells_file)
 giana_export_tbl <- safe_read_table(params$giana_export_cells_file)
+conga_export_tbl <- safe_read_table(params$conga_export_cells_file)
 metadata_tbl <- safe_read_table(params$metadata_file)
 previous_summary_tbl <- safe_read_table(params$previous_summary_file)
 
@@ -557,6 +562,28 @@ if (!is.null(giana_export_tbl) && "cell_id" %in% colnames(giana_export_tbl)) {
     select(-giana_cluster.giana, -giana_group.giana)
 }
 
+# CoNGA (VDJ+GEX route only): a hit clonotype (conga_score < 1) is labelled by its
+# (GEX cluster, TCR cluster) pair; non-hits carry no CoNGA cluster. Without a CoNGA
+# export the column stays NA and CoNGA takes no part in the consensus.
+export_cells$conga_cluster <- NA_character_
+if (!is.null(conga_export_tbl) &&
+    all(c("cell_id", "conga_score", "conga_gex_cluster", "conga_tcr_cluster") %in% colnames(conga_export_tbl))) {
+  conga_tbl2 <- conga_export_tbl %>%
+    transmute(
+      cell_id = as.character(cell_id),
+      conga_cluster.conga = ifelse(suppressWarnings(as.numeric(conga_score)) < 1 &
+                                     !is.na(conga_gex_cluster) & !is.na(conga_tcr_cluster),
+                                   paste0("G", conga_gex_cluster, "_T", conga_tcr_cluster),
+                                   NA_character_)
+    ) %>%
+    distinct(cell_id, .keep_all = TRUE)
+  export_cells <- export_cells %>%
+    left_join(conga_tbl2, by = "cell_id") %>%
+    mutate(conga_cluster = coalesce(conga_cluster, conga_cluster.conga)) %>%
+    select(-conga_cluster.conga)
+}
+has_conga_method <- any(!is.na(export_cells$conga_cluster))
+
 save_table_safe(export_cells, "consensus_export_cells.tsv")
 
 ```
@@ -569,40 +596,36 @@ export_cells <- export_cells %>%
     has_gliph = !is.na(gliph_cluster) | !is.na(gliph_pattern),
     has_tcrdist = !is.na(tcrdist_cluster) | !is.na(tcrdist_group),
     has_giana = !is.na(giana_cluster) | !is.na(giana_group),
-    n_methods = as.integer(has_gliph) + as.integer(has_tcrdist) + as.integer(has_giana),
-    method_signature = make_method_signature(gliph_cluster, tcrdist_cluster, giana_cluster)
+    has_conga = !is.na(conga_cluster),
+    n_methods = as.integer(has_gliph) + as.integer(has_tcrdist) + as.integer(has_giana) + as.integer(has_conga),
+    method_signature = make_method_signature(gliph_cluster, tcrdist_cluster, giana_cluster, conga_cluster)
   )
 
+# Methods taking part in this run: CoNGA only on the VDJ+GEX route.
+method_flags <- c(GLIPH2 = "has_gliph", TCRdist3 = "has_tcrdist", GIANA = "has_giana")
+if (has_conga_method) method_flags <- c(method_flags, CoNGA = "has_conga")
+
 method_presence_summary <- tibble(
-  method = c("GLIPH2", "TCRdist3", "GIANA"),
-  n_cells = c(
-    sum(export_cells$has_gliph, na.rm = TRUE),
-    sum(export_cells$has_tcrdist, na.rm = TRUE),
-    sum(export_cells$has_giana, na.rm = TRUE)
-  ),
-  frac_cells = c(
-    mean(export_cells$has_gliph, na.rm = TRUE),
-    mean(export_cells$has_tcrdist, na.rm = TRUE),
-    mean(export_cells$has_giana, na.rm = TRUE)
-  )
+  method = names(method_flags),
+  n_cells = vapply(method_flags, function(f) sum(export_cells[[f]], na.rm = TRUE), numeric(1)),
+  frac_cells = vapply(method_flags, function(f) mean(export_cells[[f]], na.rm = TRUE), numeric(1))
 )
 save_table_safe(method_presence_summary, "method_presence_summary.tsv")
 
+method_pairs <- utils::combn(names(method_flags), 2, simplify = FALSE)
 pairwise_overlap_tbl <- tibble(
-  comparison = c("GLIPH2_vs_TCRdist3", "GLIPH2_vs_GIANA", "TCRdist3_vs_GIANA"),
-  n_overlap = c(
-    sum(export_cells$has_gliph & export_cells$has_tcrdist, na.rm = TRUE),
-    sum(export_cells$has_gliph & export_cells$has_giana, na.rm = TRUE),
-    sum(export_cells$has_tcrdist & export_cells$has_giana, na.rm = TRUE)
-  )
+  comparison = vapply(method_pairs, function(m) paste(m, collapse = "_vs_"), character(1)),
+  n_overlap = vapply(method_pairs, function(m)
+    sum(export_cells[[method_flags[[m[1]]]]] & export_cells[[method_flags[[m[2]]]]], na.rm = TRUE), numeric(1))
 )
 save_table_safe(pairwise_overlap_tbl, "pairwise_method_overlap.tsv")
 ```
 
 # Build consensus labels
 
-GIANA, GLIPH2 and TCRdist3 each cluster a patient's clonotypes with their own labels, so
-the labels themselves are never compared across methods. Instead, two clonotypes (patient,
+GIANA, GLIPH2 and TCRdist3 (and, on the single-cell VDJ+GEX route, CoNGA hit clusters) each
+cluster clonotypes with their own labels, so the labels themselves are never compared across
+methods. Instead, two clonotypes (patient,
 CDR3β) are linked when at least `consensus_min_methods` methods place them in the same
 cluster, and each connected group of two or more linked clonotypes is one consensus
 cluster. `consensus_methods` lists the methods whose agreement built each cluster.
@@ -616,12 +639,14 @@ export_cells <- export_cells %>%
     tcrdist_use = ifelse(!is.na(tcrdist_cluster) & tcrdist_cluster != "", tcrdist_cluster,
                          ifelse(!is.na(tcrdist_group) & tcrdist_group != "", tcrdist_group, NA_character_)),
     giana_use = ifelse(!is.na(giana_cluster) & giana_cluster != "", giana_cluster,
-                       ifelse(!is.na(giana_group) & giana_group != "", giana_group, NA_character_))
+                       ifelse(!is.na(giana_group) & giana_group != "", giana_group, NA_character_)),
+    conga_use = ifelse(!is.na(conga_cluster) & conga_cluster != "", conga_cluster, NA_character_)
   )
 
 consensus_base <- export_cells %>%
   mutate(
-    n_methods_nonmissing = as.integer(!is.na(gliph_use)) + as.integer(!is.na(tcrdist_use)) + as.integer(!is.na(giana_use))
+    n_methods_nonmissing = as.integer(!is.na(gliph_use)) + as.integer(!is.na(tcrdist_use)) +
+      as.integer(!is.na(giana_use)) + as.integer(!is.na(conga_use))
   )
 
 # Co-clustering consensus. Each method's labels are its own (GIANA "C1_G2", GLIPH2 motif
@@ -642,7 +667,7 @@ consensus_base <- consensus_base %>%
                          paste(coalesce(patient, "NA"), CDR3b, sep = "::"),
                          ifelse(!is.na(clone_id), paste(coalesce(patient, "NA"), clone_id, sep = "::"), NA_character_)))
 
-method_cols <- c(GLIPH2 = "gliph_use", TCRdist3 = "tcrdist_use", GIANA = "giana_use")
+method_cols <- c(GLIPH2 = "gliph_use", TCRdist3 = "tcrdist_use", GIANA = "giana_use", CoNGA = "conga_use")
 method_cols <- method_cols[vapply(method_cols, function(m) any(!is.na(consensus_base[[m]])), logical(1))]
 k_req <- as.integer(params$consensus_min_methods)
 
@@ -695,7 +720,8 @@ consensus_base <- consensus_base %>%
 
 # Optionally keep a single-method cluster for clonotypes no consensus covers.
 if (isTRUE(params$assign_singleton_consensus)) {
-  single <- coalesce(consensus_base$gliph_use, consensus_base$tcrdist_use, consensus_base$giana_use)
+  single <- coalesce(consensus_base$gliph_use, consensus_base$tcrdist_use, consensus_base$giana_use,
+                     consensus_base$conga_use)
   fill <- is.na(consensus_base$consensus_raw) & !is.na(single)
   consensus_base$consensus_raw[fill] <- paste0("single:", single[fill])
   consensus_base$consensus_methods[fill] <- "single method"
@@ -713,6 +739,7 @@ consensus_map <- consensus_base %>%
             gliph_clusters = paste(sort(unique(na.omit(gliph_use))), collapse = ";"),
             tcrdist_clusters = paste(sort(unique(na.omit(tcrdist_use))), collapse = ";"),
             giana_clusters = paste(sort(unique(na.omit(giana_use))), collapse = ";"),
+            conga_clusters = paste(sort(unique(na.omit(conga_use))), collapse = ";"),
             .groups = "drop") %>%
   arrange(desc(n_cells)) %>%
   mutate(consensus_cluster = paste0(params$consensus_label_prefix, "_", row_number()))
@@ -759,6 +786,7 @@ summary_rollup <- tibble(
     "Cells with GLIPH2 annotation",
     "Cells with TCRdist3 annotation",
     "Cells with GIANA annotation",
+    "Cells in CoNGA hit clusters",
     "Cells with >=2 methods",
     "Cells with consensus cluster",
     "Unique consensus clusters",
@@ -772,6 +800,7 @@ summary_rollup <- tibble(
     sum(export_cells$has_gliph, na.rm = TRUE),
     sum(export_cells$has_tcrdist, na.rm = TRUE),
     sum(export_cells$has_giana, na.rm = TRUE),
+    if (has_conga_method) sum(export_cells$has_conga, na.rm = TRUE) else NA,
     sum(export_cells$n_methods_nonmissing >= 2, na.rm = TRUE),
     sum(!is.na(export_cells$consensus_cluster)),
     safe_n_unique(export_cells$consensus_cluster),
@@ -784,7 +813,7 @@ save_table_safe(summary_rollup, "consensus_summary_rollup.tsv")
 
 consensus_cluster_summary <- consensus_map %>%
   select(consensus_cluster, n_cells, n_clonotypes, patient, consensus_methods, n_methods_support,
-         gliph_clusters, tcrdist_clusters, giana_clusters, consensus_raw) %>%
+         gliph_clusters, tcrdist_clusters, giana_clusters, conga_clusters, consensus_raw) %>%
   mutate(frac = n_cells / sum(n_cells)) %>%
   arrange(desc(n_cells))
 save_table_safe(consensus_cluster_summary, "consensus_cluster_summary.tsv")
@@ -862,23 +891,10 @@ print(colnames(export_cells))
 print(sum(!is.na(export_cells$giana_cluster)))
 print(sum(!is.na(export_cells$giana_group)))
 
-overlap_matrix <- matrix(
-  c(
-    sum(export_cells$has_gliph, na.rm = TRUE),
-    sum(export_cells$has_gliph & export_cells$has_tcrdist, na.rm = TRUE),
-    sum(export_cells$has_gliph & export_cells$has_giana, na.rm = TRUE),
-    sum(export_cells$has_tcrdist & export_cells$has_gliph, na.rm = TRUE),
-    sum(export_cells$has_tcrdist, na.rm = TRUE),
-    sum(export_cells$has_tcrdist & export_cells$has_giana, na.rm = TRUE),
-    sum(export_cells$has_giana & export_cells$has_gliph, na.rm = TRUE),
-    sum(export_cells$has_giana & export_cells$has_tcrdist, na.rm = TRUE),
-    sum(export_cells$has_giana, na.rm = TRUE)
-  ),
-  nrow = 3,
-  byrow = TRUE
-)
-rownames(overlap_matrix) <- c("GLIPH2", "TCRdist3", "GIANA")
-colnames(overlap_matrix) <- c("GLIPH2", "TCRdist3", "GIANA")
+overlap_matrix <- outer(seq_along(method_flags), seq_along(method_flags), Vectorize(function(a, b)
+  sum(export_cells[[method_flags[[a]]]] & export_cells[[method_flags[[b]]]], na.rm = TRUE)))
+rownames(overlap_matrix) <- names(method_flags)
+colnames(overlap_matrix) <- names(method_flags)
 save_table_safe(as.data.frame(overlap_matrix) %>% tibble::rownames_to_column("method"), "method_overlap_matrix.tsv")
 ```
 
@@ -1038,11 +1054,12 @@ if (isTRUE(params$show_consensus_size_barplot) && nrow(consensus_cluster_summary
 #| label: method-cluster-count-plot
 if (isTRUE(params$show_method_cluster_count_barplot)) {
   method_cluster_counts <- tibble(
-    method = c("GLIPH2", "TCRdist3", "GIANA", "Consensus"),
+    method = c(names(method_flags), "Consensus"),
     n_clusters = c(
-      safe_n_unique(export_cells$gliph_cluster),
-      safe_n_unique(export_cells$tcrdist_cluster),
-      safe_n_unique(export_cells$giana_cluster),
+      c(GLIPH2 = safe_n_unique(export_cells$gliph_cluster),
+        TCRdist3 = safe_n_unique(export_cells$tcrdist_cluster),
+        GIANA = safe_n_unique(export_cells$giana_cluster),
+        CoNGA = safe_n_unique(export_cells$conga_cluster))[names(method_flags)],
       safe_n_unique(export_cells$consensus_cluster)
     )
   )
@@ -1242,9 +1259,7 @@ warn_tbl <- tibble(
     "Singleton consensus disabled"
   ),
   triggered = c(
-    sum(c(any(export_cells$has_gliph, na.rm = TRUE),
-          any(export_cells$has_tcrdist, na.rm = TRUE),
-          any(export_cells$has_giana, na.rm = TRUE))) < 2,
+    sum(vapply(method_flags, function(f) any(export_cells[[f]], na.rm = TRUE), logical(1))) < 2,
     mean(!is.na(export_cells$consensus_cluster)) < 0.3,
     all(is.na(export_cells$condition)),
     all(is.na(export_cells$patient)),

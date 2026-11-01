@@ -38,6 +38,8 @@ params:
   patient_col: "patient"
   condition_col: "condition"
   timepoint_col: "timepoint"
+  # Comma-separated cohort timepoint order (--timepoint_order); empty sorts alphabetically.
+  timepoint_order: ""
   clone_id_col: "clone_id"
   clone_size_col: "clone_size"
   consensus_cluster_col: "consensus_cluster"

@@ -1,0 +1,47 @@
+{{< include ./_report_bundle.qmd >}}
+
+# Overview {#sec-overview}
+
+What was analysed, and how the run was routed. The route follows the input: bulk TCR-seq,
+single-cell VDJ only, or single-cell VDJ with an annotated GEX object. Without a GEX
+object the T-cell integration, CoNGA and TCRi steps are skipped, and the sections that
+depend on them say so.
+
+```{python}
+#| output: asis
+#| echo: false
+
+import datetime
+
+_route_label = {
+    'bulk': 'Bulk TCR repertoire (clonotype-level; no cells)',
+    'vdj_only': 'Single-cell, VDJ only (no GEX object)',
+    'full': 'Full single-cell (GEX + VDJ)',
+}.get(rb_route, rb_route)
+
+_ss = pd.read_csv(sample_table, sep=',', dtype=str).fillna('')
+_n_samples = _ss['sample'].nunique() if 'sample' in _ss.columns else np.nan
+_n_patients = _ss[subject_col].replace('', np.nan).nunique() if subject_col in _ss.columns else np.nan
+
+# One row per cell (single-cell) or per sample x clonotype (bulk), after clustering.
+_cells = rb_read('cells', 'consensus_export_cells.tsv')
+if _cells is None and os.path.isdir(os.path.join(RB_DIR, 'cells')):
+    for _f in sorted(os.listdir(os.path.join(RB_DIR, 'cells'))):
+        _cells = rb_read('cells', _f)
+        if _cells is not None:
+            break
+_clone_col = rb_col(_cells, ['clone_id', 'CTaa', 'clonotype', 'clone']) if _cells is not None else None
+
+_rows = [
+    ('Project', project_name),
+    ('Workflow command', workflow_cmd),
+    ('Report date', datetime.datetime.now().strftime('%Y-%m-%d %H:%M')),
+    ('Analysis route', _route_label),
+    ('Samples', f'{_n_samples:,}' if pd.notna(_n_samples) else ''),
+    ('Patients', f'{_n_patients:,}' if pd.notna(_n_patients) else ''),
+    ('Cells / clonotype rows', f'{len(_cells):,}' if _cells is not None else ''),
+    ('Unique clonotypes', f'{_cells[_clone_col].nunique():,}' if _clone_col else ''),
+    ('TCRdist radius', rb_info.get('tcrdist_radius', '')),
+]
+rb_table(pd.DataFrame(_rows, columns=['Metric', 'Value']))
+```

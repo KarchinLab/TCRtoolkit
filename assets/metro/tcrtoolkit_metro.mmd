@@ -8,7 +8,7 @@
 %%metro files: bulk_in | TSV | AIRR / Adaptive
 %%metro files: vdj_in | CSV | VDJ contigs
 %%metro file: gex_in | RDS | Annotated GEX
-%%metro files: notebooks_out | HTML | Report notebooks
+%%metro files: notebooks_out | HTML | Run Report
 %%metro files: summary_out | HTML | Master Summary
 %%metro off_track: gex_in
 %%metro grid: bulk_input | 0,0
@@ -92,7 +92,7 @@ graph LR
 
     subgraph downstream [Clonotype clustering & reporting]
         _join[ ]
-        notebooks[Report notebooks]
+        notebooks[Run Report]
         notebooks_out[ ]
         bulk_to_export[Clonotype export]
         cluster_to_sc[Clusters to cells]

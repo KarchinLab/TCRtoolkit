@@ -906,6 +906,16 @@ save_table_safe(contigs_all_post, "contigs_after_qc.tsv")
 save_table_safe(removed, "contigs_removed_by_qc.tsv")
 save_table_safe(qc_summary, "vdj_qc_summary_before_after.tsv")
 save_table_safe(qc_retention, "qc_contigs_before_after_summary.tsv")
+# Productive fraction per sample and chain, on the contigs as read (before any QC filter):
+# the filters keep productive contigs only, so after them the fraction is always 100%.
+productivity_before_qc <- contigs_all_pre %>%
+  filter(!is.na(chain), chain != "") %>%
+  group_by(sample, chain) %>%
+  summarise(n_contigs = n(),
+            n_productive = sum(productive %in% TRUE),
+            .groups = "drop") %>%
+  mutate(pct_productive = 100 * n_productive / pmax(1L, n_contigs))
+save_table_safe(productivity_before_qc, "productivity_before_qc.tsv")
 save_table_safe(pairing_all, "pairing_status_all.tsv")
 save_table_safe(sample_qc, "vdj_qc_per_sample_compact.tsv")
 save_table_safe(cdr3_len_all, "cdr3_lengths_all.tsv")

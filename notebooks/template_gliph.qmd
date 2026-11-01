@@ -109,14 +109,21 @@ global_similarities = pd.concat(global_similarities_list, ignore_index=True) if 
 
 ## GLIPH2: TCRB CDR3 motif clusters {#sec-GLIPH2}
 
-**GLIPH2** (Grouping of Lymphocyte Interactions by Paratope Hotspots, version 2) is a computational tool used in TCR sequence analysis to **identify clusters of TCRs that likely recognize the same or similar antigens**.
+::: {.callout-tip title="In short" appearance="simple"}
+- **What it shows:** GLIPH2 specificity groups: CDR3β sequences linked because they share a short enriched amino-acid motif, drawn as a network, with the motif lengths and the largest motifs.
+- **Why it matters:** TCRs sharing a contact motif tend to bind the same peptide–MHC, so groups are candidate antigen-specific families, within or across patients.
+- **How to read it:** large, dense groups are focused responses; groups mixing patients suggest a shared target. Longer motifs (4–5 aa) are more specific than short ones (2–3 aa).
+:::
+
+**GLIPH2** (Grouping of Lymphocyte Interactions by Paratope Hotspots, version 2; Huang *et al.*, *Nat Biotechnol* 2020, [doi:10.1038/s41587-020-0505-4](https://doi.org/10.1038/s41587-020-0505-4)) is a computational tool used in TCR sequence analysis to **identify clusters of TCRs that likely recognize the same or similar antigens**.
 
 By grouping TCRs with shared sequence motifs, particularly in the CDR3 regions (the main antigen-binding region), GLIPH2 helps infer functional relationships and **predict which TCRs might target the same or related epitopes**.
 
 For the current stage of analysis, we are focusing solely on the **CDR3 region of the TCR beta chain (TCRB)**. A network was created to facilitate result visualization.
 
 ```{python}
-#| fig-cap: "**Specificity groups across patients** Each circle (node) represents a unique TCR clonotype across all data. Nodes are connected if they share a common sequence motif, placing them into the same specificity group."
+#| output: asis
+#| echo: false
 
 import plotly.graph_objects as go
 import plotly.express as px
@@ -204,15 +211,18 @@ else:
         ))
 
     fig.update_layout(
-        title='TCRB Network', plot_bgcolor='white', width=1000, height=800,
+        title='GLIPH2 specificity groups (CDR3β network)', plot_bgcolor='white', width=1000, height=800,
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        margin=dict(t=40, b=20, l=10, r=10), legend_title_text='Category'
+        margin=dict(t=60, b=20, l=10, r=10), legend_title_text='Category'
     )
-    fig.show()
+    rt_show_box(fig)
 
 ```
 
+**Figure `{python} fig_no()`. Specificity groups across patients.** Each node is a unique CDR3β, coloured by the patient it was found in (black: found in several patients); an edge joins two CDR3βs that GLIPH2 placed in the same specificity group because they share an enriched motif or differ by a single residue. Connected components are candidate antigen-specific families. Hover a node for the patients and samples carrying it; drag to zoom into dense groups.
+
+:::: {.callout-note title="More detail: reading the network" collapse="true"}
 **<u>How to Extract Biological Knowledge from the Figure?</u>**
 
 The GLIPH2 network visualizes structural convergence within the T-cell repertoire. Each node represents a unique TCR clonotype, and edges connect clonotypes that share a conserved sequence motif. By evaluating the topology and composition of these clusters, we can infer the nature of the immune response.  
@@ -233,47 +243,32 @@ By mapping metadata (such as cohort or patient ID) to the node colors, we can cl
 
 3. Analyzing "Shared" Nodes  
 Nodes specifically designated as "Shared" (colored black) represent exact amino acid sequences found in multiple individuals. Observing the edges connected to these exact public clones reveals the broader structural "neighborhood" of private TCRs that likely recognize the same public antigen.   
-
+::::
 
 ```{python}
 #| output: asis
-#| fig-cap: "**TCRB CDR3 motif lengths per patient.** Bar charts showing the distribution of amino acid motif lengths identified by GLIPH2 for each individual patient."
-
-import matplotlib.pyplot as plt
 
 def create_patient_histogram_tabs(all_motifs, subject_col):
-    # Calculate motif lengths
+    """One tab per patient: the number of GLIPH2 motifs of each length."""
     all_motifs["motif_length"] = all_motifs["motif"].str.len()
-    
     patients = sorted(all_motifs[subject_col].dropna().unique())
-    
-    # Start Quarto tabset
+
     print("::: {.panel-tabset}\n")
-    
     for patient in patients:
         print(f"## {patient}\n")
-        
         patient_df = all_motifs[all_motifs[subject_col] == patient]
-        
-        # Count how many motifs of each length
-        length_counts = patient_df["motif_length"].value_counts().reset_index()
-        length_counts.columns = ["motif_length", "count"]
-        length_counts = length_counts.sort_values("motif_length")
-        
-        # Plot bar chart
-        fig = plt.figure(figsize=(8, 5))
-        plt.bar(length_counts["motif_length"], length_counts["count"],
-                color="darkgreen", edgecolor="black")
-        
-        plt.title(f"Motif Length Distribution - {patient}")
-        plt.xlabel("Motif Length")
-        plt.ylabel("Number of Motifs")
-        plt.xticks(length_counts["motif_length"])
-        plt.grid(axis='y', linestyle='--', alpha=0.5)
-        plt.tight_layout()
-        display(save_fig(fig, f"gliph2_motif_length_{patient}"))
-        print("\n\n")
-        
+        length_counts = (patient_df["motif_length"].value_counts().sort_index()
+                         .rename_axis("motif_length").reset_index(name="count"))
+        total = length_counts["count"].sum()
+        fig = go.Figure(go.Bar(
+            x=length_counts["motif_length"], y=length_counts["count"], marker_color=_REPORT_PALETTE[0],
+            text=[f"{l} amino acids: {n:,} motifs ({n / total:.0%})"
+                  for l, n in zip(length_counts["motif_length"], length_counts["count"])],
+            textposition='none', hovertemplate='%{text}<extra></extra>'))
+        fig.update_layout(title=f"GLIPH2 motif lengths: {patient}", height=420,
+                          xaxis=dict(title="Motif length (amino acids)", dtick=1),
+                          yaxis=dict(title="Number of motifs"), showlegend=False)
+        rt_show(fig)
     print(":::\n")
 
 # Run
@@ -284,18 +279,21 @@ else:
 
 ```
 
+**Figure `{python} fig_no()`. TCRB CDR3 motif lengths per patient.** One tab per patient: the number of GLIPH2 motifs of each length (amino acids). Most motifs are 2–4 residues long, the size of a TCR–peptide contact hotspot; a patient with many longer motifs has more highly specific groups (see the note below).
+
 Knowing the length of the amino acid motifs is useful because it provides insight into both the biological plausibility of the findings and the likely functional relationship between the clustered T-cells.
 
+:::: {.callout-note title="More detail: why motif length matters" collapse="true"}
 **<u>Reflecting the Biophysics of Binding</u>**  
 From a biological standpoint, **the interaction between a TCR and its target peptide-MHC is often driven by a small number of critical "contact points" or "hotspots" within the CDR3 loop.** These hotspots typically consist of a short stretch of 2-5 amino acids. When GLIPH2 identifies a large number of **motifs with a length of 3 or 4**, it serves as a crucial sanity check. It suggests the algorithm **is not just finding random statistical noise, but is successfully identifying patterns that are biologically plausible** and reflect the known mechanics of T-cell recognition.
 
 **<u>Short Motifs (2-3 amino acids):</u>** These function as broad-specificity identifiers. They are **more likely to occur by chance** and may define more "promiscuous" groups of TCRs that share a common structural feature but might still bind to a range of similar peptides.
 
 **<u>Long Motifs (4-5 amino acids):</u>** These function as highly specific identifiers. They are statistically much rarer and impose a much stronger constraint on the TCR's structure. Therefore, a group of TCRs defined by a **longer motif is very likely to be highly specific for the exact same antigen.**
+::::
 
 ```{python}
 #| output: asis
-#| fig-cap: "**Top 10 TCR specificity motifs ranked by member count.** Bar chart displaying the most prevalent amino acid motifs identified by the GLIPH2 algorithm, grouped by patient and motif length."
 
 import plotly.graph_objects as go
 
@@ -338,19 +336,19 @@ def create_nested_motif_tabs(all_motifs, subject_col):
             df_by_length = patient_df[patient_df['motif_length'] == length]
             top10 = df_by_length.sort_values("num_in_sample", ascending=False).head(10)
 
-            fig = go.Figure(data=[go.Bar(
-                x=top10["motif"], y=top10["num_in_sample"],
-                marker_color='tomato', marker_line_color='black', marker_line_width=1.5
-            )])
-
+            # Horizontal bars, the motif with the most member TCRs on top (Master Summary style).
+            fig = go.Figure(go.Bar(
+                x=top10["num_in_sample"], y=top10["motif"], orientation='h',
+                marker_color=_REPORT_PALETTE[1],
+                text=[f"{m}: {int(n):,} TCRs" for m, n in zip(top10["motif"], top10["num_in_sample"])],
+                textposition='none', hovertemplate='%{text}<extra></extra>'))
             fig.update_layout(
-                title_text=f"Top 10 Motifs (Length {length}) - {patient}",
-                xaxis_title="Motif", yaxis_title="Number of TCRs",
-                font=dict(size=12), plot_bgcolor='white', margin=dict(t=40, b=20, l=10, r=10)
-            )
-
-            fig.show()
-            print("\n\n")
+                title=f"Top {len(top10)} motifs of length {length}: {patient}",
+                height=max(320, 30 * len(top10) + 140), margin=dict(l=140, t=60), showlegend=False,
+                xaxis=dict(title="Number of TCRs in the motif's groups"),
+                yaxis=dict(title='', type='category', autorange='reversed',
+                           tickfont=dict(family='monospace')))
+            rt_show(fig)
 
         # --- 4. Close Nested Tabset ---
         print(":::\n\n")
@@ -365,6 +363,8 @@ else:
     create_nested_motif_tabs(all_motifs, subject_col)
 
 ```
+
+**Figure `{python} fig_no()`. Top 10 TCR specificity motifs ranked by member count.** One tab per patient and motif length: the 10 GLIPH2 motifs whose specificity groups have the most member TCRs in the patient's samples. Motifs are ranked from the top; the longer the bar, the more distinct receptors share that binding pattern; the same motif ranking high in several patients points to a shared, possibly public, recognition strategy.
 
 This bar chart ranks the top conserved amino acid motifs found by GLIPH2 based on the number of unique T-cell receptors (TCRs) that belong to each specificity group. Each bar represents a specific motif (e.g., 'GG'), and its height indicates the size of that "TCR neighborhood"—the total number of different TCRs that share this core binding pattern.
 

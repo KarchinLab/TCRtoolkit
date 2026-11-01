@@ -3,7 +3,8 @@ process MASTER_SUMMARY {
     label 'process_medium'
     container "${params.container}"
 
-    publishDir "${params.outdir}/Master_Summary", mode: 'copy', overwrite: true
+    // Published with the report notebooks (report/<name>/), as report/master_summary/.
+    publishDir "${params.outdir}/report/master_summary", mode: 'copy', overwrite: true
 
     input:
       // Core per-cell inputs. stageAs with a real extension matters: the .qmd picks its
@@ -12,21 +13,21 @@ process MASTER_SUMMARY {
       path export_cells,      stageAs: 'in_export_cells.tsv'
 
       // Each upstream module contributes its whole tables/ directory under
-      // intables/<module>/. This replaces the previous ~30 individually-wired file params:
-      // a module that did not run on this route simply stages nothing, the .qmd finds no
-      // files, and the affected sections render an explanatory note. Adding a new upstream
-      // table no longer requires another process input.
-      path vdj_qc_tables,     stageAs: 'intables/vdj_qc/*'
-      path pseudobulk_tables, stageAs: 'intables/pseudobulk/*'
-      path sample_tables,     stageAs: 'intables/sample/*'
-      path compare_tables,    stageAs: 'intables/compare/*'
+      // intables/<module>/: a module that did not run on this route simply stages nothing,
+      // the .qmd finds no files, and the affected sections render an explanatory note. Only
+      // the modules behind the sections still rendered here (consensus clustering and the
+      // GEX section); the run-level QC, repertoire and clustering tables go to the report
+      // notebooks through REPORT_BUNDLE.
       path rollup_tables,     stageAs: 'intables/rollup/*'
-      path repertoire_tables, stageAs: 'intables/repertoire/*'
       path tcell_tables,      stageAs: 'intables/tcell/*'
       path conga_tables,      stageAs: 'intables/conga/*'
       path consensus_tables,  stageAs: 'intables/consensus/*'
       path tcri_tables,       stageAs: 'intables/tcri/*'
-      path mergedvdj_tables,  stageAs: 'intables/mergedvdj/*'
+      path clonal_tables,     stageAs: 'intables/clonal/*'
+
+      // The Discovery Brief flattened to markdown by RENDER_NOTEBOOK
+      // (bin/notebook_to_markdown.py), or NO_FILE without the report notebooks.
+      path discovery_md,      stageAs: 'in_discovery_brief.md'
 
       // Master_Summary_Report.qmd plus its partials (_ms_setup, _sc_gex, _sc_gex_stub) and
       // the standalone SC_GEX_Report.qmd wrapper.
@@ -52,6 +53,16 @@ process MASTER_SUMMARY {
     gex=false
     if [ -s intables/tcell/tcr_export_cells_with_embedding.tsv ]; then gex=true; else cp _sc_gex_stub.qmd _sc_gex.qmd; fi
 
+    # The Discovery Brief's sections open the report; without the report notebooks a note
+    # stands in under the included name.
+    if [ -s in_discovery_brief.md ]; then
+      cp -L in_discovery_brief.md _discovery_brief.md
+    else
+      printf '%s\\n' '::: {.callout-note appearance="simple"}' \
+        'The repertoire findings (clonality, overlap, clonal dynamics, TCRdist3 networks, VDJdb and publicity) come from the report notebooks, which did not run (`--run_reports false`).' \
+        ':::' > _discovery_brief.md
+    fi
+
     common=(
       -P project_name="${project_name}"
       -P modality="${(params.mode ?: 'bulk').toLowerCase()}"
@@ -63,6 +74,7 @@ process MASTER_SUMMARY {
       -P patient_col="${params.patient_col}"
       -P condition_col="${params.condition_col}"
       -P timepoint_col="${params.timepoint_col}"
+      -P timepoint_order="${params.timepoint_order ?: ''}"
       -P tcrdist_radius=${params.tcrdist_radius}
     )
 

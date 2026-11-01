@@ -1,12 +1,23 @@
 # Single-cell GEX: cell states and clonal programmes {#sec-sc-gex}
 
-::: {.callout-note collapse="true"}
-## About this section
-This section is present because the run supplied an annotated GEX object
-(`--input_annotated_object`). It joins every receptor to its cell's transcriptional state and
-asks which states carry the clonal expansion, which clones span several states, what the
-expanded cells express, and where CoNGA and TCRi place them. It is rendered both inside the
-Master Summary and as the standalone `SC_GEX_Report.html`.
+Every receptor joined to its cell's transcriptional state, from the annotated GEX object
+(`--input_annotated_object`). A repertoire alone says *that* a clone expanded; with the
+transcriptome it also says *what the expanded cells are*: effector, memory, exhausted or
+proliferating. The questions here are which states carry the expansion, what happens to the
+cells of clones that grow or shrink over time, which clones span several states, what the
+expanded cells express, and where CoNGA and TCRi place them. The section is also published on
+its own as `SC_GEX_Report.html`. Run-level checks of the receptor-to-cell join are in the
+**QC & Run Info** report (T-cell integration), and how often each clustering method covers each
+state is in the **Details: Patient** report (clustering coverage by cell state).
+
+::: {.callout-tip appearance="simple" collapse="true"}
+## Key terms
+- **Clone**: cells sharing the same paired α/β receptor, the progeny of one naive T cell.
+- **Cell state**: the cell's annotation from the GEX object.
+- **Expanded**: a clone with at least 2 cells *in the same sample*. Proliferation follows antigen
+  recognition, so expanded clones are the best candidates for antigen-specific T cells.
+- **Sample labels**: samples are shown by their samplesheet `alias` (for example
+  `P001_d0_L1`) where one is given, otherwise by the library name.
 :::
 
 ```{r}
@@ -50,6 +61,41 @@ if (have(gx)) {
   gx_cond <- intersect(c("condition"), names(gx))
   gx_cond <- if (length(gx_cond) && n_distinct_real(gx[[gx_cond]]) >= 2) gx_cond else NULL
 }
+# Patient, timepoint order, compartment, alias and CDR3b for the longitudinal and dynamics views.
+gx_pcol <- if (have(gx)) intersect(c(as_str1(params$patient_col), "patient", "patient_id"), names(gx))[1] else NA
+tp_order <- trimws(strsplit(as_str1(params$timepoint_order), ",", fixed = TRUE)[[1]])
+tp_order <- tp_order[nzchar(tp_order)]
+cd_clono <- T("clonal", "clonotypes.csv")
+if (have(gx)) {
+  gx$patient_ <- if (!is.na(gx_pcol)) as.character(gx[[gx_pcol]]) else "all"
+  # Sample metadata from the samplesheet, carried by CLONAL_DYNAMICS: compartment, alias and
+  # timepoint. The GEX object does not always hold the timepoint, so the samplesheet's fills
+  # any cell that lacks one.
+  smap <- if (have(cd_clono) && "sample" %in% names(cd_clono))
+    cd_clono[!duplicated(cd_clono$sample), intersect(c("sample", "origin", "alias", "timepoint"), names(cd_clono)), drop = FALSE] else NULL
+  from_sheet <- function(col) if (!is.null(smap) && col %in% names(smap))
+    as.character(smap[[col]][match(gx$sample, smap$sample)]) else rep(NA_character_, nrow(gx))
+  if (!"timepoint" %in% names(gx)) gx$timepoint <- NA_character_
+  gx$timepoint <- as.character(gx$timepoint)
+  miss <- is.na(gx$timepoint) | !nzchar(gx$timepoint)
+  gx$timepoint[miss] <- from_sheet("timepoint")[miss]
+  gx$origin <- from_sheet("origin")
+  gx$origin[is.na(gx$origin) | !nzchar(gx$origin)] <- "all"
+  gx$alias <- from_sheet("alias")
+  no_alias <- is.na(gx$alias) | !nzchar(gx$alias)
+  gx$alias[no_alias] <- as.character(gx$sample[no_alias])
+  tps <- unique(as.character(gx$timepoint)); tps <- tps[!is.na(tps) & nzchar(tps)]
+  gx_tp_levels <- c(intersect(tp_order, tps), sort(setdiff(tps, tp_order)))
+  # Samples by patient, then timepoint, then compartment: the order of every per-sample axis.
+  gx_samples <- gx %>% distinct(sample, alias, patient_, timepoint, origin) %>%
+    distinct(sample, .keep_all = TRUE) %>%
+    mutate(tpr = match(timepoint, gx_tp_levels)) %>% arrange(patient_, tpr, origin, alias)
+  gx_samples$alias <- make.unique(gx_samples$alias)
+  gx$alias <- gx_samples$alias[match(gx$sample, gx_samples$sample)]
+  gx_alias_levels <- gx_samples$alias
+  gx$cdr3b <- if ("cdr3b" %in% names(gx)) as.character(gx$cdr3b) else sub("^.*B:", "", as.character(gx$clone_id))
+  gx$conga_hit <- if ("conga_score" %in% names(gx)) suppressWarnings(as.numeric(gx$conga_score)) < 1 else NA
+}
 gx_tcr <- if (have(gx)) gx[gx$has_tcr, , drop = FALSE] else NULL
 size_levels <- c("1 cell", "2 cells", "3-5 cells", "6-20 cells", ">20 cells", "no TCR")
 size_cols   <- c("#a6a6a6", "#9ecae1", "#4292c6", "#08519c", "#de2d26", "#ececec")
@@ -58,33 +104,74 @@ state_cols  <- function(x) {
   setNames(grDevices::colorRampPalette(c(pal, "#4d4d4d", "#b15928", "#6a3d9a", "#ff7f00"))(length(lv)), lv)
 }
 
-# Heatmap. m: numeric matrix with dimnames; hover text from fmt.
-hmap <- function(m, title, zlab, colorscale = "Viridis", height = 520, zmid = NULL, fmt = "%{z:.2f}") {
-  p <- plotly::plot_ly(x = colnames(m), y = rownames(m), z = m, type = "heatmap",
-                       colorscale = colorscale, zmid = zmid,
-                       colorbar = list(title = zlab),
-                       hovertemplate = paste0("%{y} / %{x}<br>", zlab, ": ", fmt, "<extra></extra>"))
+# Numbered caption under a figure or table of this section ("Figure G1."), counted only when
+# the figure is drawn. text is HTML.
+gx_fig_n <- 0; gx_tab_n <- 0
+withcap <- function(w, title, text = "", kind = "Figure") {
+  if (kind == "Figure") { gx_fig_n <<- gx_fig_n + 1; n <- gx_fig_n } else { gx_tab_n <<- gx_tab_n + 1; n <- gx_tab_n }
+  # Inside a tagList a plotly widget takes the chunk's default height, not its layout's, and
+  # the caption below would overlap a taller figure: size the widget from its layout.
+  if (inherits(w, "plotly")) {
+    w <- plotly::plotly_build(w)
+    if (!is.null(w$x$layout$height)) w$height <- w$x$layout$height
+    # A built bar trace would also print its hover text on the bar.
+    w$x$data <- lapply(w$x$data, function(t) { if (identical(t$type, "bar")) t$textposition <- "none"; t })
+  }
+  htmltools::tagList(w, htmltools::tags$p(style = "margin-top: 0.5rem;",
+    htmltools::HTML(sprintf("<strong>%s G%d. %s.</strong> %s", kind, n, title, text))))
+}
+
+# Heatmap. m: numeric matrix with dimnames; hover text from fmt, or a matrix of hover text.
+hmap <- function(m, title, zlab, colorscale = "Viridis", height = 520, zmid = NULL, fmt = "%{z:.2f}",
+                 text = NULL, zmin = NULL, zmax = NULL) {
+  p <- if (is.null(text))
+    plotly::plot_ly(x = colnames(m), y = rownames(m), z = m, type = "heatmap",
+                    colorscale = colorscale, zmid = zmid, zmin = zmin, zmax = zmax,
+                    colorbar = list(title = zlab),
+                    hovertemplate = paste0("%{y} / %{x}<br>", zlab, ": ", fmt, "<extra></extra>"))
+  else
+    plotly::plot_ly(x = colnames(m), y = rownames(m), z = m, type = "heatmap",
+                    colorscale = colorscale, zmid = zmid, zmin = zmin, zmax = zmax,
+                    colorbar = list(title = zlab), text = text, hoverinfo = "text")
   pconf(plotly::layout(p, title = ttl(title), height = height,
                        margin = list(l = 140, b = 120, t = 60),
                        xaxis = list(title = "", tickangle = -45), yaxis = list(title = "")))
 }
 
+# Per-sample value over the cohort timepoint order: one line per patient (and compartment).
+# d: patient_, timepoint, origin, val, cells (alias optional).
+over_time <- function(d, title, ylab, tickformat = NULL, height = 440) {
+  if (!"alias" %in% names(d)) d$alias <- ""
+  d <- d %>% mutate(tp = factor(timepoint, levels = gx_tp_levels),
+                    line = if (dplyr::n_distinct(origin) > 1) paste(patient_, origin, sep = " · ") else patient_) %>%
+    arrange(line, tp)
+  pconf(plotly::plot_ly(d, x = ~tp, y = ~val, color = ~line, colors = pal, type = "scatter",
+                        mode = "lines+markers", marker = list(size = 9),
+                        text = ~paste0(alias, "<br>", line, " · ", timepoint, "<br>", signif(val, 3), " (", cells, " cells)"),
+                        hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(title = ttl(title), height = height, margin = list(t = 60),
+                       xaxis = list(title = "Timepoint", categoryorder = "array", categoryarray = gx_tp_levels),
+                       yaxis = list(title = ylab, tickformat = tickformat),
+                       legend = list(title = list(text = "Patient"))))
+}
+
 # Embedding scatter (WebGL), downsampled so the HTML stays light.
-emb_plot <- function(d, colour, cols, title, max_points = 30000, hover = NULL) {
+emb_plot <- function(d, colour, cols, title, max_points = 30000, hover = NULL, legend_title = "") {
   set.seed(1)
   if (nrow(d) > max_points) d <- d[sample.int(nrow(d), max_points), , drop = FALSE]
   d$.x <- d[[gx_emb[1]]]; d$.y <- d[[gx_emb[2]]]; d$.c <- factor(d[[colour]], levels = names(cols))
-  d$.h <- if (is.null(hover)) paste0(d$annot, "<br>", d$size_bin) else hover(d)
+  d$.h <- if (is.null(hover)) paste0(d$annot, "<br>", d$alias, "<br>", d$size_bin) else hover(d)
   d <- d[order(d$.c != "no TCR", d$clone_size, na.last = FALSE), , drop = FALSE]
   pconf(plotly::plot_ly(d, x = ~.x, y = ~.y, color = ~.c, colors = cols,
                         type = "scattergl", mode = "markers", marker = list(size = 3),
                         text = ~.h, hovertemplate = "%{text}<extra></extra>") %>%
         plotly::layout(title = ttl(title), height = 560, margin = list(t = 60),
-                       xaxis = list(title = "", showticklabels = FALSE, zeroline = FALSE, showgrid = FALSE),
-                       yaxis = list(title = "", showticklabels = FALSE, zeroline = FALSE, showgrid = FALSE),
-                       legend = list(itemsizing = "constant")))
+                       xaxis = list(title = "UMAP 1", showticklabels = FALSE, zeroline = FALSE, showgrid = FALSE),
+                       yaxis = list(title = "UMAP 2", showticklabels = FALSE, zeroline = FALSE, showgrid = FALSE),
+                       legend = list(itemsizing = "constant", title = list(text = legend_title))))
 }
 ```
+
 
 ```{r}
 #| label: gex-absent
@@ -92,6 +179,7 @@ emb_plot <- function(d, colour, cols, title, max_points = 30000, hover = NULL) {
 if (!have(gx)) cat(as.character(note(
   "The T-cell integration export is missing, so no GEX section can be drawn.")))
 ```
+
 
 ## Overview {#sec-sc-gex-overview}
 
@@ -112,68 +200,170 @@ if (have(gx)) {
               if (!is.null(gx_cond)) paste(sort(unique(gx[[gx_cond]])), collapse = ", ")),
     stringsAsFactors = FALSE)
   save_table(ov_gex, "gex_overview.tsv")
-  itable(ov_gex, pageSize = 10)
+  withcap(itable(ov_gex, pageSize = 10), "GEX overview",
+          paste("Size of the joined dataset. The TCR+ fraction is the share of GEX cells that received a",
+                "receptor; in tumour or tissue samples it is usually 50-90% (lower if non-T cells were kept).",
+                "Cells in expanded clones are counted within their own sample."), kind = "Table")
 }
 ```
 
+
 ## The cell-state map {#sec-sc-gex-map}
+
+The GEX embedding (UMAP) places transcriptionally similar cells together. The first map shows
+the cell states; the second colours each cell by the size of its clone in its sample, so the
+two together show which programmes the expansion feeds.
 
 ```{r}
 #| label: gex-umap-state
 if (have(gx)) {
   if (is.null(gx_emb)) note("No embedding coordinates in the export; the cell-state map cannot be drawn.") else
-    emb_plot(gx, "annot", state_cols(gx$annot), "Cells coloured by cell state")
+    withcap(emb_plot(gx, "annot", state_cols(gx$annot), "Cells coloured by cell state", legend_title = "Cell state"),
+            "Cell states on the UMAP",
+            paste("Each dot is one cell (up to 30,000 shown), coloured by its annotation from the GEX object.",
+                  "Click a state in the legend to hide it, double-click to show it alone. Distances between",
+                  "clusters on a UMAP are only roughly meaningful: neighbouring states are similar, distant",
+                  "ones not necessarily very different."))
 }
 ```
+
 
 ```{r}
 #| label: gex-umap-size
 if (have(gx) && !is.null(gx_emb)) {
-  emb_plot(gx, "size_bin", setNames(size_cols, size_levels),
-           "Cells coloured by the size of their clone in the sample",
-           hover = function(d) paste0(d$annot, "<br>sample ", d$sample, "<br>clone size ", d$clone_size))
+  withcap(emb_plot(gx, "size_bin", setNames(size_cols, size_levels),
+                   "Cells coloured by the size of their clone in the sample",
+                   hover = function(d) paste0(d$annot, "<br>", d$alias, "<br>clone size ", d$clone_size),
+                   legend_title = "Clone size in sample"),
+          "Clone size on the UMAP",
+          paste("The same cells coloured by how many cells of their clone are in the same sample: grey",
+                "singletons, blues small to large expansions, red clones of more than 20 cells; light grey",
+                "cells have no receptor. Expanded clones (blue to red) that gather in one region share a",
+                "transcriptional programme; clones scattered across the map span several states."))
 }
 ```
 
-Expanded clones (blue to red) that gather in one region share a transcriptional programme;
-clones scattered across the map span several states.
 
 ## Cell-state composition {#sec-sc-gex-composition}
+
+The share of each state per sample (and per condition, when the export carries one). Shifts
+between samples, for example from naive or memory towards effector or exhausted states, show
+the T-cell compartment being remodelled.
 
 ```{r}
 #| label: gex-composition-sample
 if (have(gx)) {
-  d <- gx %>% count(sample, annot, name = "n") %>% group_by(sample) %>%
+  d <- gx %>% count(alias, annot, name = "n") %>% group_by(alias) %>%
     mutate(val = n / sum(n)) %>% ungroup() %>%
-    transmute(cat = sample, grp = annot, val,
-              hover = paste0(sample, "<br>", annot, ": ", percent(val, 0.1), " (", n, " cells)"))
+    transmute(cat = factor(alias, levels = rev(gx_alias_levels)), grp = annot, val,
+              hover = paste0(alias, "<br>", annot, ": ", percent(val, 0.1), " (", n, " cells)"))
   save_table(d %>% select(sample = cat, annot = grp, fraction = val), "gex_state_composition_by_sample.tsv")
-  sbar(d, "Cell-state composition per sample", "Fraction of cells",
-       height = max(420, 26 * dplyr::n_distinct(d$cat) + 160))
+  withcap(sbar(d, "Cell-state composition per sample", "Fraction of cells",
+               height = max(420, 26 * dplyr::n_distinct(d$cat) + 160), colors = state_cols(gx$annot), legend_title = "Cell state"),
+          "Cell-state composition per sample",
+          paste("One bar per sample (all cells, with or without a receptor), ordered by patient and then",
+                "timepoint from the top; segments are the share of each state. Read a patient's bars from",
+                "top to bottom to follow its compartment over time. Samples with few cells give noisy",
+                "fractions: hover a segment for the cell count."))
 }
 ```
+
 
 ```{r}
 #| label: gex-composition-condition
 if (have(gx) && !is.null(gx_cond)) {
   # One value per sample, so samples with many cells do not dominate the comparison.
-  d <- gx %>% count(sample, cond = .data[[gx_cond]], annot, name = "n") %>%
+  d <- gx %>% count(sample, alias, cond = .data[[gx_cond]], annot, name = "n") %>%
     group_by(sample) %>% mutate(frac = n / sum(n)) %>% ungroup() %>%
-    tidyr::complete(tidyr::nesting(sample, cond), annot, fill = list(n = 0, frac = 0))
+    tidyr::complete(tidyr::nesting(sample, alias, cond), annot, fill = list(n = 0, frac = 0))
   save_table(d, "gex_state_fraction_by_sample_condition.tsv")
-  pconf(plotly::plot_ly(d, x = ~annot, y = ~frac, color = ~cond, colors = pal, type = "box",
-                        boxpoints = "all", jitter = 0.3, pointpos = 0,
-                        text = ~paste0(sample, "<br>", annot, ": ", percent(frac, 0.1)),
-                        hoverinfo = "text") %>%
-        plotly::layout(boxmode = "group", title = ttl("Cell-state fractions per sample, by condition"),
-                       height = 480, margin = list(t = 60, b = 110),
-                       xaxis = list(title = "", tickangle = -30),
-                       yaxis = list(title = "Fraction of the sample's cells", tickformat = ".0%"),
-                       legend = list(orientation = "h", y = -0.3)))
+  withcap(pconf(plotly::plot_ly(d, x = ~annot, y = ~frac, color = ~cond, colors = pal, type = "box",
+                                boxpoints = "all", jitter = 0.3, pointpos = 0,
+                                text = ~paste0(alias, "<br>", annot, ": ", percent(frac, 0.1)),
+                                hoverinfo = "text") %>%
+                plotly::layout(boxmode = "group", title = ttl("Cell-state fractions per sample, by condition"),
+                               height = 480, margin = list(t = 60, b = 110),
+                               xaxis = list(title = "", tickangle = -30),
+                               yaxis = list(title = "Fraction of the sample's cells", tickformat = ".0%"),
+                               legend = list(orientation = "h", y = -0.3, title = list(text = "Condition")))),
+          "Cell-state fractions by condition",
+          paste("Each point is one sample's share of that state, boxes grouped by condition (legend).",
+                "Because every sample counts once, a difference between boxes is not driven by the",
+                "samples with the most cells."))
 }
 ```
 
+
 ## Which cell states carry the clonal expansion {#sec-sc-gex-expansion}
+
+**Why it matters.** Expansion concentrated in effector or exhausted states is the usual
+footprint of an ongoing antigen-driven response; naive cells should stay unexpanded.
+
+**How to read it.** The heatmap gives, for each sample (column, grouped by patient and ordered
+by timepoint) and state (row), the share of TCR+ cells in expanded clones; groups with fewer
+than 10 TCR+ cells are blank and vertical lines separate patients. Look for states whose
+expansion grows or shrinks across a patient's timepoints. The stacked bars below then give each
+state's clone-size distribution over all samples.
+
+```{r}
+#| label: gex-expansion-heatmap
+if (have(gx_tcr) && dplyr::n_distinct(gx_tcr$annot) > 1) {
+  top <- names(sort(table(gx_tcr$annot), decreasing = TRUE))[seq_len(min(20, dplyr::n_distinct(gx_tcr$annot)))]
+  d <- gx_tcr %>% filter(annot %in% top) %>% group_by(sample, annot) %>%
+    summarise(cells = n(), frac = mean(expanded), .groups = "drop") %>% filter(cells >= 10)
+  if (!nrow(d)) note("No sample x cell-state group reaches 10 TCR+ cells.") else {
+    so <- gx_samples %>% filter(sample %in% d$sample)
+    so$lab <- so$alias
+    rows <- d %>% group_by(annot) %>% summarise(m = mean(frac), .groups = "drop") %>% arrange(desc(m)) %>% pull(annot)
+    m <- matrix(NA_real_, length(rows), nrow(so), dimnames = list(rows, so$lab))
+    h <- matrix("", length(rows), nrow(so), dimnames = list(rows, so$lab))
+    idx <- cbind(match(d$annot, rows), match(d$sample, so$sample))
+    m[idx] <- d$frac
+    h[idx] <- paste0(d$annot, "<br>", so$lab[idx[, 2]], " (", so$patient_[idx[, 2]], ", ",
+                     so$timepoint[idx[, 2]], ")<br>", percent(d$frac, 0.1), " of ", d$cells,
+                     " TCR+ cells in expanded clones")
+    save_table(d %>% mutate(alias = so$lab[match(sample, so$sample)]), "gex_expanded_fraction_by_sample_state_heatmap.tsv")
+    br <- which(so$patient_[-1] != so$patient_[-nrow(so)])
+    withcap(pconf(plotly::plot_ly(x = so$lab, y = rows, z = m, type = "heatmap", colorscale = "YlOrRd",
+                                  zmin = 0, zmax = 1, text = h, hoverinfo = "text",
+                                  colorbar = list(title = "Expanded", tickformat = ".0%")) %>%
+                    plotly::layout(title = ttl("Fraction of TCR+ cells in expanded clones, per sample and cell state"),
+                                   height = max(420, 26 * length(rows) + 200), margin = list(l = 160, b = 120, t = 60),
+                                   xaxis = list(title = "Sample (by patient, then timepoint)", tickangle = -45,
+                                                categoryorder = "array", categoryarray = so$lab),
+                                   yaxis = list(title = "", autorange = "reversed"),
+                                   shapes = lapply(br, function(i) list(type = "line", xref = "x", yref = "paper",
+                                                                        x0 = i - 0.5, x1 = i - 0.5, y0 = 0, y1 = 1,
+                                                                        line = list(color = "black", width = 1))))),
+            "Expansion by sample and cell state",
+            paste("Colour is the share of a state's TCR+ cells, in one sample, that belong to a clone with at",
+                  "least 2 cells in that sample (pale = mostly singletons, dark red = mostly expanded). States",
+                  "are ordered by their mean expansion, most expanded at the top; blank tiles have fewer than",
+                  "10 TCR+ cells. Small samples look less expanded simply because fewer cells were captured,",
+                  "so compare a state across samples of similar size."))
+  }
+}
+```
+
+### Clone-size distribution per cell state {#sec-sc-gex-clone-size}
+
+The same expansion, pooled over samples and split by clone size. It can be counted two ways,
+which answer different questions:
+
+- **By cells** (first tab): of all TCR+ cells in a state, what share sits in clones of each
+  size. This is what a cell sampled at random from that state looks like: in an expanded state
+  most of its cells belong to big clones, even if those clones are few.
+- **By clones** (second tab): of all clones present in a state, what share has each size. A
+  clone counts once, however many cells it has, so the plot shows how many distinct clones
+  expanded rather than how many cells they produced. A clone with cells in several states counts
+  once in each of them.
+
+A state can look highly expanded by cells but not by clones: then one or a few very large
+clones dominate it. When both views agree, many different clones expanded in that state.
+
+::: {.panel-tabset}
+
+#### By cells
 
 ```{r}
 #| label: gex-expansion-state
@@ -182,80 +372,267 @@ if (have(gx_tcr)) {
     mutate(val = n / sum(n)) %>% ungroup() %>%
     mutate(grp = factor(size_bin, levels = size_levels[1:5])) %>%
     transmute(cat = annot, grp, val,
-              hover = paste0(annot, "<br>", size_bin, ": ", percent(val, 0.1), " (", n, " cells)"))
+              hover = paste0(annot, "<br>", size_bin, ": ", percent(val, 0.1), " of TCR+ cells (", n, " cells)"))
   save_table(d %>% select(annot = cat, size_bin = grp, fraction = val), "gex_clone_size_by_state.tsv")
-  pconf(plotly::plot_ly(d, x = ~val, y = ~cat, color = ~grp, colors = size_cols[1:5],
-                        type = "bar", orientation = "h",
-                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
-        plotly::layout(barmode = "stack", title = ttl("Clone-size distribution of TCR+ cells per cell state"),
-                       height = max(420, 30 * dplyr::n_distinct(d$cat) + 160), margin = list(l = 140, t = 60),
-                       xaxis = list(title = "Fraction of TCR+ cells", tickformat = ".0%"),
-                       yaxis = list(title = ""), legend = list(orientation = "h", y = -0.15)))
+  withcap(pconf(plotly::plot_ly(d, x = ~val, y = ~cat, color = ~grp, colors = size_cols[1:5],
+                                type = "bar", orientation = "h",
+                                text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+                plotly::layout(barmode = "stack", title = ttl("Clone-size distribution of TCR+ cells per cell state"),
+                               height = max(420, 30 * dplyr::n_distinct(d$cat) + 160), margin = list(l = 140, t = 60),
+                               xaxis = list(title = "Fraction of the state's TCR+ cells", tickformat = ".0%"),
+                               yaxis = list(title = ""),
+                               legend = list(orientation = "h", y = -0.15, title = list(text = "Clone size in sample")))),
+          "Clone size by cells",
+          paste("Each bar is one state and sums to 100% of its TCR+ cells; a segment is the share of those",
+                "cells whose clone has that many cells in the same sample. Example: a 40% red segment means",
+                "40% of the state's cells belong to clones of more than 20 cells. A long grey segment",
+                "(singletons) marks a state of mostly unexpanded, diverse cells, as expected for naive cells."))
 }
 ```
+
+#### By clones
+
+```{r}
+#| label: gex-expansion-state-clones
+if (have(gx_tcr)) {
+  d <- gx_tcr %>% distinct(sample, clone_id, annot, size_bin) %>% count(annot, size_bin, name = "n") %>%
+    group_by(annot) %>% mutate(val = n / sum(n)) %>% ungroup() %>%
+    mutate(grp = factor(size_bin, levels = size_levels[1:5])) %>%
+    transmute(cat = annot, grp, val,
+              hover = paste0(annot, "<br>", size_bin, ": ", percent(val, 0.1), " of clones (", n, " clones)"))
+  save_table(d %>% select(annot = cat, size_bin = grp, fraction = val), "gex_clone_size_by_state_clones.tsv")
+  withcap(pconf(plotly::plot_ly(d, x = ~val, y = ~cat, color = ~grp, colors = size_cols[1:5],
+                                type = "bar", orientation = "h",
+                                text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+                plotly::layout(barmode = "stack", title = ttl("Clone-size distribution of clones per cell state"),
+                               height = max(420, 30 * dplyr::n_distinct(d$cat) + 160), margin = list(l = 140, t = 60),
+                               xaxis = list(title = "Fraction of the state's clones", tickformat = ".0%"),
+                               yaxis = list(title = ""),
+                               legend = list(orientation = "h", y = -0.15, title = list(text = "Clone size in sample")))),
+          "Clone size by clones",
+          paste("Each bar sums to 100% of the clones with at least one cell in the state; a segment is the",
+                "share of those clones with that size. Within a bar a clone counts once per sample (once in",
+                "each sample it was found in), however many of its cells are in the state. A clone with cells in",
+                "several states counts once in each of those bars, so the bars are not exclusive and their",
+                "counts do not add up to the number of clones. Size is the clone's cells in the whole sample,",
+                "not only in that state. Most clones are singletons in almost every state, so look at how far",
+                "the coloured segments reach rather than at the grey."))
+}
+```
+
+:::
+
 
 ```{r}
 #| label: gex-expansion-condition
 if (have(gx_tcr) && !is.null(gx_cond)) {
-  d <- gx_tcr %>% group_by(sample, cond = .data[[gx_cond]], annot) %>%
+  d <- gx_tcr %>% group_by(sample, alias, cond = .data[[gx_cond]], annot) %>%
     summarise(cells = n(), frac_expanded = mean(expanded), .groups = "drop") %>%
     filter(cells >= 10)
   save_table(d, "gex_expanded_fraction_by_sample_state.tsv")
-  pconf(plotly::plot_ly(d, x = ~annot, y = ~frac_expanded, color = ~cond, colors = pal, type = "box",
-                        boxpoints = "all", jitter = 0.3, pointpos = 0,
-                        text = ~paste0(sample, "<br>", annot, ": ", percent(frac_expanded, 0.1),
-                                       " of ", cells, " TCR+ cells expanded"), hoverinfo = "text") %>%
-        plotly::layout(boxmode = "group", title = ttl("Expanded fraction per sample and cell state, by condition"),
-                       height = 480, margin = list(t = 60, b = 110),
-                       xaxis = list(title = "", tickangle = -30),
-                       yaxis = list(title = "TCR+ cells in clones of >= 2", tickformat = ".0%"),
-                       legend = list(orientation = "h", y = -0.3)))
+  withcap(pconf(plotly::plot_ly(d, x = ~annot, y = ~frac_expanded, color = ~cond, colors = pal, type = "box",
+                                boxpoints = "all", jitter = 0.3, pointpos = 0,
+                                text = ~paste0(alias, "<br>", annot, ": ", percent(frac_expanded, 0.1),
+                                               " of ", cells, " TCR+ cells expanded"), hoverinfo = "text") %>%
+                plotly::layout(boxmode = "group", title = ttl("Expanded fraction per sample and cell state, by condition"),
+                               height = 480, margin = list(t = 60, b = 110),
+                               xaxis = list(title = "", tickangle = -30),
+                               yaxis = list(title = "TCR+ cells in clones of >= 2", tickformat = ".0%"),
+                               legend = list(orientation = "h", y = -0.3, title = list(text = "Condition")))),
+          "Expansion by condition",
+          paste("Each point is one sample's cells of that state (states with at least 10 TCR+ cells in the",
+                "sample), so the comparison is not driven by the samples with the most cells."))
 }
 ```
 
-Each point is one sample's cells of that state (states with at least 10 TCR+ cells in the
-sample), so the comparison is not driven by the samples with the most cells.
+
+## Cell states of clones that expand or contract over time {#sec-sc-gex-dynamics}
+
+**What it shows.** Clones called *expanding* or *contracting* by the clonal dynamics analysis (a
+significant frequency change between two timepoints of the same patient and compartment;
+Fisher's exact test, FDR < 0.05), traced back to their cells across all of the patient's
+samples. *Other expanded* are clones of ≥ 2 cells in a sample whose change did not reach
+significance, mostly in patients with a single timepoint.
+
+**Why it matters.** It tells whether the clones the treatment or disease course selects for
+have a distinct phenotype.
+
+**How to read it.** One panel per patient. A response typically shows expanding clones enriched
+for effector/cytotoxic or exhausted states and contracting clones drifting towards memory or
+naive states.
+
+```{r}
+#| label: gex-dynamics-states
+cd_exp <- T("clonal", "expanded_clones_summary.csv")
+cd_con <- T("clonal", "contracting_clones_summary.csv")
+if (!have(gx_tcr)) {
+  invisible(NULL)
+} else if (!have(cd_exp) && !have(cd_con)) {
+  note(paste("No clone expanded or contracted significantly between two timepoints of the same patient",
+             "and compartment: either no patient was sampled twice in a compartment, or no change passed the test."))
+} else {
+  pick <- function(t, lab) {
+    if (!have(t)) return(NULL)
+    pc <- intersect(c(as_str1(params$patient_col), "patient", "patient_id", "subject_id"), names(t))[1]
+    if (is.na(pc) || !"junction_aa" %in% names(t)) return(NULL)
+    data.frame(patient_ = as.character(t[[pc]]), cdr3b = as.character(t$junction_aa), status = lab) %>% distinct()
+  }
+  cd_status <- bind_rows(pick(cd_exp, "Expanding"), pick(cd_con, "Contracting")) %>%
+    group_by(patient_, cdr3b) %>%
+    summarise(status = if (dplyr::n_distinct(status) == 1) first(status) else "Both", .groups = "drop")
+  cc <- gx_tcr %>% left_join(cd_status, by = c("patient_", "cdr3b")) %>%
+    mutate(status = coalesce(status, ifelse(expanded, "Other expanded", "Not expanded")))
+  top <- names(sort(table(gx_tcr$annot), decreasing = TRUE))[seq_len(min(12, dplyr::n_distinct(gx_tcr$annot)))]
+  cc$annot2 <- ifelse(cc$annot %in% top, cc$annot, "Other")
+  lv <- intersect(c("Expanding", "Contracting", "Both", "Other expanded", "Not expanded"), unique(cc$status))
+  d <- cc %>% count(patient_, status, annot2, name = "n") %>% group_by(patient_, status) %>%
+    mutate(frac = n / sum(n)) %>% ungroup() %>% mutate(status = factor(status, levels = lv))
+  save_table(d, "gex_dynamics_state_composition.tsv")
+  cols <- state_cols(d$annot2)
+  pats <- sort(unique(d$patient_))
+  plots <- lapply(seq_along(pats), function(k) {
+    dd <- d %>% filter(patient_ == pats[k])
+    plotly::plot_ly(dd, x = ~status, y = ~frac, color = ~annot2, colors = cols, type = "bar",
+                    legendgroup = ~annot2, showlegend = k == 1,
+                    text = ~paste0(pats[k], "<br>", status, "<br>", annot2, ": ", percent(frac, 0.1), " (", n, " cells)"),
+                    hovertemplate = "%{text}<extra></extra>") %>%
+      plotly::layout(barmode = "stack",
+                     annotations = list(list(text = pats[k], x = 0.5, y = 1.06, xref = "paper", yref = "paper",
+                                             showarrow = FALSE, font = list(size = 13))))
+  })
+  nr <- ceiling(length(plots) / 4)
+  withcap(pconf(plotly::subplot(plots, nrows = nr, shareY = TRUE, margin = 0.04) %>%
+                plotly::layout(barmode = "stack", title = ttl("Cell states of significantly expanding and contracting clones"),
+                               height = 380 * nr + 80, margin = list(t = 80),
+                               yaxis = list(title = "Fraction of cells", tickformat = ".0%"),
+                               legend = list(title = list(text = "Cell state")))),
+          "Cell states by clonal dynamics",
+          paste("One panel per patient; each bar is a group of clones and sums to 100% of their cells, across",
+                "all of the patient's samples. <em>Expanding</em>/<em>Contracting</em>: significant change between",
+                "two timepoints; <em>Both</em>: expanding in one comparison and contracting in another;",
+                "<em>Other expanded</em>: ≥ 2 cells in a sample, no significant change; <em>Not expanded</em>:",
+                "singletons. Compare the Expanding bar with Not expanded: states enriched in the first are",
+                "the phenotype of the responding clones. Bars of few clones (hover for cell counts) are noisy."))
+}
+```
+
+```{r}
+#| label: gex-dynamics-counts
+#| results: asis
+if (have(gx_tcr) && exists("cd_status") && is.data.frame(cd_status) && nrow(cd_status)) {
+  cat(sprintf("\n%d expanding and %d contracting clonotypes (patient x CDR3b) from the clonal dynamics analysis were matched to their cells.\n\n",
+              sum(cd_status$status == "Expanding"), sum(cd_status$status == "Contracting")))
+}
+```
 
 ## Clones shared between cell states {#sec-sc-gex-sharing}
+
+**What it shows.** How often an expanded clone has cells in two different states at once.
+
+**Why it matters.** The cells of one clone all derive from one naive T cell, so a clone found
+in two states shows a differentiation path between them (for example effector to exhausted, or
+memory to effector). States that share many clones are developmentally linked; states that
+share none are separate lineages (for example CD4 Treg and CD8 effector).
+
+**How to read it.** In the heatmap, each tile counts the expanded clones with cells in both the
+row and the column state *in the same sample*, counted once per patient; hover a tile for its
+breakdown by patient. The diagonal counts the expanded clones with any cell in that state. The
+table lists the off-diagonal pairs, most shared first, with one column per patient and the
+breakdown by sample.
 
 ```{r}
 #| label: gex-state-sharing
 if (have(gx_tcr) && dplyr::n_distinct(gx_tcr$annot) > 1) {
-  # A clone is counted per sample, so the same receptor in two patients is not a shared clone.
-  occ <- gx_tcr %>% filter(expanded) %>% distinct(sample, clone_id, annot)
+  # A clone is counted per sample, so the same receptor in two patients is not a shared clone;
+  # a clone shared in several samples of a patient counts once for that patient.
+  occ <- gx_tcr %>% filter(expanded) %>% distinct(patient_, sample, clone_id, annot)
   if (!nrow(occ)) note("No expanded clones to compare across cell states.") else {
     st <- sort(unique(gx_tcr$annot))
+    pairs <- occ %>% inner_join(occ, by = c("patient_", "sample", "clone_id"), relationship = "many-to-many") %>%
+      distinct(patient_, clone_id, annot.x, annot.y)
+    tab <- pairs %>% count(annot.x, annot.y, name = "n")
+    by_pat <- pairs %>% count(annot.x, annot.y, patient_, name = "n") %>% arrange(patient_) %>%
+      group_by(annot.x, annot.y) %>%
+      summarise(breakdown = paste0(patient_, ": ", n, collapse = "<br>"), .groups = "drop")
     m <- matrix(0, length(st), length(st), dimnames = list(st, st))
-    pairs <- occ %>% inner_join(occ, by = c("sample", "clone_id"), relationship = "many-to-many")
-    tab <- pairs %>% count(annot.x, annot.y)
+    h <- matrix("", length(st), length(st), dimnames = list(st, st))
     m[cbind(tab$annot.x, tab$annot.y)] <- tab$n
+    h[] <- paste0(rep(st, times = length(st)), " / ", rep(st, each = length(st)), "<br>0 clones")
+    tb <- tab %>% left_join(by_pat, by = c("annot.x", "annot.y"))
+    h[cbind(tb$annot.x, tb$annot.y)] <- paste0(tb$annot.x, " / ", tb$annot.y, "<br><b>", tb$n, " clones</b><br>", tb$breakdown)
     save_table(as.data.frame(m) %>% tibble::rownames_to_column("annot"), "gex_state_clone_sharing.tsv")
-    hmap(m, "Expanded clones found in both cell states", "Clones", colorscale = "Blues", fmt = "%{z}")
+    # The diagonal (all expanded clones of a state) dwarfs the shared counts, so the colour
+    # scale runs up to the largest off-diagonal value and the diagonal saturates.
+    off <- m; diag(off) <- 0
+    zmax <- if (max(off) > 0) max(off) else max(m)
+    withcap(hmap(m, "Expanded clones found in both cell states", "Clones",
+                 colorscale = list(list(0, "#e6e6e6"), list(0.5, "#6baed6"), list(1, "#08306b")),
+                 text = h, zmin = 0, zmax = zmax, height = max(480, 28 * length(st) + 220)),
+            "Clones shared between cell states",
+            paste("Each tile is the number of expanded clones with cells in both states in the same sample",
+                  "(grey = none, dark blue = most). The colour scale stops at the largest shared count, so",
+                  "diagonal tiles (all expanded clones of a state) are drawn at the darkest blue; hover any tile",
+                  "for the exact count and its split by patient. A pair shared in only one patient may reflect",
+                  "one dominant clone rather than a general path."))
   }
 }
 ```
 
-The diagonal counts expanded clones with any cell in that state; off-diagonal cells count
-clones with cells in *both* states, the signature of one clone giving rise to several
-phenotypes.
+```{r}
+#| label: gex-state-sharing-table
+if (exists("pairs") && is.data.frame(pairs) && nrow(pairs)) {
+  d <- pairs %>% filter(annot.x < annot.y) %>% count(state_a = annot.x, state_b = annot.y, patient_, name = "n") %>%
+    tidyr::pivot_wider(names_from = patient_, values_from = n, values_fill = 0)
+  pcols <- setdiff(names(d), c("state_a", "state_b"))
+  d$clones <- rowSums(d[, pcols, drop = FALSE])
+  d$patients <- rowSums(d[, pcols, drop = FALSE] > 0)
+  # Per-sample breakdown: expanded clones with cells in both states within that sample.
+  by_sample <- occ %>% inner_join(occ, by = c("patient_", "sample", "clone_id"), relationship = "many-to-many") %>%
+    filter(annot.x < annot.y) %>% distinct(patient_, sample, clone_id, annot.x, annot.y) %>%
+    count(state_a = annot.x, state_b = annot.y, patient_, sample, name = "n") %>%
+    left_join(gx_tcr %>% distinct(sample, alias, timepoint, origin), by = "sample") %>%
+    mutate(.tp = match(timepoint, gx_tp_levels)) %>%
+    arrange(patient_, origin, .tp, alias) %>%
+    group_by(state_a, state_b) %>%
+    summarise(samples = paste0(alias, " (", n, ")", collapse = ", "), .groups = "drop")
+  d <- d[, c("state_a", "state_b", "clones", "patients", sort(pcols))] %>%
+    left_join(by_sample, by = c("state_a", "state_b")) %>% arrange(desc(clones))
+  save_table(d, "gex_state_clone_sharing_pairs.tsv")
+  if (nrow(d)) withcap(itable(as.data.frame(d), pageSize = 10), "State pairs sharing expanded clones",
+                       paste("One row per pair of states, with the number of shared expanded clones in total, the",
+                             "number of patients in which the pair is shared, the count per patient, and in",
+                             "<code>samples</code> the count per sample (alias, in timepoint order). A clone counts",
+                             "once per patient in the patient columns but once in every sample where it has cells in",
+                             "both states, so the sample counts can add up to more than the patient count; a pair",
+                             "found in several samples of a patient is a stable link rather than a one-off. Pairs",
+                             "shared across several patients are the most general differentiation links."),
+                       kind = "Table")
+}
+```
 
 ```{r}
 #| label: gex-plasticity
 if (have(gx_tcr)) {
-  d <- gx_tcr %>% filter(expanded) %>% group_by(sample, clone_id) %>%
-    summarise(cells = n(), states = dplyr::n_distinct(annot),
+  d <- gx_tcr %>% filter(expanded) %>% group_by(patient = patient_, sample = alias, clone_id) %>%
+    summarise(cdr3b = first(cdr3b), cells = n(), states = dplyr::n_distinct(annot),
               main_state = names(which.max(table(annot))),
               main_frac = max(table(annot)) / n(), .groups = "drop") %>%
-    arrange(desc(cells))
+    arrange(desc(cells)) %>% select(-clone_id)
   save_table(d, "gex_clone_state_plasticity.tsv")
-  itable(head(d, 200), pageSize = 10)
+  withcap(itable(head(d, 200) %>% mutate(main_frac = round(main_frac, 3)), pageSize = 10),
+          "Cell states of the largest expanded clones",
+          paste("The 200 largest expanded clones (per sample), with the number of states their cells occupy,",
+                "the dominant state and the share of the clone's cells in it. <code>main_frac</code> near 1",
+                "means a phenotypically committed clone; low values with several states mean a clone whose",
+                "cells are spread over a differentiation path."), kind = "Table")
 }
 ```
 
-Expanded clones with the number of cell states they occupy and the share of their cells in
-the dominant state (top 200 by size).
-
 ## Gene expression of cell states and expanded cells {#sec-sc-gex-genes}
+
+Canonical T-cell genes (naive/memory, cytotoxic, tissue-residency, exhaustion, MAIT,
+proliferation) per state, to check the annotation, and the difference between expanded and
+singleton cells within each state, to see what expansion adds beyond the state itself.
 
 ```{r}
 #| label: gex-genes
@@ -292,6 +669,7 @@ if (have(gx) && nzchar(.rds) && file.exists(.rds) && file.size(.rds) > 0) {
 if (have(gx) && is.null(gx_expr)) note("The GEX object could not be read, or shares too few cells / marker genes with the export; expression panels are skipped.")
 ```
 
+
 ```{r}
 #| label: gex-markers-state
 if (!is.null(gx_expr)) {
@@ -300,17 +678,30 @@ if (!is.null(gx_expr)) {
   z <- t(scale(t(avg)))
   z[is.na(z)] <- 0
   save_table(as.data.frame(avg) %>% tibble::rownames_to_column("gene"), "gex_marker_mean_by_state.tsv")
-  hmap(t(z), "Canonical T-cell genes by cell state (row-scaled mean expression)", "z-score",
-       colorscale = "RdBu", zmid = 0, height = max(420, 32 * ncol(z) + 200))
+  withcap(hmap(t(z), "Canonical T-cell genes by cell state (row-scaled mean expression)", "z-score",
+               colorscale = "RdBu", zmid = 0, height = max(420, 32 * ncol(z) + 200)),
+          "Marker genes by cell state",
+          paste("Mean log-expression of each gene in each state, scaled per gene across states (red = highest",
+                "in that state, blue = lowest). Use it to check the annotation: naive/memory states should be",
+                "red for <em>SELL</em>, <em>CCR7</em>, <em>TCF7</em>, <em>IL7R</em>; cytotoxic effectors for",
+                "<em>GZMB</em>, <em>PRF1</em>, <em>NKG7</em>; exhausted cells for <em>PDCD1</em>,",
+                "<em>HAVCR2</em>, <em>TOX</em>, <em>CXCL13</em>; MAIT for <em>KLRB1</em>, <em>SLC4A10</em>;",
+                "Treg for <em>FOXP3</em>; cycling cells for <em>MKI67</em>, <em>TOP2A</em>. Because each gene is",
+                "scaled on its own, the colours compare states, not genes."))
 }
 ```
+
 
 ```{r}
 #| label: gex-markers-expanded
 if (!is.null(gx_expr)) {
   md <- gx_expr$meta
   ok <- md$has_tcr
-  st <- names(which(table(md$annot[ok & md$expanded]) >= 20 & table(md$annot[ok & !md$expanded]) >= 20))
+  # Count both groups over the same states (a state may have only one kind of cell).
+  lv <- sort(unique(as.character(md$annot[ok])))
+  n_exp <- table(factor(md$annot[ok & md$expanded %in% TRUE], levels = lv))
+  n_sgl <- table(factor(md$annot[ok & md$expanded %in% FALSE], levels = lv))
+  st <- lv[n_exp >= 20 & n_sgl >= 20]
   if (!length(st)) note("Too few expanded and non-expanded cells per state to compare expression.") else {
     lfc <- sapply(st, function(s) {
       e <- ok & md$annot == s
@@ -318,22 +709,37 @@ if (!is.null(gx_expr)) {
         Matrix::rowMeans(gx_expr$mat[, e & !md$expanded, drop = FALSE])
     })
     save_table(as.data.frame(lfc) %>% tibble::rownames_to_column("gene"), "gex_expanded_vs_singleton_by_state.tsv")
-    lim <- max(abs(lfc), na.rm = TRUE)
-    hmap(t(lfc), "Expanded vs singleton cells within each state (difference in mean log-expression)",
-         "Δ log-expr", colorscale = "RdBu", zmid = 0, height = max(420, 32 * length(st) + 200))
+    withcap(hmap(t(lfc), "Expanded vs singleton cells within each state (difference in mean log-expression)",
+                 "Δ log-expr", colorscale = "RdBu", zmid = 0, height = max(420, 32 * length(st) + 200)),
+            "Expanded vs singleton cells within each state",
+            paste("Difference in mean log-expression between cells of expanded clones and singletons of the",
+                  "<em>same</em> state (red = higher in expanded cells). This separates expansion-associated",
+                  "programmes (for example more cytotoxicity or exhaustion in expanded clones) from differences",
+                  "between states. A difference of 0.5 is about a 1.6-fold change. States need at least 20",
+                  "cells of each kind; the differences are descriptive, not tested."))
   }
 }
 ```
 
-Positive values (red) are genes higher in the cells of expanded clones than in singletons of
-the *same* state, which separates expansion-associated programmes (for example cytotoxicity
-or exhaustion) from differences between states. States need at least 20 cells of each kind.
+## CoNGA: clones with matching TCR and transcriptional neighbourhoods {#sec-sc-gex-conga}
 
-## CoNGA {#sec-sc-gex-conga}
+**What it is.** CoNGA (clonotype neighbour graph analysis; Schattgen *et al.*, *Nat Biotechnol*
+2022, [doi:10.1038/s41587-021-00989-2](https://doi.org/10.1038/s41587-021-00989-2)) builds two
+neighbour graphs over clonotypes, one from gene expression and one from receptor similarity
+(TCRdist). A clonotype whose expression neighbours are also its receptor neighbours more often
+than chance is a **CoNGA hit**: its score (a Bonferroni-adjusted p-value) is below 1, lower being
+stronger. CoNGA runs once on the whole cohort, and its hit clusters (pairs of GEX and TCR
+clusters) are one of the methods of the consensus clustering.
 
-Graph-level correspondence between TCR similarity and transcriptional similarity. Clusters
-scoring highly here contain cells that are neighbours in *both* spaces — the strongest
-available evidence of antigen-driven clonal programmes.
+**Why it matters.** Hits are groups of similar receptors that drive a shared transcriptional
+programme, the joint signal expected from T cells recognising related antigens, or from
+innate-like T cells with a fixed receptor.
+
+**How to read it.** The table summarises the run; then the share of each state's TCR+ cells that
+are hits, the hits on the cell-state map, the share of hits in each sample over time (a rising
+share means more of the repertoire sits in receptor groups with coherent states), and the
+strongest hit clonotypes with where they were found. Invariant MAIT and iNKT receptors are
+frequent hits in innate-like states and are usually not antigen-specific.
 
 ```{r}
 #| label: conga
@@ -342,9 +748,13 @@ if (!have(conga_roll) && !have(conga_clusters)) {
 } else {
   if (have(conga_roll)) save_table(conga_roll, "master_conga_rollup.tsv")
   if (have(conga_clusters)) save_table(conga_clusters, "master_conga_clusters.tsv")
-  itable(if (have(conga_roll)) conga_roll else conga_clusters, pageSize = 15)
+  withcap(itable(if (have(conga_roll)) conga_roll else conga_clusters, pageSize = 15), "CoNGA run summary",
+          paste("Cells and clonotypes CoNGA scored, and how many reached a hit. Few or no hits is common in",
+                "small cohorts or when most clones are singletons, and does not mean the run failed."),
+          kind = "Table")
 }
 ```
+
 
 ```{r}
 #| label: gex-conga-state
@@ -355,50 +765,256 @@ if (have(gx_tcr) && "conga_score" %in% names(gx_tcr) && any(!is.na(gx_tcr$conga_
     summarise(cells = n(), hits = sum(conga_hit), .groups = "drop") %>%
     mutate(val = hits / cells)
   save_table(d, "gex_conga_hits_by_state.tsv")
-  hbar(d %>% transmute(cat = annot, val, hover = paste0(annot, "<br>", hits, " / ", cells, " TCR+ cells (",
-                                                        percent(val, 0.1), ")")),
-       "CoNGA hits by cell state", "Fraction of TCR+ cells that are CoNGA hits",
-       tickformat = ".0%", height = max(400, 30 * nrow(d) + 140))
+  withcap(hbar(d %>% transmute(cat = annot, val, hover = paste0(annot, "<br>", hits, " / ", cells, " TCR+ cells (",
+                                                                percent(val, 0.1), ")")),
+               "CoNGA hits by cell state", "Fraction of TCR+ cells that are CoNGA hits",
+               tickformat = ".0%", height = max(400, 30 * nrow(d) + 140)),
+          "CoNGA hits by cell state",
+          paste("Share of each state's TCR+ cells whose clonotype is a CoNGA hit. States at the top hold",
+                "receptor groups with a coherent expression programme: MAIT or iNKT at the top reflect their",
+                "invariant receptors, while effector or exhausted states at the top are the candidate",
+                "antigen-driven signal."))
 } else if (have(gx_tcr)) note("No per-cell CoNGA scores were exported.")
 ```
+
 
 ```{r}
 #| label: gex-conga-umap
 if (have(gx) && !is.null(gx_emb) && "conga_score" %in% names(gx) && any(!is.na(gx$conga_score))) {
   sc <- suppressWarnings(as.numeric(gx$conga_score))
   gx$conga_lab <- ifelse(!is.na(sc) & sc < 1, "CoNGA hit", ifelse(gx$has_tcr, "TCR+, not a hit", "no TCR"))
-  emb_plot(gx, "conga_lab", c("CoNGA hit" = "#de2d26", "TCR+, not a hit" = "#9ecae1", "no TCR" = "#ececec"),
-           "CoNGA hits on the cell-state map",
-           hover = function(d) paste0(d$annot, "<br>", d$conga_lab, "<br>clone size ", d$clone_size))
+  withcap(emb_plot(gx, "conga_lab", c("CoNGA hit" = "#de2d26", "TCR+, not a hit" = "#9ecae1", "no TCR" = "#ececec"),
+                   "CoNGA hits on the cell-state map",
+                   hover = function(d) paste0(d$annot, "<br>", d$alias, "<br>", d$conga_lab, "<br>clone size ", d$clone_size),
+                   legend_title = "CoNGA"),
+          "CoNGA hits on the UMAP",
+          paste("Red cells belong to hit clonotypes. Hits forming a compact patch in one region are a receptor",
+                "group with one shared programme; compare the patch with the cell-state map above."))
 }
 ```
 
-## TCRi {#sec-sc-gex-tcri}
 
-TCRi scores how strongly a receptor sequence predicts the phenotype its cell adopts. High
-scores mark clones whose fate appears written into the TCR.
+```{r}
+#| label: gex-conga-time
+if (have(gx_tcr) && any(!is.na(gx_tcr$conga_hit))) {
+  d <- gx_tcr %>% filter(!is.na(conga_hit)) %>% group_by(sample, alias, patient_, timepoint, origin) %>%
+    summarise(cells = n(), val = mean(conga_hit), .groups = "drop")
+  withcap(over_time(d, "Share of TCR+ cells in CoNGA hit clonotypes over time", "CoNGA hits", tickformat = ".0%"),
+          "CoNGA hits over time",
+          paste("One line per patient (and compartment), one point per sample at its timepoint: the share of",
+                "the sample's TCR+ cells whose clonotype is a CoNGA hit (score < 1). Timepoints a patient was not",
+                "sampled at are skipped, not drawn as 0. See the box below for how to read the trend."))
+}
+```
+
+:::: {.callout-note title="Reading the CoNGA trend over time" collapse="false"}
+CoNGA scores every clonotype once, on the whole cohort, so a clone's score does not change between
+timepoints. What changes is **how many of each sample's T cells belong to hit clonotypes**, and
+that is what the lines follow.
+
+- **Rising.** A growing share of the repertoire sits in receptor groups that share one
+  transcriptional programme. Usually hit clones expanded (or new clones of a hit group arrived),
+  as in an antigen-driven response that is focusing: similar receptors recruited into one
+  effector or exhausted state. Check which states the hits sit in (CoNGA hits by cell state) and
+  which clones drive it (the table below) before calling it tumour-specific: MAIT/iNKT hits rising
+  reflect innate-like cells, not an antigen response.
+- **Falling.** Hit clones contracted or were diluted by many new, unrelated clones: the response
+  that linked receptor to phenotype is receding, or the repertoire is diversifying (for example
+  after lymphodepletion recovery). In tissue it can also mean the hit clones left the site.
+- **Stable.** The receptor–phenotype coupling is maintained: either persistent hit clones at
+  a steady share (a sustained, stable programme) or a low baseline with no structured response.
+  The level matters: stable at 20% and stable at 1% mean different things.
+
+Shares are noisy for samples with few TCR+ cells (hover for the cell count), and a single large
+hit clone can move a line on its own, so confirm a trend with the hit clonotype table.
+::::
+
+```{r}
+#| label: gex-conga-top
+if (have(gx_tcr) && any(gx_tcr$conga_hit %in% TRUE)) {
+  d <- gx_tcr %>% filter(conga_hit %in% TRUE) %>% group_by(patient = patient_, clone_id) %>%
+    summarise(cdr3b = first(cdr3b), cells = n(), best_score = min(as.numeric(conga_score)),
+              state = names(which.max(table(annot))),
+              timepoints = paste(intersect(gx_tp_levels, unique(timepoint)), collapse = ", "),
+              compartments = paste(sort(unique(origin)), collapse = ", "), .groups = "drop") %>%
+    arrange(best_score, desc(cells)) %>% select(-clone_id)
+  save_table(d, "gex_conga_top_hits.tsv")
+  withcap(itable(d %>% mutate(best_score = signif(best_score, 3)), pageSize = 10), "CoNGA hit clonotypes",
+          paste("Hit clonotypes, strongest first: the CoNGA score (lower = stronger), cells, dominant state and",
+                "the timepoints and compartments the clone was found at. Hits present at several timepoints",
+                "are persistent clones with a stable programme, the best candidates for follow-up."),
+          kind = "Table")
+}
+```
+
+## TCRi: phenotype bias encoded in the receptor {#sec-sc-gex-tcri}
+
+**What it is.** TCRi (Ceglia *et al.*, [bioRxiv 2022.10.01.510457](https://www.biorxiv.org/content/10.1101/2022.10.01.510457v1);
+[github.com/nceglia/tcri](https://github.com/nceglia/tcri)) is an information-theoretic
+framework for paired TCR and GEX data. Its probabilistic model learns, for each clonotype, a
+distribution over phenotypes from its cells' expression. A cell's **TCRi score** is the
+probability of its most likely phenotype (the *predicted* phenotype); cells are grouped Low,
+Mid and High by score.
+
+**Why it matters.** It measures how strongly clonal identity determines cell fate: if a clone's
+cells consistently adopt one state, the receptor (or the antigen it sees) is shaping that fate;
+if not, the environment dominates.
+
+**What high and low values mean.** The score runs from about 1 / (number of phenotypes) to 1.
+
+- **High (close to 1)**: the model is confident about the clone's phenotype, and its cells are
+  committed to one fate. This is expected for clones driven by a persistent antigen (for
+  example exhausted tumour-reactive clones), and for Treg and MAIT cells, whose lineage is fixed.
+- **Low (near the minimum)**: the clone's cells are spread over several phenotypes with no
+  clear favourite. The clone is plastic, or its fate is set by the environment rather than by
+  its receptor.
+- Singleton clones carry little information, so their scores mostly reflect the cell's own
+  state; the signal is in expanded clones.
+
+**How to read it.** Scores by observed state show which states hold the most committed clones;
+the time course shows whether commitment grows over a patient's samples; the tables compare,
+for expanded clones, the phenotype TCRi predicts with the one observed. Agreement means a
+clone-intrinsic fate bias, disagreement an environment-driven state.
+
+::: {.callout-note title="TCRi and phenotypic plasticity" collapse="false"}
+**Phenotypic plasticity** is the ability of one clone, all of whose cells carry the same
+receptor, to give rise to cells in different functional states: for example effector and
+memory progeny of the same clone, a progenitor-exhausted (TCF7+) pool that keeps feeding
+terminally exhausted cells, or a clone found as circulating effector cells in blood and as
+resident or exhausted cells in the tumour. TCRi turns this into a number: a clone's TCRi score is
+high when its cells concentrate in one phenotype and low when they spread over several, so the
+**score is the inverse of the clone's plasticity**.
+
+- **Expanded, high TCRi (fate-restricted clones).** Many cells, nearly all in one state. Typical of
+  chronic, persistent antigen exposure (tumour-reactive clones driven to exhaustion), of
+  terminally differentiated effectors, and of lineage-fixed cells (Treg, MAIT). These clones have
+  limited capacity to renew themselves or to switch programme.
+- **Expanded, low TCRi (plastic clones).** Many cells spread across states. Expected in an ongoing
+  or recall response, where one clone sustains effector, memory and proliferating branches at the
+  same time; in tumours, a clone with both progenitor-exhausted and effector cells is the
+  population that immune checkpoint blockade is thought to reinvigorate. Plastic clones are
+  often the most durable part of a response.
+- **Small clones.** With few cells, both a high and a low score are poorly determined: judge
+  plasticity from expanded clones (the clone-level plasticity map below).
+
+**Over time.** Within a patient, a falling mean TCRi means clones are diversifying their states
+(new effector or memory branches, for example after therapy or antigen re-exposure); a rising
+mean means they are converging on one state (commitment, often terminal differentiation or
+exhaustion under persistent antigen). Read this together with *Cell states by clonal dynamics*
+above: expanding clones that are also plastic are actively generating new effector cells, while
+expanding clones that are fate-restricted are accumulating in one state.
+
+**Predicted versus observed.** When TCRi's predicted phenotype differs from the state most of a
+clone's cells were annotated as, the clone is split between states and the model weighs the
+minority state more strongly from its expression: a sign of a clone in transition between
+states rather than of an annotation error.
+
+**Caveats.** Apparent plasticity depends on the annotation: finer annotations (more, smaller
+states) make every clone look more plastic, and neighbouring states along a continuum (for example
+effector memory and effector) can split one programme in two. Clones pooled over blood and
+tissue may look plastic only because the two compartments impose different states. Doublets and
+ambient contamination can add spurious states to large clones. Compare TCRi between patients
+annotated in the same way, and confirm interesting clones in the per-sample views of the
+**Details: Sample** report (cell-state make-up of the largest clones, phenotypic heterogeneity).
+:::
 
 ```{r}
 #| label: tcri
-#| results: asis
 if (!have(tcri_roll)) {
   note("TCRi produced no output on this run.")
 } else {
   save_table(tcri_roll, "master_tcri_rollup.tsv")
-  itable(tcri_roll, pageSize = 15)
+  withcap(itable(tcri_roll, pageSize = 15), "TCRi run summary",
+          "Cells and clonotypes TCRi scored, the score distribution and how many cells fall in each group.",
+          kind = "Table")
 }
 ```
+
 
 ```{r}
 #| label: gex-tcri-state
 if (have(gx_tcr) && "tcri_score" %in% names(gx_tcr) && any(!is.na(gx_tcr$tcri_score))) {
   d <- gx_tcr %>% filter(!is.na(tcri_score)) %>%
     transmute(grp = annot, val = as.numeric(tcri_score),
-              hover = paste0(annot, "<br>", sample, "<br>TCRi ", round(val, 3)))
+              hover = paste0(annot, "<br>", alias, "<br>TCRi ", round(val, 3)))
   set.seed(1)
   if (nrow(d) > 20000) d <- d[sample.int(nrow(d), 20000), ]
-  boxby(d, "TCRi score by cell state", "TCRi score", angle = -30)
+  withcap(boxby(d, "TCRi score by cell state", "TCRi score", angle = -30),
+          "TCRi score by cell state",
+          paste("Each point is one TCR+ cell (up to 20,000 shown), the box its state's quartiles. States with",
+                "boxes near 1 hold clones committed to that state; low or wide boxes hold clones whose cells",
+                "are also found in other states."))
 } else if (have(gx_tcr)) note("No per-cell TCRi scores were exported.")
+```
+
+
+```{r}
+#| label: gex-tcri-time
+if (have(gx_tcr) && "tcri_score" %in% names(gx_tcr) && any(!is.na(gx_tcr$tcri_score))) {
+  d <- gx_tcr %>% filter(!is.na(tcri_score)) %>%
+    group_by(sample, alias, patient_, timepoint, origin) %>%
+    summarise(cells = n(), val = mean(as.numeric(tcri_score)), .groups = "drop")
+  withcap(over_time(d, "Mean TCRi score of TCR+ cells over time", "Mean TCRi score"),
+          "TCRi score over time",
+          paste("Mean TCRi score of each sample's TCR+ cells, one line per patient. A rising line means the",
+                "patient's T cells become more committed to one fate per clone over time, as expected when a",
+                "persistent antigen drives clones to a terminal state such as exhaustion."))
+}
+```
+
+```{r}
+#| label: gex-tcri-plasticity
+if (have(gx_tcr) && "tcri_score" %in% names(gx_tcr) && any(!is.na(gx_tcr$tcri_score) & gx_tcr$expanded)) {
+  # One point per expanded clone and sample: its size, mean TCRi and the number of states its
+  # cells occupy (each with at least 10% of the clone's cells).
+  d <- gx_tcr %>% filter(expanded, !is.na(tcri_score)) %>%
+    group_by(sample, alias, patient_, clone_id) %>%
+    summarise(cdr3b = first(cdr3b), cells = n(), mean_tcri = mean(as.numeric(tcri_score)),
+              dominant = names(which.max(table(annot))),
+              dominant_frac = max(table(annot)) / n(),
+              n_states = sum(table(annot) / n() >= 0.1), .groups = "drop")
+  save_table(d, "gex_tcri_clone_plasticity.tsv")
+  cols <- state_cols(gx_tcr$annot)
+  withcap(pconf(plotly::plot_ly(d, x = ~cells, y = ~mean_tcri, color = ~dominant, colors = cols,
+                                type = "scatter", mode = "markers",
+                                marker = list(size = ~pmin(6 + 2 * n_states, 16), opacity = 0.75,
+                                              line = list(width = 0.5, color = "white")),
+                                text = ~paste0(cdr3b, "<br>", alias, "<br>", cells, " cells, ", n_states,
+                                               " state(s) ≥ 10%<br>dominant: ", dominant, " (",
+                                               percent(dominant_frac, 1), ")<br>mean TCRi ", round(mean_tcri, 3)),
+                                hovertemplate = "%{text}<extra></extra>") %>%
+                plotly::layout(title = ttl("Clone size against TCRi: committed and plastic clones"),
+                               height = 500, margin = list(t = 60),
+                               xaxis = list(title = "Cells in clone (sample)", type = "log"),
+                               yaxis = list(title = "Mean TCRi score of the clone's cells"),
+                               legend = list(title = list(text = "Dominant state")))),
+          "Clone-level plasticity map",
+          paste("One point per expanded clone per sample, coloured by the state most of its cells are in;",
+                "larger points span more states (each holding at least 10% of the clone's cells). Upper",
+                "right: large, fate-restricted clones. Lower right: large, plastic clones whose progeny",
+                "occupy several states. Clones of a few cells sit on the left, where the score is noisy.",
+                "Hover a point for its CDR3β, sample and state split; the table is written as",
+                "<code>gex_tcri_clone_plasticity.tsv</code>."))
+}
+```
+
+```{r}
+#| label: gex-tcri-top
+if (have(gx_tcr) && "tcri_score" %in% names(gx_tcr) && any(!is.na(gx_tcr$tcri_score) & gx_tcr$expanded)) {
+  d <- gx_tcr %>% filter(expanded, !is.na(tcri_score)) %>% group_by(patient = patient_, clone_id) %>%
+    summarise(cdr3b = first(cdr3b), cells = n(), mean_tcri = mean(as.numeric(tcri_score)),
+              predicted = if ("tcri_predicted_phenotype" %in% names(.) && any(!is.na(tcri_predicted_phenotype)))
+                names(which.max(table(tcri_predicted_phenotype))) else NA_character_,
+              observed = names(which.max(table(annot))),
+              timepoints = paste(intersect(gx_tp_levels, unique(timepoint)), collapse = ", "), .groups = "drop") %>%
+    arrange(desc(mean_tcri), desc(cells)) %>% select(-clone_id)
+  save_table(d, "gex_tcri_top_expanded_clones.tsv")
+  withcap(itable(d %>% mutate(mean_tcri = round(mean_tcri, 3)), pageSize = 10), "TCRi of expanded clones",
+          paste("Expanded clones by mean TCRi score, with the phenotype TCRi predicts and the state most of",
+                "their cells were annotated as. A high score with predicted = observed is a clone committed",
+                "to that state. Predicted ≠ observed: the clone's cells are split, and the majority state is",
+                "not the one the model favours."), kind = "Table")
+}
 ```
 
 ```{r}
@@ -409,29 +1025,31 @@ if (have(tcri_scores)) {
   nc <- intersect(c("n_cells", "cells", "clone_size", "n"), names(d))
   cc <- intersect(c("clone_id", "CTaa", "clonotype"), names(d))
   if (!length(nc) || !length(cc)) {
-    itable(d, pageSize = 10)
+    withcap(itable(d, pageSize = 10), "High-TCRi clones", "", kind = "Table")
   } else {
     dd <- data.frame(cat = as.character(d[[cc[1]]]), val = as.numeric(d[[nc[1]]]))
     dd <- head(dd[order(-dd$val), , drop = FALSE], params$top_n_clusters)
     dd$hover <- paste0(dd$cat, "<br>", dd$val, " cells")
-    hbar(dd, paste0("Top ", params$top_n_clusters, " high-TCRi clones"), "Cells", height = 560)
+    withcap(hbar(dd, paste0("Top ", params$top_n_clusters, " high-TCRi clones"), "Cells", height = 560),
+            "Largest high-TCRi clones",
+            paste("The largest clones whose cells fall in the High TCRi group, by cells. These are the big",
+                  "clones most committed to one phenotype; find them in the table above for their state."))
   }
 }
 ```
 
-## T-cell integration tables {#sec-sc-gex-tcell}
-
-```{r}
-#| label: tcell
-if (!have(tcell_roll)) {
-  note("No T-cell integration summary available.")
-} else {
-  save_table(tcell_roll, "master_tcell_rollup.tsv")
-  itable(tcell_roll, pageSize = 15)
-}
-```
-
 ## Consensus clusters by cell state {#sec-sc-gex-consensus}
+
+**What it shows.** The largest consensus clusters (see Consensus clustering) split by the
+states of their cells.
+
+**Why it matters.** Consensus clusters group receptors predicted to share specificity, so a
+cluster concentrated in one state points to a specificity tied to that phenotype, for example
+a tumour-reactive group that is mostly exhausted.
+
+**How to read it.** One bar per cluster (cell count in brackets), segments the share of its
+cells in each state. A cluster dominated by one state is a specificity with a single fate; one
+spread over several states is a specificity whose cells differentiate along a path.
 
 ```{r}
 #| label: gex-consensus-state
@@ -443,14 +1061,17 @@ if (have(gx_tcr) && "consensus_cluster" %in% names(gx_tcr)) {
     d <- d %>% filter(consensus_cluster %in% top$consensus_cluster) %>%
       count(consensus_cluster, annot, name = "n") %>% group_by(consensus_cluster) %>%
       mutate(val = n / sum(n), tot = sum(n)) %>% ungroup() %>%
-      transmute(cat = paste0(consensus_cluster, " (", tot, ")"), grp = annot, val,
+      transmute(cat = paste0(consensus_cluster, " (", tot, ")"), grp = annot, val, tot,
                 hover = paste0("cluster ", consensus_cluster, "<br>", annot, ": ", n, " cells"))
+    # Largest cluster at the top.
+    d$cat <- factor(d$cat, levels = unique(d$cat[order(d$tot, d$cat)]))
     save_table(d, "gex_consensus_state_composition.tsv")
-    sbar(d, paste0("Cell-state make-up of the ", nrow(top), " largest consensus clusters"),
-         "Fraction of cells", height = max(440, 26 * nrow(top) + 160))
+    withcap(sbar(d, paste0("Cell-state make-up of the ", nrow(top), " largest consensus clusters"),
+                 "Fraction of cells", height = max(440, 26 * nrow(top) + 160), colors = state_cols(gx$annot), legend_title = "Cell state"),
+            "Cell states of the largest consensus clusters",
+            paste("Each bar sums to 100% of the cluster's TCR+ cells (count in brackets), coloured by state.",
+                  "Clusters of a few cells can be one expanded clone; trust the make-up more for clusters",
+                  "with many cells and several clonotypes (see the Consensus clustering table)."))
   }
 } else if (have(gx_tcr)) note("No per-cell consensus labels were exported.")
 ```
-
-Consensus clusters group receptors predicted to share specificity. A cluster concentrated in
-one state points to a specificity tied to that phenotype.

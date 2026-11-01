@@ -16,7 +16,6 @@ v_family_csv= f"{project_dir}/sample/v_family.csv"
 j_family_csv= f"{project_dir}/sample/j_family.csv"
 
 # Define dirs
-tcrdist_dir = f"{project_dir}/tcrdist3/"
 olga_dir = f"{project_dir}/olga/"
 tcrpheno_dir = f"{project_dir}/tcrpheno/"
 VDJdb_dir = f"{project_dir}/vdjdb/"
@@ -89,7 +88,13 @@ id_vars = [s.strip() for s in x_cols.split(',') if s.strip()]
 # Repertoire Composition {#sec-composition}
 
 
-### Clonal Frequency Categories  
+## Clonal frequency categories {#sec-frequency-categories}
+
+::: {.callout-tip title="In short" appearance="simple"}
+- **What it shows:** each sample split into rare (< 0.1%), frequent (0.1–1%) and highly frequent (> 1%) clones, with sequencing depth overlaid.
+- **Why it matters:** expanded clones are the footprint of antigen-driven proliferation; their share is a first read-out of how focused the response is.
+- **How to read it:** a growing highly-frequent share between timepoints of a patient suggests a mounting response, a return to rare clones its resolution. Treat with caution samples whose depth marker (black) falls below the red line.
+:::
 
 This stacked bar plot provides a snapshot of your T-cell repertoire's structure, revealing the balance between dominant, frequent clones and the diverse pool of rare clones. By categorizing each TCR based on its frequency, we can infer the state of the immune system.  
 
@@ -104,215 +109,91 @@ $$f_i = \frac{\text{Read count for clone } i}{\text{Total reads for all producti
 #| output: asis
 #| echo: false
 
-import pandas as pd
+# Clone-size classes, coloured like the clone-size bins of the Master Summary's single-cell
+# section (grey: rare, blue: frequent, red: dominant).
+FREQ_CATS = ['Non-Frequent', 'Frequent', 'Highly Frequent']
+FREQ_COLORS = {'Non-Frequent': '#a6a6a6', 'Frequent': '#4292c6', 'Highly Frequent': '#de2d26'}
+DEPTH_MIN = 3000
+
 
 def create_expansion_stacked_barplot_per_individual(df, subject_col, origin_col, timepoint_order_col):
-    """
-    Generates a stacked bar plot grouped by sample, sorted by TIMEPOINT ORDER.
-    Generates one Quarto tab per individual with dropdowns for origin.
-    Includes a horizontal threshold line for sequencing depth (3000 counts).
-    """
-    # --- Ensure 'duplicate_count' column is numeric ---
-    try:
-        df['duplicate_count'] = pd.to_numeric(df['duplicate_count'])
-    except ValueError:
-        print("Error: 'duplicate_count' column could not be converted to a numeric type.")
-        return
+    """One tab per patient: a stacked vertical bar per sample (alias), ordered by compartment and
+    timepoint from the left, with the sample's total counts on a log axis on the right."""
+    df = df.copy()
+    df['duplicate_count'] = pd.to_numeric(df['duplicate_count'], errors='coerce').fillna(0)
+    df = df[df['duplicate_count'] > 0]
+    tot = df.groupby('sample')['duplicate_count'].transform('sum')
+    df['frequency'] = df['duplicate_count'] / tot * 100
+    df['category'] = np.select([df['frequency'] > 1, df['frequency'] >= 0.1],
+                               ['Highly Frequent', 'Frequent'], 'Non-Frequent')
+    per = (df.groupby(['sample', 'category']).size().rename('clones').reset_index()
+             .merge(df.groupby('sample').agg(total_clones=('junction_aa', 'size'),
+                                             total_reads=('duplicate_count', 'sum')).reset_index(), on='sample')
+             .merge(meta[['sample', alias_col, subject_col, origin_col, timepoint_col, timepoint_order_col]],
+                    on='sample', how='left'))
+    per['frac'] = per['clones'] / per['total_clones']
+    per['_r'] = pd.to_numeric(per[timepoint_order_col].astype(str), errors='coerce')
+    per[alias_col] = per[alias_col].astype(str)
 
-    subjects = [s for s in df[subject_col].unique() if pd.notna(s)]
-    
     print("::: {.panel-tabset}\n")
-
-    for subject in sorted(subjects):
+    for subject in sorted(per[subject_col].dropna().unique()):
         print(f"## {subject}\n")
-        
-        subject_df = df[df[subject_col] == subject].copy()
-        origins = [o for o in subject_df[origin_col].unique() if pd.notna(o)]
-        processed_origins = {}
-        
-        for origin in sorted(origins):
-            origin_df = subject_df[subject_df[origin_col] == origin].copy()
-            unique_samples = origin_df['sample'].unique()
-            processed_data = []
-
-            for sample_name in unique_samples:
-                sample_df = origin_df[origin_df['sample'] == sample_name].copy()
-
-                total_reads = sample_df['duplicate_count'].sum()
-                if total_reads == 0:
-                    continue
-
-                sample_df['frequency'] = (sample_df['duplicate_count'] / total_reads) * 100
-
-                highly_expanded = sample_df[sample_df['frequency'] > 1]
-                expanded = sample_df[(sample_df['frequency'] >= 0.1) & (sample_df['frequency'] <= 1)]
-                non_expanded = sample_df[sample_df['frequency'] < 0.1]
-
-                total_clones = len(sample_df)
-                if total_clones == 0:
-                    continue
-
-                # We assume all rows for a given sample have the same timepoint_order
-                tp_order = sample_df[timepoint_order_col].iloc[0]
-
-                processed_data.append({
-                    'Sample': sample_name,
-                    'TotalReads': total_reads,
-                    'timepoint_order': tp_order, # Store it for sorting
-                    'Highly Frequent': (len(highly_expanded) / total_clones) * 100,
-                    'Frequent': (len(expanded) / total_clones) * 100,
-                    'Non-Frequent': (len(non_expanded) / total_clones) * 100
-                })
-
-            if processed_data:
-                plot_df = pd.DataFrame(processed_data)
-                
-                plot_df = plot_df.sort_values(by='timepoint_order', ascending=True).reset_index(drop=True)
-                processed_origins[origin] = plot_df
-
-        if not processed_origins:
-            print(f"*(No valid data for {subject})*\n\n")
-            continue
-
+        d = per[per[subject_col] == subject].sort_values([origin_col, '_r', alias_col])
+        order = d[alias_col].drop_duplicates().tolist()
         fig = go.Figure()
-        
-        categories = ['Highly Frequent', 'Frequent', 'Non-Frequent']
-        colors = ['#d62728', '#ff7f0e', '#1f77b4']
-        traces_per_origin = 4  
-        
-        buttons = []
-        initial_shapes = []
-        initial_annotations = []
-        initial_x_array = []
-        initial_title = ""
-
-        for i, (origin, plot_df) in enumerate(processed_origins.items()):
-            is_first = (i == 0) 
-            
-            # Stacked Bars
-            for category, color in zip(categories, colors):
-                fig.add_trace(go.Bar(
-                    x=plot_df['Sample'],
-                    y=plot_df[category],
-                    name=category,
-                    marker_color=color,
-                    text=[f'{y:.1f}%' for y in plot_df[category]],
-                    textposition='inside',
-                    offsetgroup=0,
-                    visible=is_first,
-                    legendgroup=category,
-                    showlegend=is_first 
-                ))
-
-            # Depth Line
-            fig.add_trace(go.Scatter(
-                x=plot_df['Sample'],
-                y=plot_df['TotalReads'],
-                name='Total Reads',
-                mode='lines+markers',
-                line=dict(color='black', width=3, dash='dot'),
-                marker=dict(symbol='circle', size=8, color='black'),
-                yaxis='y2',
-                visible=is_first,
-                legendgroup='Total Reads',
-                showlegend=is_first
-            ))
-
-            shapes = [dict(
-                type="line", xref="paper", x0=0, x1=1,
-                yref="y2", y0=3000, y1=3000,
-                line=dict(color="red", width=2, dash="dot")
-            )]
-
-            # Place the annotation dynamically based on the length of the x-axis
-            annotations = [dict(
-                x=0.5, xref="paper",
-                y=3000, yref="y2",
-                text="<b>Reliability Threshold (3k counts)</b>",
-                showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor="red",
-                ax=0, ay=-30,
-                font=dict(color="red", size=11)
-            )]
-
-            # Build Dropdown Button
-            visibility_array = [False] * (len(processed_origins) * traces_per_origin)
-            visibility_array[i * traces_per_origin : (i + 1) * traces_per_origin] = [True] * traces_per_origin
-
-            button = dict(
-                label=str(origin),
-                method="update",
-                args=[
-                    {"visible": visibility_array},
-                    {
-                        "shapes": shapes,
-                        "annotations": annotations,
-                        "title.text": f'Clonal Expansion Status: {subject} ({origin})',
-                        "xaxis.categoryarray": plot_df['Sample'].tolist()
-                    }
-                ]
-            )
-            buttons.append(button)
-
-            if is_first:
-                initial_shapes = shapes
-                initial_annotations = annotations
-                initial_title = f'Clonal Expansion Status: {subject} ({origin})'
-                initial_x_array = plot_df['Sample'].tolist()
-
-        # Layout Setup
-        layout_dict = dict(
-            barmode='stack',
-            title=initial_title,
-            xaxis=dict(
-                title='Sample', tickangle=-90, tickfont=dict(size=10),
-                categoryorder='array', categoryarray=initial_x_array
-            ),
-            yaxis=dict(title='Percentage of Clones (%)', range=[0, 100]),
-            yaxis2=dict(
-                title='Total Counts (Depth)', overlaying='y',
-                side='right', showgrid=False, type='log'
-            ),
-            legend=dict(x=1.15, y=1),
-            margin=dict(r=150, t=100), 
-            font=dict(size=12),
-            plot_bgcolor='white', paper_bgcolor='white',
-            shapes=initial_shapes,
-            annotations=initial_annotations
-        )
-
-        if len(processed_origins) > 1:
-            layout_dict['updatemenus'] = [dict(
-                active=0,
-                buttons=buttons,
-                x=0.0,          
-                xanchor="left",
-                y=1.15,
-                yanchor="top",
-                pad={"r": 10, "t": 10}
-            )]
-            layout_dict['margin']['t'] = 120 
-
-        fig.update_layout(**layout_dict)
-        fig.update_traces(textfont_size=11)
-        fig.show()
-
-        print("\n\n")
-
+        for cat in FREQ_CATS:
+            s = d[d['category'] == cat]
+            if s.empty:
+                continue
+            fig.add_trace(go.Bar(
+                x=s[alias_col], y=s['frac'], name=cat, marker_color=FREQ_COLORS[cat],
+                text=[f"{a}<br>{cat}: {f:.1%} of clones ({int(n):,} of {int(nt):,})<br>total counts {int(r):,}"
+                      for a, f, n, nt, r in zip(s[alias_col], s['frac'], s['clones'], s['total_clones'], s['total_reads'])],
+                textposition='none', hovertemplate='%{text}<extra></extra>'))
+        # Sequencing depth on a log axis on the right, with the reliability threshold.
+        depth = d.drop_duplicates('sample')
+        fig.add_trace(go.Scatter(x=depth[alias_col], y=depth['total_reads'], yaxis='y2',
+                                 mode='lines+markers', name='Total counts (depth)',
+                                 line=dict(color='black', width=2, dash='dot'),
+                                 marker=dict(size=8, color='black'),
+                                 text=[f"{a}<br>total counts {int(r):,}" for a, r in zip(depth[alias_col], depth['total_reads'])],
+                                 hovertemplate='%{text}<extra></extra>'))
+        # The threshold across the whole plot, plus an empty trace so that the legend names it.
+        fig.add_shape(type='line', xref='x domain', x0=0, x1=1, yref='y2', y0=DEPTH_MIN, y1=DEPTH_MIN,
+                      line=dict(color='#de2d26', width=2, dash='dot'))
+        fig.add_trace(go.Scatter(x=[None], y=[None], yaxis='y2', mode='lines',
+                                 name=f"{DEPTH_MIN:,}-count threshold",
+                                 line=dict(color='#de2d26', width=2, dash='dot')))
+        # Depth axis from a decade below the smallest value (or the threshold) to a decade above the largest.
+        lo = np.floor(np.log10(max(1, min(depth['total_reads'].min(), DEPTH_MIN))))
+        hi = np.ceil(np.log10(max(depth['total_reads'].max(), DEPTH_MIN) * 1.5))
+        fig.update_layout(
+            barmode='stack', title=dict(text=f"Clonal frequency categories: {subject}", x=0, xanchor='left'),
+            height=480, width=70 * len(order) + 420 if len(order) > 8 else None,
+            margin=dict(l=70, r=220, t=60, b=110),
+            xaxis=dict(title='', type='category', categoryorder='array', categoryarray=order, tickangle=-45),
+            yaxis=dict(title="Fraction of the sample's clones", tickformat='.0%', range=[0, 1]),
+            yaxis2=dict(title='Total counts (depth, log scale)', overlaying='y', side='right', type='log',
+                        range=[lo, hi], dtick=1, tickformat=',.0f', showgrid=False),
+            legend=dict(orientation='v', x=1, xref='container', xanchor='right', y=1, yanchor='top',
+                        title=dict(text='Clone frequency'),
+                        traceorder='normal'))
+        rt_show_wide(fig)
     print(":::\n")
 
-# --- Generate Plot ---
-# Make sure your timepoint order variable is passed here
+
 create_expansion_stacked_barplot_per_individual(
-    concat_df, 
-    subject_col=subject_col, 
-    origin_col='origin', 
+    concat_df,
+    subject_col=subject_col,
+    origin_col='origin',
     timepoint_order_col=timepoint_order_col
 )
 
 ```
 
-**Figure 1. Clonal Expansion Categories Relative to Sequencing Depth.** This stacked bar chart illustrates the percentage of clones categorized as non-Frequent, Frequent, or highly Frequent for each sample. The overlaid black dotted line tracks the total sequencing read count on a secondary axis, highlighting the influence of sampling depth and the detection of Frequent clones. A vertical red threshold line ($>3,000$ counts) demarcates samples with sufficient data for reliable clonality assessment from low-depth libraries where expansion metrics may be unstable.
+**Figure `{python} fig_no()`. Clonal expansion categories relative to sequencing depth.** One vertical bar per sample (labelled by its alias), ordered by compartment and then timepoint from the left; each bar sums to 100% of the sample's clones, split into non-frequent (< 0.1% of counts, grey), frequent (0.1–1%, blue) and highly frequent (> 1%, red) clones. The black dotted line and markers give the sample's total counts (sequencing reads, or cells for single-cell data) on the log axis at the right; the red dotted line marks 3,000 counts, below which the categories are unreliable (see the warning below). Hover a segment for the clone count.
 
+:::: {.callout-note title="More detail: what each category means" collapse="true"}
 **<u>Understanding Each Category</u>**
 
 **Highly Frequent Clones (> 1%)**
@@ -335,24 +216,27 @@ create_expansion_stacked_barplot_per_individual(
 - What they are: This category represents the vast diversity of the TCR repertoire. It includes the massive pool of naïve T-cells waiting for an antigen and the wide variety of memory cells from past immune encounters.
 
 - Biological Insight: A large "Non-Frequent" portion indicates a highly diverse, or polyclonal, repertoire. This is the hallmark of a healthy, resting immune system with the potential to respond to a vast array of future threats. It is your immunological "reservoir."
+::::
 
 ::: {.callout-warning title="Be mindful about Sequencing Depth"}
 The classification of "Non-Frequent" clones (frequency < 0.1%) is mathematically impossible in samples with fewer than 1,000 total counts, as the minimum detectable frequency (a single clone) exceeds the 0.1% threshold (1/900 = 0.11%). Consequently, low-depth samples will artificially appear entirely "Frequent" or "Highly Frequent." For robust interpretation of the "Non-expanded" category, a minimum depth of 3,000 counts is required; any sample below 1,000 counts should be considered technically insufficient for this analysis.
 :::
 
+:::: {.callout-note title="More detail: comparing timepoints within a patient" collapse="true"}
 **<u>Comparing timepoint samples within Patients</u>**
+
 The real power of this plot comes from comparing samples, such as before (Pre) and after (Post) a treatment or vaccination.
 
-Look for a shift towards "Highly Frequent": If the blue "Highly Frequent" bar grows significantly from the "Pre" to the "Post" sample, it strongly suggests a successful immune response was mounted. The specific T-cells recognizing the target antigen (e.g., from a vaccine or tumor) have proliferated dramatically.
+Look for a shift towards "Highly Frequent": If the red "Highly Frequent" segment grows significantly from the "Pre" to the "Post" sample, it strongly suggests a successful immune response was mounted. The specific T-cells recognizing the target antigen (e.g., from a vaccine or tumor) have proliferated dramatically.
 
 Look for a return to diversity: If a sample starts with a large "Highly Frequent" portion (e.g., during an infection) and then shifts towards a larger "Non-Frequent" portion at a later timepoint, it can signify the contraction phase of an immune response. The dominant clones recede after clearing the antigen, and the repertoire returns to a more diverse, homeostatic state.
 
 By analyzing the changing proportions of these categories, you can build a powerful narrative about how the immune system is responding to disease, vaccination, or therapy.
+::::
 
+## Clonal expansion {#sec-expansion}
 
-## Clonal Expansion  {#sec-expansion}
-
-### Clone size Distribution
+### Clone size distribution
 
 This table is useful because it reveals the identities of the dominant clones driving the immune response in each sample. By listing the most highly expanded T-cell receptors, **you can pinpoint the specific "effector" cells that have expanded most, likely in response to a key antigen from a tumor or pathogen.** Having their precise sequences allows you to track these key clones over time, compare them across different patients to find shared public clones, and provides the necessary information for downstream functional studies to determine their antigen specificity.
 
@@ -362,120 +246,37 @@ This table is useful because it reveals the identities of the dominant clones dr
 
 
 def create_top_clones_tables_by_patient(df, n_clones=15):
-    """
-    Generates Quarto tabs per patient, containing an interactive Plotly table.
-    The dropdown menu navigates between timepoints for that specific patient.
-    """
-    
-    # Start Quarto tabset
+    """One tab per patient, one sub-tab per sample (by compartment and timepoint): the sample's
+    largest clones in the Master Summary's table style."""
+    cols = {'junction_aa': 'CDR3β', 'v_call': 'V gene', 'j_call': 'J gene', 'duplicate_count': 'Counts'}
     print("::: {.panel-tabset}\n")
-
-    # Ensure we iterate through patients logically
-    unique_patients = sorted(df[subject_col].dropna().unique())
-
-    for pat in unique_patients:
+    for pat in sorted(df[subject_col].dropna().unique()):
         print(f"## {pat}\n")
-
-        # Isolate data for this specific patient
-        pat_df = df[df[subject_col] == pat].copy()
-        
-        # We assume timepoint_order exists to keep the dropdown chronological. 
-        # If not, it falls back to alphabetical sorting of the timepoint strings.
-        if timepoint_order_col in pat_df.columns:
-            unique_timepoints = pat_df.sort_values(timepoint_order_col)[timepoint_col].unique()
-        else:
-            unique_timepoints = sorted(pat_df[timepoint_col].dropna().unique())
-
-        fig = go.Figure()
-        buttons = []
-
-        # Build a table trace for each timepoint
-        for i, tp in enumerate(unique_timepoints):
-            tp_df = pat_df[pat_df[timepoint_col] == tp].copy()
-            tp_df = tp_df[tp_df['duplicate_count'] > 0]
-
-            if tp_df.empty:
-                continue
-
-            # Grab the top clones
-            top_n_clones = tp_df.nlargest(n_clones, 'duplicate_count')
-
-            # Safely extract columns (avoids KeyErrors if TRBV/TRBJ are missing in some runs)
-            cols_to_show = ['junction_aa', 'v_call', 'j_call', 'duplicate_count']
-            available_cols = [c for c in cols_to_show if c in top_n_clones.columns]
-            display_df = top_n_clones[available_cols].copy()
-            
-            # Clean up headers for display
-            display_df.columns = [c.capitalize() if c == 'duplicate_count' else c for c in display_df.columns]
-
-            fig.add_trace(
-                go.Table(
-                    header=dict(values=list(display_df.columns),
-                                fill_color='paleturquoise',
-                                align='left',
-                                font=dict(size=12, color='black')),
-                    cells=dict(values=[display_df[col] for col in display_df.columns],
-                               fill_color='lavender',
-                               align='left',
-                               font=dict(size=11, color='black')),
-                    name=str(tp),
-                    visible=(i == 0) # Only render the first timepoint initially
-                )
-            )
-
-        # If the patient had no valid data > 0 across any timepoint, skip plotting
-        if not fig.data:
+        pat_df = df[(df[subject_col] == pat) & (df['duplicate_count'] > 0)].copy()
+        pat_df['_r'] = pd.to_numeric(pat_df[timepoint_order_col].astype(str), errors='coerce')
+        samples = (pat_df.drop_duplicates('sample').sort_values(['origin', '_r', alias_col])['sample'].tolist())
+        if not samples:
             print(f"*(No clonal data available for {pat})*\n\n")
             continue
-
-        # Build dropdown logic
-        for trace in fig.data:
-            tp_name = trace.name
-            visibility_mask = [tr.name == tp_name for tr in fig.data]
-            
-            button = dict(
-                label=tp_name, # Dropdown shows Timepoint
-                method="restyle",
-                args=[
-                    {"visible": visibility_mask},
-                    {"title.text": f"Top {n_clones} Expanded Clones: {pat}"}
-                ]
-            )
-            buttons.append(button)
-
-        first_tp = fig.data[0].name
-
-        fig.update_layout(
-            updatemenus=[
-                dict(
-                    active=0,
-                    buttons=buttons,
-                    direction="down",
-                    pad={"r": 10, "t": 10},
-                    showactive=True,
-                    x=0.0, # Aligned to the left for cleaner layout
-                    xanchor="left",
-                    y=1.15,
-                    yanchor="top"
-                )
-            ],
-            title_text=f"Top {n_clones} Expanded Clones: {pat}",
-            font=dict(size=12),
-            margin=dict(t=100, b=20, l=10, r=10), # Added top margin so dropdown doesn't clip title
-            height=400 # Constrain height so the table doesn't consume the entire screen
-        )
-
-        fig.show()
-        print("\n\n")
-
-    # End Quarto tabset
+        print("::: {.panel-tabset}\n")
+        for s in samples:
+            sd = pat_df[pat_df['sample'] == s]
+            alias = str(sd[alias_col].iloc[0])
+            print(f"### {alias}\n")
+            top = sd.nlargest(n_clones, 'duplicate_count')
+            show = top[[c for c in cols if c in top.columns]].rename(columns=cols)
+            show['Frequency'] = top['duplicate_count'] / sd['duplicate_count'].sum()
+            display(rt_table(show, title=f"{alias}: top {n_clones} clones ({len(sd):,} clones in the sample)",
+                             max_height='520px', formatter={'Frequency': '{:.2%}', 'Counts': '{:,.0f}'}))
+            print("\n")
+        print(":::\n")
     print(":::\n")
 
-# --- Run ---
+
 create_top_clones_tables_by_patient(concat_df, n_clones=15)
 
 ```
-**Table 1. Top 15 most expanded TCR clones** TCRs are rearranged decreasingly based on the "Counts" column.
+**Table `{python} tab_no()`. Top 15 most expanded TCR clones per sample.** One tab per patient and, within it, one per sample (compartment, then timepoint). Clones are ordered by their counts (reads for bulk data, cells for single-cell data); *Frequency* is the clone's share of the sample's counts. The same CDR3β appearing at the top of several timepoints of a patient is a persistent dominant clone; one that appears only at a later timepoint is a newly expanded clone worth following in the **Details: Comparison** report.
 
 
 **Visualizing the clone size distribution provides an intuitive snapshot of the repertoire's entire structure.** This plot reveals the balance between the vast number of rare clones (the "tail") and the few highly expanded clones (the "head") that often drive an immune response. A distribution heavily skewed to the left with a short tail signifies a diverse, polyclonal repertoire with many different rare T-cells. In contrast, a distribution with a long, heavy tail extending to the right is a clear visual indicator of an oligoclonal repertoire, dominated by large, expanded clones. This allows for a quick, qualitative assessment of a sample's clonality and diversity, complementing more quantitative summary metrics.
@@ -709,225 +510,30 @@ def create_violin_with_heatmap_inset(df, meta_df, origin_col='origin'):
             categoryorder='array', categoryarray=initial_x_array
         )
 
-        fig.show()
-        print("\n")
+        rt_show_wide(fig)
 
     print(":::\n")
 
 # --- Run ---
-# Example of running it (make sure your global columns are defined)
 create_violin_with_heatmap_inset(concat_df, meta, origin_col='origin')
 
 ```
 
-**Figure 2. Clone Density** Violin plots showing the number of sequencing counts (y-axis; log-scale) across all samples (x-axis). A value around 0 in the x-axis, represents clones that are non-expanded.
+**Figure `{python} fig_no()`. Clone size distribution.** Left: one violin per sample of a patient, showing the distribution of clone sizes (counts per clone: reads for bulk data, cells for single-cell data) on a log10 scale; the width of a violin at a given height is the share of clones of that size. Right: the pairwise comparison heatmap, where darker cells mark pairs of samples whose distributions differ more significantly (Mann-Whitney test). Values near 0 (one count) are unexpanded clones; a long upper tail marks a few large, expanded clones. The figure is wider than the page: scroll sideways inside the box to see the heatmap.
 
-## Gene Family usage {#sec-gene-family-usage}
-### V Gene Family usage
+{{< include ./_sample_gene_usage.qmd >}}
 
-**V (Variable), D (Diversity), and J (Joining) genes are the genetic building blocks a T-cell uses to construct a unique T-cell receptor (TCR) through a "mix-and-match" process called V(D)J recombination**. To create the immense diversity needed to recognize countless potential threats, each developing T-cell randomly selects and permanently stitches together one V, one D (for the beta chain only), and one J gene segment from a large genetic library. This process creates a single, unique TCR gene for that cell, with the most critical, hypervariable region known as the CDR3 being formed at the junction where these segments meet, which is the part that directly binds to antigens. 🧬
-
-The V gene family usage of the TCRs in each sample is shown in the plots below. The x-axis shows the timepoint collected for each individual, and the y-axis shows the proportion of TCRs that use each V gene family.
-The V gene usage proportion, $V_k$, is calculated via:
-
-$$
-V_k = \frac {N_{k}} {T} \quad\text{,}\quad T = \sum\limits_{i=1}^N p_i
-$$
-
-where $N_{k}$ is the number of TCRs that use the $k$ th V gene, and T is the total number of TCRs in the sample.
-
-```{python}
-
-def prepare_data(df, gene_type):
-    """
-    Transforms the raw data frame into a long format with proportions.
-    Generic for any gene type ('v', 'j', etc.).
-    """
-    gene_col = f'{gene_type}_gene'
-    total_col = f'total_{gene_type}_genes'
-    geneName = 'TRBV' if gene_type == 'v' else 'TRBJ'
-
-    TRB_gene_cols=df.columns.str.startswith(geneName)
-    df_long = pd.melt(df, id_vars=[subject_col]+id_vars,
-                      value_vars=df.columns[TRB_gene_cols].tolist(), var_name=gene_col, value_name='count')
-
-    # Calculate proportions
-    df_long['proportion'] = df_long.groupby([subject_col, timepoint_col])['count'].transform(lambda x: x / x.sum() if x.sum() > 0 else 0)
-
-    # Calculate total counts for hover text
-    total_counts = df_long.groupby([subject_col, timepoint_col])['count'].sum().reset_index() \
-                       .rename(columns={'count': total_col})
-
-    # Merge total counts back
-    df_long = pd.merge(df_long, total_counts, on=[subject_col, timepoint_col])
-    return df_long
-
-def create_vj_navigation_plot(df, patient_list, gene_type):
-    """
-    Creates an interactive Plotly figure with a dropdown menu.
-    Generic for any gene type.
-    """
-    gene_col = f'{gene_type}_gene'
-    total_col = f'total_{gene_type}_genes'
-
-    if df.empty or not patient_list:
-        return go.Figure().update_layout(title_text="No data to display.")
-
-    fig = go.Figure()
-    all_genes = sorted(df[gene_col].unique())
-    colors = px.colors.qualitative.Plotly
-    color_map = {gene: colors[i % len(colors)] for i, gene in enumerate(all_genes)}
-
-    # Loop to add traces for each patient and gene
-    for i, patient in enumerate(patient_list):
-        patient_df = df[df[subject_col] == patient]
-        for gene in all_genes:
-            plot_df = patient_df[patient_df[gene_col] == gene]
-            if plot_df.empty:
-                timepoints = sorted(patient_df[timepoint_col].unique())
-                # Ensure we get the correct total counts for each timepoint
-                totals = [patient_df[patient_df.timepoint == tp][total_col].iloc[0] if not patient_df[patient_df.timepoint == tp].empty else 0 for tp in timepoints]
-                plot_df = pd.DataFrame({
-                    timepoint_col: timepoints,
-                    'proportion': [0] * len(timepoints),
-                    total_col: totals
-                })
-
-            fig.add_trace(go.Bar(
-                x=plot_df[timepoint_col], y=plot_df['proportion'], name=gene,
-                marker_color=color_map.get(gene), visible=(i == 0),
-                text=plot_df[total_col] if gene == all_genes[0] else None,
-                textposition='outside', hoverinfo='x+y+name',
-                legendgroup=gene,
-                showlegend=(i == 0)
-            ))
-
-    # Create dropdown buttons
-    buttons = []
-    num_genes = len(all_genes)
-    for i, patient in enumerate(patient_list):
-        visibility = [False] * (len(patient_list) * num_genes)
-        start_index = i * num_genes
-        end_index = (i + 1) * num_genes
-        visibility[start_index:end_index] = [True] * num_genes
-        button = dict(
-            method="restyle",
-            args=[{"visible": visibility}, {"title.text": f"Patient: {patient}"}],
-            label=patient
-        )
-        buttons.append(button)
-
-    fig.update_layout(
-        template="simple_white",
-        title_text=f"Patient: {patient_list[0]}",
-        xaxis_title="Timepoint",
-        yaxis_title="Proportion",
-        yaxis=dict(range=[0, 1.15]),
-        barmode="stack",
-        legend=dict(
-            orientation="v", x=1.02, xanchor="left",
-            y=0.5, yanchor="middle",
-            title=f"<b>{gene_type.upper()}-Gene</b>" # Dynamic legend title
-        ),
-        updatemenus=[
-            dict(
-                active=0, buttons=buttons, direction="down",
-                pad={"r": 10, "t": 10}, showactive=True,
-                x=1.0, xanchor="right", y=1.19, yanchor="top"
-            )
-        ]
-    )
-    return fig
-
-```
-
-```{python}
-# Prepare the V-gene data
-v_family_long = prepare_data(v_family, 'v')
-
-# Split into groups
-v_timepoint_counts = v_family_long.groupby(subject_col)[timepoint_col].nunique()
-v_single_tp_patients = v_timepoint_counts[v_timepoint_counts == 1].index.tolist()
-v_multi_tp_patients = v_timepoint_counts[v_timepoint_counts > 1].index.tolist()
-
-v_df_single = v_family_long[v_family_long[subject_col].isin(v_single_tp_patients)]
-v_df_multi = v_family_long[v_family_long[subject_col].isin(v_multi_tp_patients)]
-```
-
-::: {.panel-tabset}
-## Multiple Timepoints
-```{python}
-# Display plot for the MULTIPLE timepoints tab.
-
-if not v_df_multi.empty:
-  fig_v_multi = create_vj_navigation_plot(v_df_multi, v_multi_tp_patients, 'v')
-  fig_v_multi.show()
-else:
-  print("No patients with multiple timepoints found for V-genes.")
-
-```
-## Single Timepoint
-```{python}
-# Display plot for the SINGLE timepoint tab.
-if not v_df_single.empty:
-  fig_single = create_vj_navigation_plot(v_df_single, v_single_tp_patients, 'v')
-  fig_single.show()
-else:
-  print("No patients with a single timepoint found.")
-```
-:::
-**Figure 6. TRBV gene usage** Stacked barplot showing gene proportion (y-axis) at a given sample (x-axis). Samples containing multiple timepoints are shown side-by-side to facilitate comparisons.
-
-
-**Use this visualization to detect biased gene usage, which is a strong indicator of a significant, antigen-driven immune response.**
-When T-cells responding to a specific antigen proliferate, the V and J genes they are built from will naturally increase in proportion to all other genes in the repertoire. Comparing the usage profiles between two timepoints is the most powerful application of this chart.
-Look for significant changes: A bar that dramatically increases in height from one timepoint to the next indicates that an immune response involving T-cells from that specific gene family has been initiated or has expanded.
-*Example scenario:*
-If you observe that the usage of the TRBV7-9 gene increases from 4% in a pre-treatment sample to 35% in a post-treatment sample, this provides strong evidence of a treatment-induced response driven by T-cells that utilize the TRBV7-9 gene segment.
-
-### J Gene Family usage
-
-Likewise, we can visualize the TRB J gene usage.
-
-```{python}
-# Prepare J-gene data using the reusable function
-j_family_long = prepare_data(j_family, 'j')
-
-# Split into groups
-j_timepoint_counts = j_family_long.groupby(subject_col)[timepoint_col].nunique()
-j_single_tp_patients = j_timepoint_counts[j_timepoint_counts == 1].index.tolist()
-j_multi_tp_patients = j_timepoint_counts[j_timepoint_counts > 1].index.tolist()
-
-j_df_single = j_family_long[j_family_long[subject_col].isin(j_single_tp_patients)]
-j_df_multi = j_family_long[j_family_long[subject_col].isin(j_multi_tp_patients)]
-```
-
-::: {.panel-tabset}
-## Multiple Timepoints
-```{python}
-# Display plot for the MULTIPLE timepoints tab.
-if not j_df_multi.empty:
-  fig_j_multi = create_vj_navigation_plot(j_df_multi, j_multi_tp_patients, 'j')
-  fig_j_multi.show()
-else:
-  print("No patients with multiple timepoints found for J-genes.")
-
-```
-## Single Timepoint
-```{python}
-# Display plot for the SINGLE timepoint tab.
-if not j_df_single.empty:
-  fig_single = create_vj_navigation_plot(j_df_single, j_single_tp_patients, 'j')
-  fig_single.show()
-else:
-  print("No patients with a single timepoint found.")
-```
-:::
-**Figure 7. TRBV gene usage** Stacked barplot showing gene proportion (y-axis) at a given sample (x-axis). Samples containing multiple timepoints are shown side-by-side to facilitate comparisons.
+{{< include ./_sample_clonal_structure.qmd >}}
 
 # TCR Sequence Generation {#sec-cdr3_generation}
 
 ## TCR Convergence {#sec-convergence}
+
+::: {.callout-tip title="In short" appearance="simple"}
+- **What it shows:** how often one CDR3 amino-acid sequence is encoded by several different nucleotide sequences, first raw, then as a share of TCRs, then corrected for depth (observed/expected ratio).
+- **Why it matters:** independent clones converging on the same receptor point to selection by a common antigen.
+- **How to read it:** raw counts mostly track depth (the depth-bias scatter), so compare samples with the depth-normalised O/E ratio (the last convergence figure): above 1 means more convergence than chance; below 1 means no evidence of selection.
+:::
 
 **<u>What is TCR Convergence?</u>**  
 TCR convergence describes the **phenomenon where different T-cell precursors**, through the random V(D)J recombination process, **independently generate T-cell receptors that have identical amino acid sequences but are encoded by different nucleotide (DNA) sequences.**
@@ -951,6 +557,23 @@ You expect to see a strong positive correlation. Samples with higher sequencing 
 
 files = glob.glob(os.path.join(convergence_dir, '*_tcr_convergence.tsv'))
 
+
+def _convergence_metrics(sample_id, convergence):
+    """Raw events and the O/E ratio from the number of distinct nucleotide sequences per CDR3 aa."""
+    convergence = pd.Series(convergence)
+    M = convergence.sum()   # Total NT
+    R = len(convergence)    # Unique AA
+    num_convergent_aa = np.sum(convergence >= 2)
+    observed_frac = num_convergent_aa / R if R > 0 else 0
+    if R > 1 and M > 0:
+        w = 1.0 / R
+        expected_frac = 1.0 - (1.0 - w) ** M - M * w * ((1.0 - w) ** (M - 1))
+    else:
+        expected_frac = np.nan
+    return {'sample': sample_id, 'M_total_nt': M, 'raw_events': M - R,
+            'convergence_OE_ratio': observed_frac / expected_frac if expected_frac > 0 else np.nan}
+
+
 conv_data = []
 for f in files:
     filename = os.path.basename(f)
@@ -966,38 +589,30 @@ for f in files:
 
     try:
         temp_df = pd.read_csv(f, sep='\t')
-
-        # Metrics
-        M = temp_df['convergence'].sum() # Total NT
-        R = len(temp_df)                 # Unique AA
-        raw_events = M - R               # Raw Convergence
-
-        # Null Model (O/E)
-        num_convergent_aa = np.sum(temp_df['convergence'] >= 2)
-        observed_frac = num_convergent_aa / R if R > 0 else 0
-
-        if R > 1 and M > 0:
-            w = 1.0 / R
-            prob_0 = (1.0 - w) ** M
-            prob_1 = M * w * ((1.0 - w) ** (M - 1))
-            expected_frac = 1.0 - prob_0 - prob_1
-        else:
-            expected_frac = np.nan
-
-        oe_ratio = observed_frac / expected_frac if (expected_frac > 0) else np.nan
-
-        conv_data.append({
-            'sample': sample_id,
-            'M_total_nt': M,
-            'raw_events': raw_events,
-            'convergence_OE_ratio': oe_ratio
-        })
+        conv_data.append(_convergence_metrics(sample_id, temp_df['convergence']))
 
     except Exception as e:
         print(f"Error reading {sample_id}: {e}")
 
-# Merge with Metadata
 conv_df = pd.DataFrame(conv_data)
+
+# Single-cell pseudobulk carries no nucleotide CDR3, so its convergence files are all zero. The
+# QC-passed contigs of the VDJ QC do: count distinct TRB nucleotide CDR3s per CDR3β there.
+if rb_is_sc and (conv_df.empty or (conv_df['raw_events'].fillna(0) <= 0).all()):
+    _ct = rb_read('vdj_qc', 'cdr3_lengths_all.tsv')
+    if _ct is not None and {'sample', 'chain', 'cdr3', 'cdr3_nt'} <= set(_ct.columns):
+        _ct = _ct[(_ct['chain'] == 'TRB') & _ct['cdr3'].notna() & _ct['cdr3_nt'].notna()]
+        if 'productive' in _ct.columns:
+            _ct = _ct[_ct['productive'].astype(str).str.upper().isin(['TRUE', 'T', '1'])]
+        conv_df = pd.DataFrame([_convergence_metrics(s, g.groupby('cdr3')['cdr3_nt'].nunique())
+                                for s, g in _ct.groupby('sample')])
+        if not conv_df.empty:
+            print("::: {.callout-note appearance=\"simple\"}\nSingle-cell data: convergence is computed from "
+                  "the QC-passed TRB contigs (distinct nucleotide CDR3s per CDR3β amino-acid sequence in each "
+                  "sample). Cells of one clone share a nucleotide sequence, so only independent clones "
+                  "encoding the same CDR3β count as convergent.\n:::\n")
+
+# Merge with Metadata
 merged_df = pd.merge(conv_df, meta, on='sample', how='inner')
 
 # ==============================================================================
@@ -1104,9 +719,11 @@ for i, col in enumerate(group_opts):
 print(":::\n")
 
 ```
-**Figure 4. Sequencing Depth Bias in TCR Convergence**. This scatter plot correlates the total number of nucleotide clonotypes (sequencing depth) with the raw count of convergent events (multiple nucleotide sequences encoding the same amino acid CDR3). A strong positive correlation confirms that observed convergence is highly dependent on sampling effort, as deeper sequencing increases the probability of detecting random collisions.
+**Figure `{python} fig_no()`. Sequencing depth bias in TCR convergence.** One point per sample: the total number of distinct nucleotide CDR3 sequences (a proxy for sequencing depth and diversity, x-axis) against the raw number of convergence events, i.e. extra nucleotide sequences encoding an already-seen CDR3 amino-acid sequence (y-axis). The red dashed line is the linear fit across samples, with its Pearson correlation and p-value in the annotation. Points close to the line owe their convergence to depth; a point well above it has more convergence than its depth predicts and is worth checking in the O/E figure below.
 
 **<u>Solution 1: Look at the proportion of convergent TCRs</u>**
+
+Dividing the convergent count by the number of TCRs in the sample removes part of the depth effect.
 ```{python}
 #| output: asis
 #| echo: false
@@ -1425,11 +1042,12 @@ else:
     
 ```
 
-**Figure 3. TCR Convergence** The ratio of convergent TCRs to total TCRs. A convergent TCR is a TCR that is generated via 2 or more unique nucleotide sequences via codon degeneracy.
+**Figure `{python} fig_no()`. TCR convergence.** The share of each sample's CDR3 amino-acid sequences that are convergent, i.e. encoded by two or more distinct nucleotide sequences (codon degeneracy), grouped by the metadata variable of each tab, or by timepoint within a patient. Higher values point to selection of the same receptor by several independent clones, but this raw ratio still grows with depth: compare samples of similar depth, or use the O/E ratio below.
 
 **<u>Solution 2: Depth-Normalized O/E Ratio</u>**
 To eliminate this bias, we move from raw counts to a probabilistic model. We use a "Multinomial Occupancy Model" to calculate an Observed/Expected (O/E) Ratio. This ratio normalizes for depth. A deep library has a higher "Expected" value, so its denominator increases, canceling out the inflation in the "Observed" numerator.
 
+:::: {.callout-note title="More detail: how the expected convergence is computed" collapse="true"}
 - **Observed (O):** The actual fraction of amino acid clonotypes in your sample that are convergent (encoded by $\ge 2$ nucleotide sequences).
 - **Expected (E):** The probability that 2 or more nucleotide sequences would "collide" $P(\ge 2)$ and form the same amino acid purely by chance, given the exact size (depth) and diversity of that specific library.
     - **Multinomial Occupancy Model (Balls and Bins problem):**
@@ -1440,6 +1058,7 @@ To eliminate this bias, we move from raw counts to a probabilistic model. We use
         - **Probability of Singleton:** The chance it gets exactly one nucleotide sequence (no convergence) is $P(\text{1}) = M \cdot w \cdot (1 - w)^{M-1}$
         - **Probability of Convergence:** The chance it gets two or more (The "Collision") is $P(\ge 2) = 1 - P(\text{0}) - P(\text{1})$
         Where $w$ is the probability of hitting a specific bin, estimated as $1/R$ for a uniform null.
+::::
 
 ```{python}
 #| output: asis
@@ -1558,9 +1177,10 @@ for i, col in enumerate(group_opts):
 print(":::\n")
 ```
 
-**Figure 5. Depth-Normalized Assessment of Biological Convergence.** This  plot displays the Observed/Expected (O/E) convergence ratio for each sample, grouped by metadata variables. The red dashed line at $y=1.0$ represents the null expectation where observed convergence equals that predicted by random chance given the sample's depth and diversity. Values significantly above 1.0 would indicate biological selection pressure, while the observed values below 1.0 suggest that the convergence in these samples does not exceed random statistical expectations.
+**Figure `{python} fig_no()`. Depth-normalised assessment of biological convergence.** The observed/expected (O/E) convergence ratio of each sample, grouped by metadata variables: the observed share of convergent CDR3s divided by the share expected by chance for the sample's number of distinct nucleotide and amino-acid sequences. The red dashed line at 1.0 is the null expectation. Values above 1 indicate more convergence than random recombination explains, i.e. antigen-driven selection of the same receptor by independent clones; values at or below 1 give no evidence of selection. Stars mark significant differences between groups.
 
 
+:::: {.callout-note title="More detail: interpreting the O/E ratio and its limits" collapse="true"}
 **<u>Interpretation</u>**
 The Signal vs. The Noise: The O/E Ratio ($y$-axis on Plot 2) isolates biological selection pressure from statistical chance.
 
@@ -1577,10 +1197,13 @@ The Signal vs. The Noise: The O/E Ratio ($y$-axis on Plot 2) isolates biological
 
 - In samples with extremely low diversity ($R < 100$ clones), the "Expected" probability calculation can become unstable or noisy. Interpret extremely high O/E ratios in very small libraries with caution.
 - In highly oligoclonal samples (e.g., TILs dominated by 1-2 massive clones), the "Effective" diversity is low. The model accounts for this, but extreme dominance can mask rarer convergent events in the tail of the distribution.
+::::
 
 ## TCR generation probabilities {#sec-olga}
 
 Calculating these probabilities in bulk TCR-seq data is valuable because **it provides a baseline understanding of the "expected" frequency of each TCR**. By comparing observed TCR frequencies against their generation probabilities, it is easier to identify TCRs that are "overrepresented" (clonally expanded) due to an immune response (e.g., to infection or cancer) rather than just being common due to biases in the generation process itself. This helps distinguish antigen-driven selection from inherent generation biases, offering clearer insights into immune repertoire dynamics and responses.
+
+{{< include ./_violin_heatmap.qmd >}}
 
 ```{python}
 #| output: asis
@@ -1591,175 +1214,6 @@ import glob
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-
-def _pairwise_significance_matrix(data, x_col, value_col, categories):
-    """Pairwise Mann-Whitney U significance between categories of `x_col`,
-    comparing `value_col`. Groups once instead of re-filtering the full
-    dataframe for every (i, j) pair, which matters once `data` has many rows.
-    Shared by create_pgen_tabs and create_distance_tabs_with_heatmap."""
-    groups = {cat: vals for cat, vals in data.groupby(x_col)[value_col]}
-    n = len(categories)
-    p_matrix = np.full((n, n), np.nan)
-    text_matrix = np.full((n, n), "", dtype=object)
-
-    for i, c1 in enumerate(categories):
-        g1 = groups.get(c1)
-        if g1 is None or len(g1) < 2:
-            continue
-        for j, c2 in enumerate(categories):
-            if i <= j:
-                continue
-            g2 = groups.get(c2)
-            if g2 is None or len(g2) < 2:
-                continue
-            try:
-                _, p = mannwhitneyu(g1, g2, alternative='two-sided')
-            except ValueError:
-                continue
-            p_matrix[i, j] = -np.log10(p + 1e-300)
-            if p < 0.0001: star = "****"
-            elif p < 0.001: star = "***"
-            elif p < 0.01: star = "**"
-            elif p < 0.05: star = "*"
-            else: star = ""
-            text_matrix[i, j] = star
-
-    return p_matrix, text_matrix
-
-
-def _violin_with_heatmap_figure(data, x_col, value_col, title, trace_name, axis_label, name_prefix, x_order=None):
-    """Violin plot of `value_col` by `x_col`, with a pairwise-significance
-    heatmap inset. Shared by create_pgen_tabs and
-    create_distance_tabs_with_heatmap (identical except for which column/
-    labels they plot)."""
-    unique_cats = data[x_col].unique()
-    unique_cats = [x for x in x_order if x in unique_cats] if x_order else sorted(unique_cats)
-
-    p_matrix, text_matrix = _pairwise_significance_matrix(data, x_col, value_col, unique_cats)
-
-    fig = make_subplots(
-        rows=1, cols=2, column_widths=[0.6, 0.4], horizontal_spacing=0.15,
-        specs=[[{"type": "xy"}, {"type": "heatmap"}]]
-    )
-    fig.add_trace(
-        go.Violin(
-            x=data[x_col], y=data[value_col], box_visible=True, points=False,
-            line_color='#1f77b4', opacity=0.6, name=trace_name, showlegend=False,
-            width=0.7, spanmode='hard'
-        ), row=1, col=1
-    )
-    fig.add_trace(
-        go.Heatmap(
-            z=p_matrix, x=unique_cats, y=unique_cats, text=text_matrix,
-            texttemplate="%{text}", textfont={"size": 8}, colorscale="Reds",
-            zmin=0, zmax=5, showscale=True,
-            colorbar=dict(title="-log10(p)", titleside="top", orientation="v", thickness=10, len=0.5, x=1.1, y=0.5),
-            hovertemplate="<b>%{y} vs %{x}</b><br>Sig: %{text}<br>-log10(p): %{z:.2f}<extra></extra>"
-        ), row=1, col=2
-    )
-    fig.update_layout(title=title, width=1000, height=600, plot_bgcolor='rgba(0,0,0,0)', margin=dict(t=60, b=100, l=50, r=50))
-    fig.update_xaxes(tickangle=-45, row=1, col=1, categoryorder='array', categoryarray=unique_cats)
-    fig.update_yaxes(title_text=axis_label, row=1, col=1, showgrid=True, gridcolor='lightgrey')
-    fig.update_xaxes(showgrid=False, tickangle=-45, tickfont=dict(size=8), row=1, col=2, categoryorder='array', categoryarray=unique_cats)
-    fig.update_yaxes(showgrid=False, tickfont=dict(size=8), side="left", row=1, col=2, categoryorder='array', categoryarray=unique_cats)
-
-    title_slug = "".join(c if c.isalnum() else "_" for c in title).strip("_").lower()
-    fig.show()
-
-
-def _violin_with_heatmap_dropdown(pat_df, title_prefix, value_col, trace_name, axis_label, name_prefix, origin_col):
-    """Same as _violin_with_heatmap_figure, but with an origin dropdown when
-    a patient has more than one origin. Shared by create_pgen_tabs and
-    create_distance_tabs_with_heatmap."""
-    if origin_col not in pat_df.columns:
-        _violin_with_heatmap_figure(pat_df, alias_col, value_col, title_prefix, trace_name, axis_label, name_prefix)
-        return
-
-    origins = sorted(pat_df[origin_col].dropna().unique())
-    if len(origins) == 0:
-        return
-    elif len(origins) == 1:
-        _violin_with_heatmap_figure(pat_df, alias_col, value_col, f"{title_prefix} ({origins[0]})", trace_name, axis_label, name_prefix)
-        return
-
-    processed_origins = []
-    for origin in origins:
-        origin_df = pat_df[pat_df[origin_col] == origin].copy()
-        if timepoint_order_col in origin_df.columns:
-            origin_df = origin_df.sort_values(timepoint_order_col)
-
-        unique_cats = origin_df[alias_col].unique().tolist()
-        if len(unique_cats) < 1:
-            continue
-
-        p_matrix, text_matrix = _pairwise_significance_matrix(origin_df, alias_col, value_col, unique_cats)
-        processed_origins.append({
-            'origin': origin, 'df': origin_df, 'cats': unique_cats,
-            'p_matrix': p_matrix, 'text_matrix': text_matrix
-        })
-
-    if not processed_origins:
-        return
-
-    fig = make_subplots(
-        rows=1, cols=2, column_widths=[0.6, 0.4], horizontal_spacing=0.15,
-        specs=[[{"type": "xy"}, {"type": "heatmap"}]]
-    )
-
-    buttons = []
-    initial_cats = processed_origins[0]['cats']
-
-    for i, data in enumerate(processed_origins):
-        is_first = (i == 0)
-        fig.add_trace(
-            go.Violin(
-                x=data['df'][alias_col], y=data['df'][value_col],
-                box_visible=True, points=False, line_color='#1f77b4', opacity=0.6,
-                name=trace_name, showlegend=False, width=0.7, spanmode='hard', visible=is_first
-            ), row=1, col=1
-        )
-        fig.add_trace(
-            go.Heatmap(
-                z=data['p_matrix'], x=data['cats'], y=data['cats'], text=data['text_matrix'],
-                texttemplate="%{text}", textfont={"size": 8}, colorscale="Reds", zmin=0, zmax=5, showscale=True,
-                colorbar=dict(title="-log10(p)", titleside="top", orientation="v", thickness=10, len=0.5, x=1.1, y=0.5),
-                hovertemplate="<b>%{y} vs %{x}</b><br>Sig: %{text}<br>-log10(p): %{z:.2f}<extra></extra>", visible=is_first
-            ), row=1, col=2
-        )
-
-        visibility = [False] * (len(processed_origins) * 2)
-        visibility[i * 2] = True
-        visibility[i * 2 + 1] = True
-
-        buttons.append(dict(
-            label=str(data['origin']), method="update",
-            args=[
-                {"visible": visibility},
-                {
-                    "title.text": f"{title_prefix} ({data['origin']})",
-                    "xaxis.categoryarray": data['cats'],
-                    "xaxis2.categoryarray": data['cats'],
-                    "yaxis2.categoryarray": data['cats']
-                }
-            ]
-        ))
-
-    fig.update_layout(
-        title_text=f"{title_prefix} ({processed_origins[0]['origin']})",
-        width=1000, height=600, plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(t=120, b=100, l=50, r=50),
-        updatemenus=[dict(
-            active=0, buttons=buttons, x=0.0, xanchor="left", y=1.15, yanchor="top", pad={"r": 10, "t": 10}
-        )]
-    )
-    fig.update_xaxes(tickangle=-45, row=1, col=1, categoryorder='array', categoryarray=initial_cats)
-    fig.update_yaxes(title_text=axis_label, row=1, col=1, showgrid=True, gridcolor='lightgrey')
-    fig.update_xaxes(showgrid=False, tickangle=-45, tickfont=dict(size=8), row=1, col=2, categoryorder='array', categoryarray=initial_cats)
-    fig.update_yaxes(showgrid=False, tickfont=dict(size=8), side="left", row=1, col=2, categoryorder='array', categoryarray=initial_cats)
-
-    prefix_slug = "".join(c if c.isalnum() else "_" for c in title_prefix).strip("_").lower()
-    fig.show()
-
 
 def create_pgen_tabs(meta_df, origin_col='origin'):
     """
@@ -1877,154 +1331,17 @@ create_pgen_tabs(meta, origin_col='origin')
 
 ```
 
-**Figure 11 TCR Generation Probabilities** Probabilities shown above are weighted, accounting for the counts per clone within a repertoire.
+**Figure `{python} fig_no()`. TCR generation probabilities.** Left: each violin is the distribution of $\log_{10} P_{gen}$ (OLGA) of a sample's or group's TCRs, weighted by clone counts. Right: the inset heatmap marks pairs of groups whose distributions differ (Mann-Whitney test; darker is more significant). A shift towards lower $P_{gen}$ means the repertoire is enriched for rare, improbable receptors, as expected after antigen-driven selection; a shift upwards means it is dominated by easy-to-generate, often public, receptors. The figure is wider than the page: scroll sideways inside the box to see the heatmap.
 
 # Functional Prediction {#sec-function}
 
-## TCRdist3 {#sec-tcrdist}
-
-[TCRdist](https://elifesciences.org/articles/68605) is a **metric that quantifies the similarity between any two T-cell receptors (TCRs) by calculating a biochemically-aware distance based on their amino acid sequences**. Instead of just checking if two TCR sequences are identical, **TCRdist focuses on the key regions that bind to antigens: Complementarity-Determining Regions (CDRs).** It compares the amino acid sequences of the CDR1, CDR2 (obtained from the V gene), and especially the hypervariable CDR3 loops of two TCRs. The "distance" is calculated using a substitution matrix (like BLOSUM62) that scores how similar two different amino acids are in their biochemical properties. Swapping two functionally similar amino acids results in a small distance penalty, while swapping two very different ones results in a large penalty. The total distance is a weighted sum of these scores, with the CDR3 distance contributing the most.
-
-```{python}
-#| output: asis
-#| echo: false
-
-import os
-import glob
-import h5py
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from scipy.stats import mannwhitneyu
-from scipy.sparse import csr_matrix
-
-def create_distance_tabs_with_heatmap(meta_df, origin_col='origin'):
-    """
-    Generates multi-tabbed violin plots for TCR Distances.
-    - Tab 1: All Samples (Grouped by Metadata) -> With Pairwise Heatmap Inset
-    - Tab 2: By Patient (Grouped by Timepoint) -> With Pairwise Heatmap Inset & Origin Dropdown
-    """
-    
-    # --- 1. FIND AND LOAD DATA ---
-    file_pattern = os.path.join(tcrdist_dir, '*_distance_matrix.hdf5')
-    patient_files = sorted(glob.glob(file_pattern))
-
-    if not patient_files:
-        print(f"Error: No files found at: {file_pattern}")
-        return
-
-    all_data_list = []
-
-    for file_path in patient_files:
-        filename = os.path.basename(file_path)
-        sample_id = filename.replace('_distance_matrix.hdf5', '')
-
-        try:
-            with h5py.File(file_path, 'r') as f:
-                data = f['data'][:]
-                indices = f['indices'][:]
-                indptr = f['indptr'][:]
-
-            sparse_matrix = csr_matrix((data, indices, indptr))
-            dense_matrix = sparse_matrix.toarray()
-            # Symmetrize
-            dense_matrix = np.maximum(dense_matrix, dense_matrix.T)
-
-            # Extract upper triangle (exclude diagonal 0 and lower triangle)
-            upper_triangle = dense_matrix[np.triu_indices(dense_matrix.shape[0], k=1)]
-
-            # Filter valid (ignore -1 or 0 if those indicate missing/self)
-            valid_distances = upper_triangle[(upper_triangle != -1) & (upper_triangle != 0)]
-
-            if len(valid_distances) > 0:
-                # --- SAFETY DOWNSAMPLING ---
-                # Critical for performance in browser-based plots
-                if len(valid_distances) > 1000:
-                    valid_distances = np.random.choice(valid_distances, 1000, replace=False)
-
-                temp_df = pd.DataFrame({
-                    'distance': valid_distances,
-                    'sample': sample_id
-                })
-                all_data_list.append(temp_df)
-
-        except Exception as e:
-            continue
-
-    if not all_data_list:
-        print("No valid data found.")
-        return
-
-    # --- 2. MERGE METADATA ---
-    dist_df = pd.concat(all_data_list, ignore_index=True)
-    
-    cols_to_use = ['sample', subject_col, alias_col, timepoint_order_col]
-    
-    plot_df = dist_df.merge(meta_df, on='sample', how='inner')
-
-    exclude_cols = ['sample', 'file', 'filename', 'filepath', alias_col, timepoint_order_col, subject_col, timepoint_col]
-    group_opts = [c for c in meta_df.columns if c not in exclude_cols and meta_df[c].nunique() < 35]
-
-    # --- HELPER 1: STANDARD PLOT WITH HEATMAP ---
-    def plot_violin_with_heatmap(data, x_col, title, x_order=None):
-        _violin_with_heatmap_figure(data, x_col, 'distance', title, "Distance", "TCR Distance", "distance_violin_heatmap", x_order=x_order)
-
-    # --- HELPER 2: PATIENT PLOT WITH ORIGIN DROPDOWN ---
-    def plot_patient_with_dropdown(pat_df, title_prefix):
-        _violin_with_heatmap_dropdown(pat_df, title_prefix, 'distance', "Distance", "TCR Distance", "distance_violin_heatmap", origin_col)
-
-    # --- 3. GENERATE TABS ---
-    print("::: {.panel-tabset}\n")
-
-    # =========================================================
-    # TAB 1: ALL SAMPLES
-    # =========================================================
-    print("## All Samples\n")
-    print("::: {.panel-tabset}\n")
-    
-    for group in group_opts:
-        print(f"### By {group}\n")
-        group_df = plot_df.dropna(subset=[group]).copy()
-        group_df[group] = group_df[group].astype(str)
-        plot_violin_with_heatmap(group_df, group, f"Distance Distribution by {group}")
-        print("\n")
-        
-    print(":::\n")
-
-    # =========================================================
-    # TAB 2: BY PATIENT
-    # =========================================================
-    print("## By Patient\n")
-    print("::: {.panel-tabset}\n")
-
-    unique_patients = sorted(plot_df[subject_col].unique())
-    
-    for pat in unique_patients:
-        print(f"### {pat}\n")
-        pat_df = plot_df[plot_df[subject_col] == pat].copy()
-        
-        # Pass to the new dropdown wrapper
-        plot_patient_with_dropdown(pat_df, title_prefix=f"Distance Distribution: {pat}")
-            
-        print("\n")
-
-    print(":::\n")
-    print(":::\n")
-
-# --- Execute ---
-create_distance_tabs_with_heatmap(meta, origin_col='origin')
-
-```
-
-**Figure 8. Sample Distances** Plot showing biochemical distances between sample's TCRs grouped by metadata variables.
-
-**Why This Metric Is Helpful?** 🌐
-The primary benefit of TCRdist is its ability to identify groups of T-cells that are likely to recognize the same antigen, even if their TCRs are not identical. This phenomenon is known as cross-reactivity.
-By calculating the distance between all TCRs in your sample, you can move beyond analyzing single, identical clones and instead identify functional "neighborhoods" of similar TCRs. This provides a much more comprehensive and biologically accurate picture of an immune response. It allows you to group related T-cells together to see the full breadth of the response to a specific antigen, rather than just the single most expanded clone.
-
-
 ## TCR specificity (VDJdb) {#sec-VDJdb}
+
+::: {.callout-tip title="In short" appearance="simple"}
+- **What it shows:** the TCRs whose CDR3β exactly matches a receptor of known specificity in VDJdb, summarised by epitope, antigen gene and species.
+- **Why it matters:** it labels part of the repertoire with a known target, for example viral bystanders, so the unlabelled rest can be prioritised.
+- **How to read it:** expect viral (CMV, EBV, influenza) matches and few tumour matches: the database is biased towards viruses. A match is a hypothesis, not proof of specificity.
+:::
 
 [VDJdb](https://vdjdb.cdr3.net/) is a curated, public **database that catalogs T-cell receptor (TCR) sequences with known antigen specificities**. It serves as a valuable resource for immunologists and bioinformaticians, providing a standardized repository of information **linking a TCR's sequence to the specific epitope (antigen) it recognizes, along with the presenting MHC molecule**. The data within VDJdb is manually aggregated from a wide range of published studies and includes both TCR alpha and beta chains, providing rich context for each entry.
 
@@ -2039,10 +1356,31 @@ import glob
 import pandas as pd
 import plotly.graph_objects as go
 
+def vdjdb_sample_tabs(plot_df, subject_col, make_fig):
+    """One tab per patient and, within it, one sub-tab per sample (alias), ordered by compartment
+    and timepoint. make_fig(sample_rows, alias) returns the figure, or None to skip the sample."""
+    d = plot_df.assign(_r=pd.to_numeric(plot_df[timepoint_order_col].astype(str), errors='coerce'))
+    print(":::: {.panel-tabset}\n")
+    for subject in sorted(d[subject_col].dropna().unique()):
+        print(f"## {subject}\n")
+        sd = d[d[subject_col] == subject]
+        samples = (sd.drop_duplicates('sample').sort_values(['origin', '_r', alias_col])[['sample', alias_col]])
+        print("::: {.panel-tabset}\n")
+        for smp, alias in samples.itertuples(index=False):
+            print(f"### {alias}\n")
+            fig = make_fig(sd[sd['sample'] == smp], alias)
+            if fig is None:
+                print("*No VDJdb matches in this sample.*\n")
+            else:
+                rt_show(fig)
+        print(":::\n")
+    print("::::\n")
+
+
 def plot_vdjdb_species_specificity(VDJdb_dir, meta_df, subject_col='subject_id'):
     """
     Parses VDJdb annotation summaries and generates Quarto tabs per patient,
-    with a dropdown menu to select specific timepoints.
+    with one sub-tab per sample.
     """
     file_pattern = os.path.join(VDJdb_dir, '*.annot.summary.txt')
     summary_files = sorted(glob.glob(file_pattern))
@@ -2086,92 +1424,33 @@ def plot_vdjdb_species_specificity(VDJdb_dir, meta_df, subject_col='subject_id')
     
     # --- 2. Merge with Metadata (Using timepoint_col instead of alias_col) ---
     plot_df = combined_df.merge(
-        meta_df[['sample', subject_col, timepoint_col, timepoint_order_col]], 
+        meta_df[['sample', subject_col, alias_col, 'origin', timepoint_col, timepoint_order_col]], 
         on='sample', 
         how='inner'
     )
 
-    # --- 3. Generate Quarto Tabs and Plotly Figures ---
-    print("::: {.panel-tabset}\n")
-    
-    subjects = sorted(plot_df[subject_col].dropna().unique())
-    
-    for subject in subjects:
-        print(f"## {subject}\n")
-        
-        subj_data = plot_df[plot_df[subject_col] == subject]
-        
-        # Sort timepoints chronologically based on your timepoint_order column
-        timepoints = subj_data.sort_values(timepoint_order_col)[timepoint_col].unique()
-        
-        fig = go.Figure()
-        buttons = []
-        
-        for i, tp in enumerate(timepoints):
-            tp_data = subj_data[subj_data[timepoint_col] == tp].sort_values('Frequency (%)', ascending=False)
-            
-            # Add a trace for each timepoint (only the first one is visible by default)
-            fig.add_trace(
-                go.Bar(
-                    x=tp_data['Species'],
-                    y=tp_data['Frequency (%)'],
-                    name=str(tp),
-                    visible=(i == 0),
-                    marker_color='#1f77b4',
-                    hovertemplate="<b>Target: %{x}</b><br>Frequency: %{y:.2f}%<br>Reads: %{customdata}<extra></extra>",
-                    customdata=tp_data['reads']
-                )
-            )
-            
-            # Build visibility array for the dropdown button [True, False, False...]
-            visibility = [False] * len(timepoints)
-            visibility[i] = True
-            
-            button = dict(
-                label=str(tp),
-                method="update",
-                args=[
-                    {"visible": visibility},
-                    {"title": f"TCR Specificity - {subject} ({tp})"}
-                ]
-            )
-            buttons.append(button)
-            
-        # Update layout with the dropdown menu
-        fig.update_layout(
-            updatemenus=[dict(
-                active=0,
-                buttons=buttons,
-                direction="down",
-                pad={"r": 10, "t": 10},
-                showactive=True,
-                x=1.0,  # Position on the right side
-                xanchor="left",
-                y=1.15,
-                yanchor="top"
-            )],
-            title_text=f"TCR Specificity - {subject} ({timepoints[0]})",
-            xaxis_title="Predicted Antigen Species",
-            yaxis_title="Repertoire Frequency (%)",
-            plot_bgcolor='white',
-            margin=dict(t=80, b=100, l=50, r=200), # Extra right margin to prevent menu cutoff
-            height=500
-        )
-        
-        # Scientific styling
-        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True, tickangle=45)
-        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True, gridcolor='lightgrey')
+    # --- 3. Patient tabs, sample sub-tabs ---
+    def _fig(tp_data, alias):
+        tp_data = tp_data.sort_values('Frequency (%)', ascending=False)
+        if tp_data.empty:
+            return None
+        fig = go.Figure(go.Bar(
+            x=tp_data['Species'], y=tp_data['Frequency (%)'], marker_color=_REPORT_PALETTE[0],
+            customdata=tp_data['reads'],
+            hovertemplate="<b>%{x}</b><br>Frequency: %{y:.2f}%<br>Counts: %{customdata:,}<extra></extra>"))
+        fig.update_layout(title=f"Predicted antigen species: {alias}", height=480,
+                          margin=dict(t=60, b=120), showlegend=False,
+                          xaxis=dict(title="Predicted antigen species", tickangle=-45),
+                          yaxis=dict(title="Repertoire frequency (%)"))
+        return fig
 
-        fig.show()
-        print("\n\n")
-
-    print(":::\n")
+    vdjdb_sample_tabs(plot_df, subject_col, _fig)
 
 # Run the function
 plot_vdjdb_species_specificity(VDJdb_dir, meta, subject_col=subject_col)
 
 ```
-**Figure 14: Top 15 recognized epitopes identified in bulk-TCR data.**  The number of unique TCR clonotypes in the sample that match a known epitope in the VDJdb database is shown on the x-axis. The plot highlights the most abundant antigen specificities inferred from the T-cell repertoire.
+**Figure `{python} fig_no()`. Predicted antigen species of the repertoire.** One tab per patient and, within it, one sub-tab per sample (alias), ordered by compartment and timepoint. Each bar is an antigen species and its height the share of the sample's repertoire whose CDR3β matches a VDJdb entry for that species (hover for the read or cell count). Viral species (CMV, EBV, influenza) are common in every adult and mark bystander memory; matches to human (self or tumour) antigens deserve a closer look, and a species that grows between timepoints points to an ongoing response against it.
 
 The plot reveals the primary epitopes recognized by the TCR repertoire, providing crucial insight into the targets of the immune response. By identifying these epitopes, we can **infer the biological context of the T-cell activity**, which may include responses to viral infections. Understanding these specificities can also **offer clues about TCR cross-reactivity, a key consideration for developing novel targeted therapies**.
 
@@ -2188,7 +1467,7 @@ def plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta_df, subject_col='subject_id'):
     """
     Reads detailed VDJdb match files to create a hierarchical Sunburst chart:
     Species (Inner) -> Gene (Middle) -> TCR Sequence (Outer).
-    Includes Quarto tabs per patient and a dropdown per timepoint.
+    Includes Quarto tabs per patient and a sub-tab per sample.
     """
     # NOTE: We must target the detailed match files, NOT the summary files.
     # Adjust this pattern if your pipeline names them differently (e.g., '*.annot.txt')
@@ -2238,7 +1517,7 @@ def plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta_df, subject_col='subject_id'):
     
     # --- 2. Merge with Metadata ---
     plot_df = combined_df.merge(
-        meta_df[['sample', subject_col, timepoint_col, timepoint_order_col]], 
+        meta_df[['sample', subject_col, alias_col, 'origin', timepoint_col, timepoint_order_col]], 
         on='sample', 
         how='inner'
     )
@@ -2283,79 +1562,26 @@ def plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta_df, subject_col='subject_id'):
 
         return pd.concat([df_root, df_species, df_gene, df_tcr], ignore_index=True)
 
-    # --- 4. Generate Quarto Tabs and Interactive Plots ---
-    print("::: {.panel-tabset}\n")
-    
-    subjects = sorted(plot_df[subject_col].dropna().unique())
-    
-    for subject in subjects:
-        print(f"## {subject}\n")
-        
-        subj_data = plot_df[plot_df[subject_col] == subject]
-        timepoints = subj_data.sort_values(timepoint_order_col)[timepoint_col].unique()
-        
-        fig = go.Figure()
-        buttons = []
-        
-        for i, tp in enumerate(timepoints):
-            tp_data = subj_data[subj_data[timepoint_col] == tp]
-            sb_df = build_sunburst_df(tp_data)
-            
-            fig.add_trace(
-                go.Sunburst(
-                    ids=sb_df['id'],
-                    labels=sb_df['label'],
-                    parents=sb_df['parent'],
-                    values=sb_df['total_counts'],
-                    branchvalues='total',
-                    customdata=sb_df[['n_unique_tcrs']],
-                    hovertemplate="<b>%{label}</b><br>Total Read Counts: %{value}<br>Unique TCRs: %{customdata[0]}<extra></extra>",
-                    visible=(i == 0),
-                    marker=dict(colorscale='Blues')
-                )
-            )
-            
-            # Setup visibility array for dropdown
-            visibility = [False] * len(timepoints)
-            visibility[i] = True
-            
-            button = dict(
-                label=str(tp),
-                method="update",
-                args=[
-                    {"visible": visibility},
-                    {"title": f"TCR Target Architecture - {subject} ({tp})"}
-                ]
-            )
-            buttons.append(button)
-            
-        fig.update_layout(
-            updatemenus=[dict(
-                active=0,
-                buttons=buttons,
-                direction="down",
-                pad={"r": 10, "t": 10},
-                showactive=True,
-                x=1.0,
-                xanchor="left",
-                y=1.1,
-                yanchor="top"
-            )],
-            title_text=f"TCR Target Architecture - {subject} ({timepoints[0]})",
-            margin=dict(t=80, b=50, l=50, r=200),
-            height=700
-        )
+    # --- 4. Patient tabs, sample sub-tabs ---
+    def _fig(tp_data, alias):
+        if tp_data.empty:
+            return None
+        sb_df = build_sunburst_df(tp_data)
+        fig = go.Figure(go.Sunburst(
+            ids=sb_df['id'], labels=sb_df['label'], parents=sb_df['parent'],
+            values=sb_df['total_counts'], branchvalues='total', customdata=sb_df[['n_unique_tcrs']],
+            hovertemplate="<b>%{label}</b><br>Total counts: %{value:,}<br>Unique TCRs: %{customdata[0]}<extra></extra>",
+            marker=dict(colorscale='Blues')))
+        fig.update_layout(title=f"Antigen species, genes and TCRs: {alias}", margin=dict(t=60, b=20, l=20, r=20), height=700)
+        return fig
 
-        fig.show()
-        print("\n\n")
-
-    print(":::\n")
+    vdjdb_sample_tabs(plot_df, subject_col, _fig)
 
 # Run the function
 plot_vdjdb_sunburst_hierarchy(VDJdb_dir, meta, subject_col=subject_col)
 
 ```
-**Figure 15: TCR Repertoire Mapping to specific gene epitopes:** Sunburst chart visualizing the relationships between T-cell receptor (TCR) sequences and their known antigen specificities from the VDJdb curated database. The central ring represents the species, branching out to their specific genes, and finally to the individual TCR sequences from your dataset that match those specificities. The size of each segment corresponds to the number of TCRs associated with that particular specificity.
+**Figure `{python} fig_no()`. Mapping of the repertoire to antigen species and genes.** One tab per patient and one sub-tab per sample (alias). Sunburst of the VDJdb matches of the sample: the inner ring is the antigen species, the middle ring the antigen gene, and the outer ring the matching CDR3β sequences of the sample. Segment size is the summed count (reads, or cells for single-cell data) of the matching TCRs; hover for the count and the number of distinct TCRs. Click a segment to zoom into it; click the centre to zoom out.
 
 ```{python}
 #| output: asis
@@ -2415,7 +1641,7 @@ def plot_vdjdb_sunburst_reversed(VDJdb_dir, meta_df, subject_col='subject_id'):
     
     # --- 2. Merge with Metadata ---
     plot_df = combined_df.merge(
-        meta_df[['sample', subject_col, timepoint_col, timepoint_order_col]], 
+        meta_df[['sample', subject_col, alias_col, 'origin', timepoint_col, timepoint_order_col]], 
         on='sample', 
         how='inner'
     )
@@ -2460,87 +1686,36 @@ def plot_vdjdb_sunburst_reversed(VDJdb_dir, meta_df, subject_col='subject_id'):
 
         return pd.concat([df_root, df_tcr, df_gene, df_species], ignore_index=True)
 
-    # --- 4. Generate Quarto Tabs and Interactive Plots ---
-    print("::: {.panel-tabset}\n")
-    
-    subjects = sorted(plot_df[subject_col].dropna().unique())
-    
-    for subject in subjects:
-        print(f"## {subject}\n")
-        
-        subj_data = plot_df[plot_df[subject_col] == subject]
-        timepoints = subj_data.sort_values(timepoint_order_col)[timepoint_col].unique()
-        
-        fig = go.Figure()
-        buttons = []
-        
-        for i, tp in enumerate(timepoints):
-            tp_data = subj_data[subj_data[timepoint_col] == tp]
-            sb_df = build_sunburst_df(tp_data)
-            
-            fig.add_trace(
-                go.Sunburst(
-                    ids=sb_df['id'],
-                    labels=sb_df['label'],
-                    parents=sb_df['parent'],
-                    values=sb_df['total_counts'],
-                    branchvalues='total',
-                    customdata=sb_df[['n_unique_tcrs']],
-                    hovertemplate="<b>%{label}</b><br>Total Read Counts: %{value}<br>Unique TCRs: %{customdata[0]}<extra></extra>",
-                    visible=(i == 0),
-                    marker=dict(colorscale='Blues')
-                )
-            )
-            
-            visibility = [False] * len(timepoints)
-            visibility[i] = True
-            
-            button = dict(
-                label=str(tp),
-                method="update",
-                args=[
-                    {"visible": visibility},
-                    {"title": f"Reversed Target Architecture - {subject} ({tp})"}
-                ]
-            )
-            buttons.append(button)
-            
-        fig.update_layout(
-            updatemenus=[dict(
-                active=0,
-                buttons=buttons,
-                direction="down",
-                pad={"r": 10, "t": 10},
-                showactive=True,
-                x=1.0,
-                xanchor="left",
-                y=1.1,
-                yanchor="top"
-            )],
-            title_text=f"Reversed Target Architecture - {subject} ({timepoints[0]})",
-            margin=dict(t=80, b=50, l=50, r=200),
-            height=800 # Increased height slightly to accommodate the dense inner ring
-        )
+    # --- 4. Patient tabs, sample sub-tabs ---
+    def _fig(tp_data, alias):
+        if tp_data.empty:
+            return None
+        sb_df = build_sunburst_df(tp_data)
+        fig = go.Figure(go.Sunburst(
+            ids=sb_df['id'], labels=sb_df['label'], parents=sb_df['parent'],
+            values=sb_df['total_counts'], branchvalues='total', customdata=sb_df[['n_unique_tcrs']],
+            hovertemplate="<b>%{label}</b><br>Total counts: %{value:,}<br>Unique TCRs: %{customdata[0]}<extra></extra>",
+            marker=dict(colorscale='Blues')))
+        fig.update_layout(title=f"TCRs, antigen genes and species: {alias}", margin=dict(t=60, b=20, l=20, r=20), height=700)
+        return fig
 
-        fig.show()
-        print("\n\n")
-
-    print(":::\n")
+    vdjdb_sample_tabs(plot_df, subject_col, _fig)
 
 # Run the function
 plot_vdjdb_sunburst_reversed(VDJdb_dir, meta, subject_col=subject_col)
 
 ```
-**Figure 16: Gene Epitopes Mapping to TCR sequences:** Sunburst chart visualizing the relationships antigens and T-cell receptor (TCR) sequences. The central ring represents TCRs sequences, branching out to their specific genes, and finally to the species the antigen belongs to. Only TCRs with a Freq>2 are shown, for visualization purposes.
+**Figure `{python} fig_no()`. Mapping of TCR sequences to antigens.** One tab per patient and one sub-tab per sample (alias). The same matches seen from the receptor side: the inner ring is the CDR3β sequence, the middle ring its antigen gene, and the outer ring the antigen species. Each CDR3β is assigned to its single highest-scoring VDJdb match (VDJdb score), so it has one gene and one species; a sequence that matched epitopes of several antigens appears only under its best match, and the full list of matches is in the sample's `vdjmatch.txt` file. Segment size is the summed count of the sequence; hover for the value.
 
+:::: {.callout-note title="More detail: reading the two sunburst charts" collapse="true"}
 The **first chart is an antigen-centric visualization.** It is structured hierarchically, starting with the broad species and branching out to specific gene epitopes and the individual TCR clonotypes that recognize them. This top-down view is ideal for gaining a **high-level understanding of the immune response**. It allows you to see **which antigens or pathogens are driving the T-cell activity in a sample and to quantify the breadth and magnitude of the response against them.** 
 
 In contrast, the **second chart offers a TCR-centric view** by reversing the hierarchy. It starts from the individual TCR clonotype and links it to its known epitope and antigen. This **bottom-up perspective is crucial for understanding the function of individual T-cell clones**. By tracing a highly expanded clone, you can **identify all its known specificities, which is a key approach to studying TCR cross-reactivity.** The ability of a single TCR to recognize multiple epitopes is a critical biological concept that informs the design of targeted immunotherapies.
 
 Together, these two visualizations offer a complete picture. The antigen-centric chart reveals the population-level response—what the immune system is responding to—while the TCR-centric chart provides a functional interpretation of individual clones—what a specific T-cell can do. **This integrated analysis allows for a systematic and detailed investigation of the antigen-specific landscape, from the broad immune response to the functional role of a single T-cell clone.**
+::::
 
-::: {.callout-important title="Important"}
-**A Note on Interpreting Database Matches**
+::: {.callout-important title="A note on interpreting database matches" collapse="true"}
 In this section, we try to annotate our TCRs by matching them against public databases of TCRs with known antigen specificities. While this is a powerful step, it's critical to understand the current limitations of these databases, especially when analyzing samples.
 
 ***The Viral Bias of Public Databases***

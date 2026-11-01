@@ -30,6 +30,8 @@ notebooks/*
 !notebooks/sample_stats_template.qmd
 !notebooks/compare_stats_template.qmd
 !notebooks/gliph2_report_template.qmd
+# Notebook sources and their partials (rendered outputs in notebooks/ stay ignored).
+!notebooks/*.qmd
 
 ## Bash
 tmp

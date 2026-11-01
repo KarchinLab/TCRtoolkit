@@ -14,6 +14,7 @@ include { CLONOTYPE_CLUSTERING } from '../subworkflows/local/clonotype_clusterin
 include { BULK_TO_EXPORT }      from '../modules/bridges/bulk_to_export'
 include { MASTER_SUMMARY_SW }   from '../subworkflows/scratch/master_summary'
 include { REPORT }              from '../subworkflows/local/report'
+include { REPORT_BUNDLE }       from '../modules/bridges/report_bundle'
 
 def enabled(x) { x == null || x == true }
 
@@ -97,24 +98,21 @@ workflow TCRTOOLKIT_BULK {
             true
         )
 
-        // Report notebooks; NO_FILE = no single-cell data, so the SC sections stay empty.
-        REPORT(
-            BULKTCR_ANALYSIS.out.reports,
-            channel.value(file(params.samplesheet)),
-            channel.value(file("${projectDir}/assets/NO_FILE"))
-        )
-
-        // --- Clonotype export -> cluster mapping -> consensus -> Master Summary ---
+        // --- Clonotype export -> cluster mapping -> consensus ---
         // The same downstream chain the single-cell modality runs, after the cohort
         // comparison. There is no GEX object, so it runs on a clonotype-level export
         // (one row per sample x clonotype; bulk counts are reads/templates, too many to
         // expand into one row each).
         // Needs SAMPLE (TCRdist3) and/or PATIENT (GIANA, GLIPH2) for anything to cluster.
+        def nofile = file("${projectDir}/assets/NO_FILE")
+        def ch_project_name = channel.value(params.project_name)
         def has_clusters = levels.contains('sample') || levels.contains('patient')
-        if (levels.contains('compare') && has_clusters && enabled(params.run_clonotype_clustering)) {
-            def nofile = file("${projectDir}/assets/NO_FILE")
-            def ch_project_name = channel.value(params.project_name)
-
+        def run_clustering = levels.contains('compare') && has_clusters && enabled(params.run_clonotype_clustering)
+        def rep_export       = channel.empty()
+        def rollup_tables    = channel.value([])
+        def consensus_tables = channel.empty()
+        def consensus_report = channel.empty()
+        if (run_clustering) {
             BULK_TO_EXPORT(
                 BULKTCR_ANALYSIS.out.concat_cdr3_sorted,
                 file(params.samplesheet),
@@ -129,30 +127,58 @@ workflow TCRTOOLKIT_BULK {
                 BULKTCR_ANALYSIS.out.gliph2_cluster_details,
                 BULKTCR_ANALYSIS.out.tcrdist_clone_df,
                 BULKTCR_ANALYSIS.out.tcrdist_output,
+                channel.value(nofile),
                 ch_project_name
             )
+            rep_export       = CLONOTYPE_CLUSTERING.out.rep_export
+            rollup_tables    = CLONOTYPE_CLUSTERING.out.rollup_tables
+            consensus_tables = CLONOTYPE_CLUSTERING.out.consensus_tables
+            consensus_report = CLONOTYPE_CLUSTERING.out.consensus_report
+        }
 
-            if (enabled(params.run_master_summary)) {
-                MASTER_SUMMARY_SW(
-                    channel.value(nofile),
-                    CLONOTYPE_CLUSTERING.out.rep_export,
-                    channel.value([]),
-                    channel.value([]),
-                    channel.empty()
-                        .mix(BULKTCR_ANALYSIS.out.sample_stats, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
-                        .collect().ifEmpty([]),
-                    BULKTCR_ANALYSIS.out.shared_cdr3.flatten().collect().ifEmpty([]),
-                    CLONOTYPE_CLUSTERING.out.rollup_tables,
-                    BULKTCR_ANALYSIS.out.repertoire_tables.flatten().collect().ifEmpty([]),
-                    channel.value([]),
-                    channel.value([]),
-                    CLONOTYPE_CLUSTERING.out.consensus_tables.flatten().collect().ifEmpty([]),
-                    channel.value([]),
-                    channel.value([]),
-                    CLONOTYPE_CLUSTERING.out.consensus_report.collect().ifEmpty([nofile]),
-                    ch_project_name
-                )
-            }
+        // --- Report notebooks ---
+        // The bundle carries the run-level tables (sample statistics, sharing, repertoire,
+        // clustering roll-ups); the single-cell modules contribute nothing on this route.
+        def discovery_md = channel.empty()
+        if (run_reports) {
+            REPORT_BUNDLE(
+                rep_export.collect().ifEmpty([]),
+                channel.value([]), channel.value([]),
+                channel.empty()
+                    .mix(BULKTCR_ANALYSIS.out.sample_stats, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
+                    .collect().ifEmpty([]),
+                BULKTCR_ANALYSIS.out.shared_cdr3.flatten().collect().ifEmpty([]),
+                BULKTCR_ANALYSIS.out.repertoire_tables.flatten().collect().ifEmpty([]),
+                channel.value([]), channel.value([]),
+                consensus_tables.flatten().collect().ifEmpty([]),
+                rollup_tables,
+                channel.value([]), channel.value([]),
+                'bulk'
+            )
+            REPORT(
+                BULKTCR_ANALYSIS.out.reports,
+                channel.value(file(params.samplesheet)),
+                REPORT_BUNDLE.out.bundle,
+                'bulk'
+            )
+            discovery_md = REPORT.out.discovery_md
+        }
+
+        // --- Master Summary ---
+        if (run_clustering && enabled(params.run_master_summary)) {
+            MASTER_SUMMARY_SW(
+                channel.value(nofile),
+                rep_export,
+                rollup_tables,
+                channel.value([]),
+                channel.value([]),
+                consensus_tables.flatten().collect().ifEmpty([]),
+                channel.value([]),
+                channel.value([]),
+                discovery_md.ifEmpty(nofile).first(),
+                consensus_report.collect().ifEmpty([nofile]),
+                ch_project_name
+            )
         }
     }
 }

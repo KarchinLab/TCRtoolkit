@@ -43,32 +43,14 @@ as_str1 <- function(x) {
   if (is.na(x)) "" else trimws(x)
 }
 
-# First match wins across several modules. CONSENSUS computes method_presence /
-# method_cluster_counts over CoNGA and consensus labels as well, so its copies are
-# strictly richer than CLUSTER_ROLLUP's GIANA/GLIPH2/TCRdist-only fallback.
-# Count distinct values, ignoring NA and empty strings. VDJ_QC leaves patient_id blank
-# when no GEX object is supplied, so a naive n_distinct() on that column returns 1 for
-# "" rather than falling through to a source that actually carries the value.
+# Count distinct values, ignoring NA and empty strings (a blank column otherwise counts
+# as one value).
 n_distinct_real <- function(x) {
   if (is.null(x)) return(NA_integer_)
   x <- trimws(as.character(x))
   x <- x[!is.na(x) & nzchar(x)]
   if (!length(x)) return(NA_integer_)
   length(unique(x))
-}
-
-# First source with a real value wins.
-coalesce_count <- function(...) {
-  for (v in list(...)) if (!is.na(v) && v > 0) return(as.character(v))
-  NA_character_
-}
-
-Tfirst <- function(modules, name) {
-  for (m in modules) {
-    d <- T(m, name)
-    if (!is.null(d)) return(d)
-  }
-  NULL
 }
 
 have <- function(x) !is.null(x) && nrow(x) > 0
@@ -118,7 +100,7 @@ ttl <- function(t) list(text = t, x = 0, xanchor = "left",
 hbar <- function(df, title, xlab, colour = "#2c7fb8", height = 440, tickformat = NULL) {
   df <- df[order(df$val), , drop = FALSE]
   df$cat <- factor(df$cat, levels = unique(df$cat))
-  pconf(plotly::plot_ly(df, x = ~val, y = ~cat, type = "bar", orientation = "h",
+  pconf(plotly::plot_ly(df, x = ~val, y = ~cat, type = "bar", orientation = "h", textposition = "none",
                         marker = list(color = colour),
                         text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
         plotly::layout(title = ttl(title), height = height,
@@ -128,21 +110,24 @@ hbar <- function(df, title, xlab, colour = "#2c7fb8", height = 440, tickformat =
 }
 
 # Stacked horizontal bar. df: cat, val, grp, hover
-sbar <- function(df, title, xlab, height = 470, tickformat = ".0%") {
-  pconf(plotly::plot_ly(df, x = ~val, y = ~cat, color = ~grp, colors = pal,
-                        type = "bar", orientation = "h",
+sbar <- function(df, title, xlab, height = 470, tickformat = ".0%", colors = pal, legend_title = "") {
+  pconf(plotly::plot_ly(df, x = ~val, y = ~cat, color = ~grp, colors = colors,
+                        type = "bar", orientation = "h", textposition = "none",
                         text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
         plotly::layout(barmode = "stack", title = ttl(title), height = height,
                        margin = list(l = 140, t = 60),
                        xaxis = list(title = xlab, tickformat = tickformat),
                        yaxis = list(title = ""),
-                       legend = list(orientation = "h", y = -0.15)))
+                       # On the right: a horizontal legend under a short chart collides
+                       # with the axis title.
+                       legend = list(orientation = "v", x = 1.02, y = 1, yanchor = "top",
+                                     title = list(text = legend_title))))
 }
 
 # Grouped vertical bar. df: cat, val, grp, hover
 gbar <- function(df, title, xlab, ylab, height = 470) {
   pconf(plotly::plot_ly(df, x = ~cat, y = ~val, color = ~grp, colors = pal,
-                        type = "bar",
+                        type = "bar", textposition = "none",
                         text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
         plotly::layout(barmode = "group", title = ttl(title), height = height,
                        margin = list(t = 60),
@@ -185,7 +170,11 @@ lplot <- function(df, title, xlab, ylab, logx = TRUE, logy = TRUE, height = 470)
 
 itable <- function(df, caption = NULL, pageSize = 10, ...) {
   if (!have(df)) return(note("No data available."))
+  # Whole-number columns (counts) without decimals; other numbers to 3 digits.
+  counts <- names(df)[vapply(df, function(x) is.numeric(x) && all(is.na(x) | x == round(x)), logical(1))]
+  cols <- setNames(lapply(counts, function(c) colDef(format = colFormat(digits = 0, separators = TRUE))), counts)
   reactable(
+    columns = if (length(cols)) cols else NULL,
     df,
     searchable = TRUE, sortable = TRUE, filterable = FALSE,
     highlight = TRUE, compact = TRUE, striped = TRUE,
@@ -203,71 +192,18 @@ itable <- function(df, caption = NULL, pageSize = 10, ...) {
 
 ```{r}
 #| label: load-all
-# ── VDJ QC ──
-vdj_compact    <- T("vdj_qc", "vdj_qc_per_sample_compact.tsv")
-vdj_retention  <- T("vdj_qc", "qc_contigs_before_after_summary.tsv")
-vdj_rank       <- T("vdj_qc", "clone_rank_abundance.tsv")
-vdj_pairing    <- T("vdj_qc", "pairing_status_all.tsv")
-vdj_cdr3len    <- T("vdj_qc", "cdr3_lengths_all.tsv")
-vdj_vusage     <- T("vdj_qc", "v_gene_usage.tsv")
-vdj_jusage     <- T("vdj_qc", "j_gene_usage.tsv")
-vdj_samplesheet<- T("vdj_qc", "sample_sheet_resolved.tsv")
-
-# ── Pseudobulk QC gate ──
-pb_qc          <- T("pseudobulk", "pseudobulk_qc_summary.csv")
-pb_vfam        <- T("pseudobulk", "pseudobulk_v_family.csv")
-
-# ── Shared bulk engine ──
-sample_stats   <- T("sample", "sample_stats.csv")
-sample_vfam    <- T("sample", "v_family.csv")
-sample_jfam    <- T("sample", "j_family.csv")
-sharing        <- T("compare", "cdr3_sharing.tsv")
-
-# ── Clustering rollups ──
-giana_roll     <- T("rollup", "giana_summary_rollup.tsv")
-gliph2_roll    <- T("rollup", "gliph2_summary_rollup.tsv")
-tcrdist_roll   <- T("rollup", "tcrdist3_summary_rollup.tsv")
-method_presence<- Tfirst(c("consensus", "rollup"), "method_presence_summary.tsv")
-method_counts  <- Tfirst(c("consensus", "rollup"), "method_cluster_counts.tsv")
-anno_giana     <- T("rollup", "annotation_giana_summary.tsv")
-anno_gliph2    <- T("rollup", "annotation_gliph2_summary.tsv")
-anno_tcrdist   <- T("rollup", "annotation_tcrdist3_summary.tsv")
-giana_detail   <- T("rollup", "giana_cluster_detail.tsv")
-gliph2_detail  <- T("rollup", "gliph2_motif_detail.tsv")
-tcrdist_detail <- T("rollup", "tcrdist_cluster_detail.tsv")
-giana_vgene    <- T("rollup", "giana_vgene_usage.tsv")
-gliph2_vgene   <- T("rollup", "gliph2_vgene_usage.tsv")
-
-# ── Repertoire metrics (REPERTOIRE_METRICS, shared engine) ──
-# Per-sample diversity is in sample_stats.csv; clone unit is TRB clonotypes for bulk and
-# paired clones (cells) for single-cell.
-rep_rollup     <- T("repertoire", "repertoire_summary.tsv")
-clone_burden   <- T("repertoire", "clone_size_bins.tsv")
-overlap_long   <- T("repertoire", "overlap_samples.tsv")
-clone_sharing  <- T("repertoire", "clone_sharing.tsv")
-top_shared     <- if (have(clone_sharing)) head(clone_sharing, 50) else NULL
-overlap_mat    <- if (have(overlap_long)) {
-  overlap_long %>%
-    select(sample_a, sample_b, jaccard) %>%
-    pivot_wider(names_from = sample_b, values_from = jaccard) %>%
-    rename(sample = sample_a)
-} else NULL
+# Only the tables the Master Summary still renders: consensus clustering and the GEX
+# section. The run-level QC, repertoire, overlap and sequence-clustering tables moved with
+# their sections to the QC & Run Info and Details reports.
 
 # ── GEX-dependent ──
 tcell_roll     <- T("tcell", "tcell_summary_rollup.tsv")
-tcell_anno     <- T("tcell", "tcell_per_annotation_summary.tsv")
-tcell_topclone <- T("tcell", "tcell_top_clones.tsv")
-tcell_overlap  <- T("tcell", "barcode_overlap_by_sample.tsv")
-merged_vdj     <- T("mergedvdj", "post_qc_summary.tsv")
 conga_roll     <- T("conga", "conga_summary_rollup.tsv")
 conga_clusters <- T("conga", "conga_cluster_summary.tsv")
-anno_conga     <- T("conga", "annotation_conga_summary.tsv")
 cons_roll      <- T("consensus", "consensus_summary_rollup.tsv")
 tcri_roll      <- T("tcri", "tcri_summary_rollup.tsv")
 tcri_scores    <- T("tcri", "high_tcri_clone_summary.tsv")
-anno_tcri      <- T("tcri", "annotation_tcri_summary.tsv")
 cons_clusters  <- T("consensus", "consensus_cluster_summary.tsv")
-anno_cons      <- T("consensus", "annotation_consensus_summary.tsv")
 
 # ── Per-cell export ──
 export_cells <- NULL

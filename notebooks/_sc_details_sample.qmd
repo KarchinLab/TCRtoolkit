@@ -2,17 +2,32 @@
 
 # Single-cell details {#sec-sc-sample}
 
-::: {.callout-note collapse="true"}
-## About this section
-This section is added because the run used **single-cell** TCR data. The per-sample analyses
-above use each sample's pseudobulk. Here each clone is resolved into its cells, which shows
-where the clones sit on the transcriptional map, which cell states make up each sample's
-largest clones, and how uniform a clone's phenotype is. When a GEX object was supplied it also
-shows CoNGA and TCRi per cell state. Tabs are organised by patient, and each patient's samples
-are ordered by timepoint, then compartment.
+Each clone resolved into its cells, so that clonal expansion can be read together with the
+cells' transcriptional state. Bulk sequencing can say *that* a clone expanded; single-cell data
+says *what the expanded cells are doing*: effector, memory, exhausted, proliferating. Tabs are
+organised by patient, with each patient's samples ordered by timepoint, then compartment.
+
+::: {.callout-tip appearance="simple" collapse="true"}
+## Key terms
+- **Clone**: cells sharing the same paired α/β receptor (`A:<CDR3α>|B:<CDR3β>`), the progeny of
+  one naive T cell.
+- **Cell state**: the cell's annotation from the GEX object (for example cytotoxic CD8 Teff or
+  exhausted CD8), i.e. what the transcriptome says the cell is.
+- **Expanded clone**: a clone with several cells in the same sample. Proliferation follows
+  antigen recognition, so expanded clones are the best candidates for antigen-specific T cells.
 :::
 
 ## Clonal expansion on the cell-state map {#sec-sc-embedding}
+
+**What it shows.** The GEX embedding (UMAP) places transcriptionally similar cells close
+together; each cell is coloured by how large its clone is in that sample.
+
+**Why it matters.** It shows which transcriptional programmes the expansion feeds, which a
+repertoire-only analysis cannot see.
+
+**How to read it.** Bright clusters of cells in one region mean the expanded clones share a
+state; bright cells scattered across regions mean single clones span several states. Compare
+panels across timepoints, or blood against tissue, to see the expansion move.
 
 ```{python}
 #| output: asis
@@ -44,9 +59,20 @@ if sc_cells is None or not sc_has_emb:
 else:
     sc_patient_tabs(_embed_patient)
 ```
-**Figure SC-S1. Clonal expansion on the transcriptional map.** Every cell of the sample (grey: no productive TCR) on the GEX embedding, coloured by the size of its clone *within that sample*. Expanded clones that gather in one region of the map share a transcriptional programme. Expanded clones spread across regions span several states (for example effector and memory progeny of one clone). Compare panels to see the expansion move between states over a patient's timepoints, or differ between blood and tissue.
+**Figure `{python} fig_no()`. Clonal expansion on the transcriptional map.** Every cell of the sample (grey: no productive TCR) on the GEX embedding, coloured by the size of its clone *within that sample*. Expanded clones that gather in one region of the map share a transcriptional programme. Expanded clones spread across regions span several states (for example effector and memory progeny of one clone). Compare panels to see the expansion move between states over a patient's timepoints, or differ between blood and tissue.
 
 ## Cell-state make-up of the largest clones {#sec-sc-top-clones}
+
+**What it shows.** The biggest clones of each sample, each bar split by the states of its
+cells.
+
+**Why it matters.** A clone's progeny can commit to one fate or branch into several; which one
+happens is a hallmark of the type of response.
+
+**How to read it.** One colour per bar: a committed clone (often effector or exhausted in
+tumours). Several colours: a clone with effector and memory branches, typical of an ongoing
+response. Compare the same clone (same CDR3β) across a patient's sample tabs to see whether its
+make-up shifts over time or between blood and tissue.
 
 ```{python}
 #| output: asis
@@ -79,9 +105,21 @@ if sc_tcr is None or not sc_has_annot:
 else:
     sc_patient_tabs(_top_clones_patient)
 ```
-**Figure SC-S2. The largest clones of each sample, split by cell state.** Each bar is one clone, with its cells coloured by annotation. A single-colour bar is a phenotypically committed clone. A multi-colour bar is a clone whose progeny occupy several states, the usual signature of an ongoing response with effector and memory branches.
+**Figure `{python} fig_no()`. The largest clones of each sample, split by cell state.** One tab per patient and sample; each bar is one of the sample's 15 largest expanded clones (labelled by its CDR3β), its length the number of cells and its colours the cells' annotations. A single-colour bar is a phenotypically committed clone. A multi-colour bar is a clone whose progeny occupy several states, the usual signature of an ongoing response with effector and memory branches.
 
 ## Phenotypic heterogeneity within clones {#sec-sc-heterogeneity}
+
+**What it shows.** For every clone of at least 5 cells, the Shannon entropy of its cells'
+states against its size.
+
+**Why it matters.** It summarises the previous figure for all clones at once, separating
+committed from multipotent expansions, i.e. the phenotypic plasticity of each clone (the
+Master Summary's TCRi section measures the same property with a model).
+
+**How to read it.** Entropy 0 means every cell has the same state; higher values mean the clone
+spreads over several (1 bit: an even split between two states; 2 bits: between four). Large,
+low-entropy clones are terminally committed; large, high-entropy clones keep a memory-like,
+multipotent structure.
 
 ```{python}
 #| output: asis
@@ -104,8 +142,11 @@ else:
                 .reset_index())
         h = h.merge(sc_meta[['base_sample', subject_col, 'tp_label', 'origin']]
                     .rename(columns={'base_sample': 'sample'}), on='sample', how='left')
-        h['clone'] = sc_beta(h['clone_id'])
+        h['clone'] = sc_beta(h['clone_id']).astype(object).fillna(h['clone_id'].astype(str))
         h['label'] = h['sample'].map(sc_alias).fillna(h['sample'])
+        # Plotly cannot serialise pandas' NA in hover data.
+        for c in ('tp_label', 'origin', subject_col):
+            h[c] = h[c].astype(object).where(h[c].notna(), '')
         pats = [p for p in sc_patients if p in set(h[subject_col])]
         fig = px.scatter(h, x='cells', y='entropy', color='dominant', facet_col=subject_col,
                          facet_col_wrap=min(4, len(pats)), log_x=True,
@@ -121,9 +162,29 @@ else:
         fig.update_traces(marker=dict(size=8, opacity=0.75, line=dict(width=0.5, color='white')))
         sc_show(fig, height=max(SC_HEIGHT, 330 * int(np.ceil(len(pats) / 4))))
 ```
-**Figure SC-S3. Phenotypic heterogeneity within clones.** One point per clone per sample (clones of ≥5 cells), showing the Shannon entropy of its cells' annotations: 0 means all cells share one state, and higher values mean the clone spans several states. Colour is the clone's dominant state. Large clones with low entropy are terminally committed (often effector or exhausted). Large clones with high entropy keep a multi-potent, memory-like structure.
+**Figure `{python} fig_no()`. Phenotypic heterogeneity within clones.** One panel per patient; one point per clone per sample (clones of ≥5 cells), its size on the log x-axis, showing the Shannon entropy of its cells' annotations: 0 means all cells share one state, and higher values mean the clone spans several states. Colour is the clone's dominant state. Large clones with low entropy are terminally committed (often effector or exhausted). Large clones with high entropy keep a multi-potent, memory-like structure.
 
 ## CoNGA by cell state {#sec-sc-conga-states}
+
+**What it is.** CoNGA (clonotype neighbour graph analysis; Schattgen *et al.*, *Nat
+Biotechnol* 2022, [doi:10.1038/s41587-021-00989-2](https://doi.org/10.1038/s41587-021-00989-2))
+builds two neighbour graphs over clonotypes: one from gene expression and one from receptor
+similarity (TCRdist). A clonotype whose expression neighbours are also its receptor
+neighbours, more often than chance, is a **CoNGA hit** (score < 1; lower is stronger). In this
+pipeline CoNGA runs once on the whole cohort.
+
+**Why it matters.** Hits are groups of similar receptors that drive a shared transcriptional
+programme, the joint signal expected from T cells recognising related antigens, or from
+innate-like T cells with a fixed receptor.
+
+**How to read it.** The heatmap gives, per sample and cell state, the share of TCR+ cells in hit
+clonotypes. Hits concentrated in one state point to a receptor family behind that programme;
+a state whose hit share changes between a patient's samples shows that programme growing or
+receding over time. Where the hits sit on the cell-state map is in the Master Summary
+(CoNGA section). Invariant
+MAIT and iNKT receptors are frequent hits in naive-like or innate states and are usually not
+antigen-specific; with patient-specific clones, also check that a hit group is not just one
+patient's cells.
 
 ```{python}
 #| output: asis
@@ -150,27 +211,28 @@ else:
         fig.update_layout(title='Share of TCR+ cells in CoNGA hit clonotypes, by cell state and sample')
         sc_show(fig, height=max(SC_HEIGHT, 26 * len(rows) + 160))
 
-    if sc_has_emb:
-        e = sc_downsample(t, SC_MAX_POINTS, seed=2).copy()
-        # Non-hits (score >= 1) sit at 0; the scale tops out at the 99th percentile of hits
-        # so a handful of extreme scores do not wash out the rest.
-        e['neglog'] = -np.log10(pd.to_numeric(e['conga_score'], errors='coerce').clip(lower=1e-300, upper=1))
-        e = e.sort_values('neglog')
-        cmax = max(2.0, float(e.loc[e['neglog'] > 0, 'neglog'].quantile(0.99))) if (e['neglog'] > 0).any() else 2.0
-        fig = px.scatter(e, x='emb_1', y='emb_2', color='neglog', color_continuous_scale='Viridis',
-                         range_color=[0, cmax],
-                         hover_data={'annot': True, 'conga_score': ':.2e', 'emb_1': False, 'emb_2': False, 'neglog': False},
-                         labels={'neglog': '−log10 CoNGA', 'emb_1': '', 'emb_2': ''},
-                         title='CoNGA score on the cell-state map (all samples)', render_mode='webgl')
-        fig.update_traces(marker=dict(size=3))
-        fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
-        fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
-        fig.update_coloraxes(colorbar=dict(title='−log10 score<br>(>0 = hit)'))
-        sc_show(fig, height=520)
 ```
-**Figure SC-S4. CoNGA by cell state.** The heatmap shows, for each sample and cell state, the share of TCR+ cells whose clonotype is a CoNGA hit (score < 1). The map colours every TCR+ cell by −log10 of its CoNGA score, so cells above 0 are hits and brighter cells are stronger hits. CoNGA hits that concentrate in one state point to a group of related receptors driving that programme. MAIT/iNKT-like invariant receptors are common hits in naive-like or innate states and are usually not antigen-specific.
+**Figure `{python} fig_no()`. CoNGA by cell state.** Share of each sample's TCR+ cells (columns, ordered by patient and timepoint) in each cell state (rows) that belong to CoNGA hit clonotypes; only sample × state groups with at least 10 cells are shown (blank otherwise). Hover a tile for the cell count.
 
 ## TCRi: predicted versus observed phenotype {#sec-sc-tcri-confusion}
+
+**What it is.** TCRi (Ceglia *et al.*, [bioRxiv 2022.10.01.510457](https://www.biorxiv.org/content/10.1101/2022.10.01.510457v1);
+[github.com/nceglia/tcri](https://github.com/nceglia/tcri)) is an information-theoretic
+framework for paired TCR and GEX data. Its probabilistic model learns, for every clonotype, a
+distribution over phenotypes from the expression of the clonotype's cells. The **TCRi score**
+of a cell is the probability of its most likely phenotype; the predicted phenotype is that
+phenotype.
+
+**Why it matters.** It measures how strongly clonal identity determines cell fate. If cells of
+a clone reliably adopt the same state, the receptor (or the antigen it sees) is shaping fate;
+if not, the environment dominates.
+
+**How to read it.** The heatmap sets the phenotype TCRi predicts (columns) against the observed
+annotation (rows), normalised per row: a strong diagonal means clone identity carries much of
+the information about cell state; off-diagonal tiles show states that the receptor does not
+separate (cells observed in one state whose clone is predicted to favour another), the
+signature of plastic clones that span both. TCRi scores per state and over time, and a
+clone-level plasticity map, are in the Master Summary (TCRi section).
 
 ```{python}
 #| output: asis
@@ -205,11 +267,5 @@ else:
             _tcri_conf(t[t[subject_col] == p], f'{p}: TCRi-predicted vs observed phenotype')
     print(":::\n")
 
-    order = t.groupby('annot')['tcri_score'].median().sort_values(ascending=False).index[:15].tolist()
-    fig = px.box(t[t['annot'].isin(order)], x='annot', y='tcri_score', color='origin' if sc_multi_origin else None,
-                 category_orders={'annot': order}, points=False, color_discrete_map=sc_origin_colors,
-                 labels={'annot': '', 'tcri_score': 'TCRi score', 'origin': 'Origin'},
-                 title='TCRi score by observed cell state')
-    sc_show(fig, height=480)
 ```
-**Figure SC-S5. TCRi.** The heatmap cross-tabulates the phenotype TCRi predicts from each receptor (columns) against the cell's observed annotation (rows), normalised per row. A strong diagonal means that, in this cohort, receptor sequence alone carries much of the information about cell fate. The box plot shows TCRi scores per observed state (split by compartment when there are several). States with high scores are those whose receptors are most distinctive.
+**Figure `{python} fig_no()`. TCRi: predicted versus observed phenotype.** Rows are the observed annotations (the 15 most frequent), columns the phenotype TCRi predicts for the cell's clone; each row sums to 100% of its cells (hover for counts). One tab for all patients together and one per patient.

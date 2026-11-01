@@ -6,26 +6,24 @@ include { MASTER_SUMMARY } from '../../modules/scratch/MASTER_SUMMARY/main.nf'
 /*
  * MASTER_SUMMARY_SW
  *
- * Runs on both single-cell routes. Each `*_tables` input is the collected tables/
- * directory of one upstream module, or an empty list on a route where that module did
- * not run - the report then explains the absence instead of rendering a blank section.
+ * Runs on every route. Each `*_tables` input is the collected tables/ directory of one
+ * upstream module, or an empty list on a route where that module did not run - the report
+ * then explains the absence instead of rendering a blank section. `discovery_md` is the
+ * Discovery Brief flattened to markdown (REPORT.out.discovery_md), shown as the report's
+ * opening sections, or NO_FILE without the report notebooks.
  */
 workflow MASTER_SUMMARY_SW {
     take:
     seurat_rds
     export_cells
 
-    vdj_qc_tables
-    pseudobulk_tables
-    sample_tables
-    compare_tables
     rollup_tables
-    repertoire_tables
     tcell_tables
     conga_tables
     consensus_tables
     tcri_tables
-    mergedvdj_tables
+    clonal_tables       // CLONAL_DYNAMICS tables (cell states of expanding/contracting clones)
+    discovery_md
 
     barrier_done
     project_name
@@ -40,17 +38,13 @@ workflow MASTER_SUMMARY_SW {
     MASTER_SUMMARY(
         seurat_rds,
         export_cells,
-        vdj_qc_tables,
-        pseudobulk_tables,
-        sample_tables,
-        compare_tables,
         rollup_tables,
-        repertoire_tables,
         tcell_tables,
         conga_tables,
         consensus_tables,
         tcri_tables,
-        mergedvdj_tables,
+        clonal_tables,
+        discovery_md,
         ch_notebook,
         barrier_done,
         project_name

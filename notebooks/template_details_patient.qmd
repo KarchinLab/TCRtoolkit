@@ -19,7 +19,7 @@ jupyter: python3
 
 {{< include ./_report_style.qmd >}}
 
-Patient-level clonotype clustering (GIANA, and GLIPH2 when `--use_gliph2` is enabled), aggregating all samples belonging to each individual.
+Patient-level TCR sequence clustering: GIANA, GLIPH2 (with `--use_gliph2`) and TCRdist3, their comparison and the consensus clusters, each over all of a patient's samples.
 
 ```{python}
 #| tags: [parameters]
@@ -56,7 +56,7 @@ project_dir=f"{project_dir}/{project_name}"
 
 ```
 
-# Before You Begin
+# Before You Begin {.unnumbered}
 
 This pipeline can be used to analyze both **single-cell and bulk TCR data**. Please see the note below to understand some of the **implications** depending on the data type you have:
 
@@ -72,7 +72,7 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 
 **<u>TCR chains</u>**  
 - **Single-cell**:  
-  It's common to have paired α/β chains per cell. However, we only focus on the Beta chain here.  
+  Each cell carries a paired α/β receptor. Clone-level analyses use the paired clone; per-chain views (gene usage) show TRA and TRB; analyses built on CDR3β (sharing, generation probability, clustering) use the β chain.  
 - **Bulk**:  
   In bulk repertoire sequencing, you usually amplify TCRα and TCRβ chains separately. The resulting data contains lists of α clonotypes and lists of β clonotypes, but no information about which α and β belong to the same T cell. We focus only on the Beta chain.  
 
@@ -91,9 +91,19 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
   It focuses on population-level measures  
 :::
 
+# TCR sequence clustering {#sec-tcr-clustering}
+
+Receptors that recognise the same epitope often have similar, not identical, sequences.
+Three complementary methods group each patient's clonotypes (all of that patient's samples
+together) by sequence similarity: **GIANA**, **GLIPH2** and **TCRdist3**. Their clusters are
+then compared and reconciled into **consensus clusters**, which on single-cell VDJ+GEX data
+also draw on **CoNGA**. Each method is shown in turn, then the comparison and the consensus.
+
 {{< include ./template_giana.qmd >}}
 
 {{< include ./template_gliph.qmd >}}
+
+{{< include ./_patient_clustering.qmd >}}
 
 <!-- Single-cell section: the real one with SC data, an empty stub otherwise (subworkflows/local/report.nf). -->
 {{< include ./_sc_details_patient.qmd >}}

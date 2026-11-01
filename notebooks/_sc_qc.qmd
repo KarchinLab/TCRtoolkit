@@ -1,151 +1,186 @@
 {{< include ./_sc_common.qmd >}}
 
+{{< include ./_report_bundle.qmd >}}
+
 # Single-cell QC {#sec-sc-qc}
 
-::: {.callout-note collapse="true"}
-## About this section
-This section is added because the run used **single-cell** TCR data. The bulk-style QC above
-was computed on each sample's pseudobulk, where one count is one cell. The checks here look
-at what pseudobulking hides: how many cells carried a usable receptor, whether the receptor
-could be matched to a transcriptome (GEX) cell, which samples the pseudobulk QC gate removed,
-and whether TCRs turn up in cell types that should not have them.
-:::
+Checks that only exist for single-cell data: how many receptors reach the analysis, contig
+and chain-pairing quality, and whether TCRs turn up in cell types that should not carry them.
 
-## Cells and receptor chains {#sec-sc-chains}
+## VDJ QC per sample {#sec-vdj-qc}
+
+Cells, receptor pairing and clones per sample from the Cell Ranger contigs, after VDJ QC.
 
 ```{python}
 #| output: asis
 #| echo: false
 
-_pair = sc_read('vdj_qc', 'pairing_status_all.tsv')
-if _pair is None or not {'sample', 'pairing'} <= set(_pair.columns):
-    sc_note("VDJ QC did not produce a per-cell pairing table for this run.")
+_cmp = rb_read('vdj_qc', 'vdj_qc_per_sample_compact.tsv')
+if _cmp is None:
+    rb_note("VDJ QC did not contribute a per-sample summary.")
 else:
-    d = (_pair.groupby(['sample', 'pairing']).size().rename('cells').reset_index())
-    d['frac'] = d['cells'] / d.groupby('sample')['cells'].transform('sum')
-    d['label'] = d['sample'].map(sc_alias).fillna(d['sample'])
-    order = [sc_alias.get(s, s) for s in sc_sample_order if s in set(d['sample'])]
-    order += sorted(set(d['label']) - set(order))
-    print("::: {.panel-tabset}\n")
-    for mode, ycol, ytitle in (('Cells', 'cells', 'Cells'), ('Fraction', 'frac', 'Fraction of cells')):
-        print(f"## {mode}\n")
-        fig = px.bar(d, x='label', y=ycol, color='pairing', category_orders={'label': order},
-                     hover_data={'cells': True, 'frac': ':.1%'},
-                     labels={'label': 'Sample', ycol: ytitle, 'pairing': 'Chains'},
-                     title='Receptor chains recovered per cell')
-        if ycol == 'frac':
-            fig.update_yaxes(tickformat='.0%')
-        sc_show(fig)
-    print(":::\n")
-```
-**Figure SC1. Receptor chain pairing per sample.** Each cell is classified by the productive chains Cell Ranger recovered for it. Only cells with a β chain contribute a clonotype to the bulk-style analyses, and only α+β cells give a fully defined receptor. Samples are ordered by patient, then timepoint.
-
-- A sample with clearly fewer α+β cells than its peers usually has a library or capture problem, not a biological difference.
-- A large share of multi-chain cells (e.g. two β chains) points to doublets. These cells inflate apparent sharing between clones.
-
-```{python}
-#| output: asis
-#| echo: false
-
-_cmp = sc_read('vdj_qc', 'vdj_qc_per_sample_compact.tsv')
-if _cmp is not None:
     keep = [c for c in ('sample', 'patient_id', 'timepoint', 'n_cells_total', 'n_cells_paired',
                         'pct_cells_paired', 'pct_cells_multichain', 'n_unique_clones',
                         'retained_pct') if c in _cmp.columns]
     t = _cmp[keep].copy()
+    t['sample'] = rb_label(t['sample'])
     for c in ('pct_cells_paired', 'pct_cells_multichain'):
         if c in t.columns and pd.to_numeric(t[c], errors='coerce').max() <= 1:
             t[c] = (100 * pd.to_numeric(t[c], errors='coerce')).round(1)
-    display(Markdown("**Table SC1. Per-sample VDJ QC summary.**"))
-    display(HTML(t.to_html(index=False, classes='table table-sm table-striped')))
+    rb_table(t)
 ```
 
-## Receptor to transcriptome matching {#sec-sc-gex-match}
+**Table. VDJ QC per sample.** Cells with a TCR, cells with a complete α+β pair and with more
+than one chain of a type (multichain), unique paired clones, and the share of contigs kept by QC.
+Samples with few cells or a low paired share give less reliable clone-level results; a high
+multichain share can mean doublets.
+
+## Contig retention {#sec-contig-retention}
+
+Share of contigs kept by QC filtering (productive, high-confidence, full-length, minimum UMIs
+and reads). A sample retaining markedly less than its peers usually has a library or depth
+problem.
 
 ```{python}
 #| output: asis
 #| echo: false
 
-_ov = sc_read('tcell', 'barcode_overlap_by_sample.tsv')
-if not sc_has_gex:
-    sc_note("This run had no GEX object (VDJ-only route): every receptor is analysed, and no "
-            "transcriptome matching was attempted.")
-elif _ov is None or not {'sample', 'tcr_barcodes', 'overlap'} <= set(_ov.columns):
-    sc_note("T-cell integration did not report per-sample barcode overlap.")
+_ret = rb_read('vdj_qc', 'qc_contigs_before_after_summary.tsv')
+ycol = rb_col(_ret, ['retained_pct', 'retained_prop', 'pct_retained']) if _ret is not None else None
+if ycol is None:
+    rb_note("No contig retention table available.")
 else:
-    d = _ov.copy()
-    d['rate'] = pd.to_numeric(d['overlap'], errors='coerce') / pd.to_numeric(d['tcr_barcodes'], errors='coerce')
-    tot, hit = d['tcr_barcodes'].sum(), d['overlap'].sum()
-    rate = hit / tot if tot else np.nan
-    kind = 'warning' if rate < 0.75 else 'note'
-    sc_note(f"**{hit:,} of {tot:,} receptors ({rate:.1%}) matched a GEX cell.** In the full "
-            "single-cell route the pseudobulk is built from matched cells, so the remaining "
-            f"{tot - hit:,} are absent from every downstream result. They are kept in "
-            "`bridge/merged_vdj_object/` with `gex_matched = FALSE`. Below about 75%, check that the "
-            "barcode conventions of the VDJ and GEX libraries reconcile.", kind)
-    d[subject_col] = d['sample'].map(dict(zip(sc_meta['base_sample'], sc_meta[subject_col])))
-    d['label'] = d['sample'].map(sc_alias).fillna(d['sample'])
-    order = [sc_alias.get(s, s) for s in sc_sample_order if s in set(d['sample'])]
-    fig = px.bar(d, x='label', y='rate', color=subject_col, category_orders={'label': order},
-                 hover_data={'tcr_barcodes': True, 'overlap': True, 'rate': ':.1%'},
-                 labels={'label': 'Sample', 'rate': 'Receptors matched to a GEX cell'},
-                 title='Receptor-to-GEX match rate')
-    fig.add_hline(y=0.75, line_dash='dash', line_color='grey')
-    fig.update_yaxes(tickformat='.0%', range=[0, 1.05])
-    sc_show(fig)
+    v = pd.to_numeric(_ret[ycol], errors='coerce')
+    if v.max() <= 1:
+        v = 100 * v
+    lab = rb_label(_ret['sample'])
+    rb_hbar(pd.DataFrame({'cat': lab, 'val': v,
+                          'hover': [f"{l}<br>retained: {x:.1f}%" for l, x in zip(lab, v)]}),
+            "Contig retention after QC", "Retained (%)")
 ```
 
-## Pseudobulk QC gate {#sec-sc-gate}
+**Figure. Contig retention.** Percentage of each sample's contigs that passed QC. Most samples
+should sit close together; an outlier at the low end deserves a look at its Cell Ranger summary.
+
+## Chain pairing {#sec-chain-pairing}
+
+Cells by chain-pairing status. Only α+β cells give a fully defined receptor, so this sets the
+ceiling on everything downstream. Many multi-chain cells (for example two β chains) point to
+doublets, which inflate apparent sharing between clones.
 
 ```{python}
 #| output: asis
 #| echo: false
 
-_pb = sc_read('pseudobulk', 'pseudobulk_qc_summary.csv')
-if _pb is None:
-    sc_note("No pseudobulk QC summary was produced for this run.")
+_pair = rb_read('vdj_qc', 'pairing_status_all.tsv')
+if _pair is None or not {'sample', 'pairing'} <= set(_pair.columns):
+    rb_note("No pairing status table available.")
 else:
-    d = _pb.copy()
-    d['label'] = d['sample'].map(sc_alias).fillna(d['sample'])
-    fig = px.scatter(d, x='n_clones', y='n_cells', color='pass', hover_name='label',
-                     color_discrete_map={'PASS': '#1b9e77', 'FAIL': '#d95f02'},
-                     log_x=True, log_y=True,
-                     labels={'n_clones': 'Clonotypes', 'n_cells': 'Cells', 'pass': 'QC gate'},
-                     title='Pseudobulk QC gate (dashed lines = thresholds)')
-    fig.add_vline(x=max(d['min_clones'].iloc[0], 1), line_dash='dash', line_color='grey')
-    fig.add_hline(y=max(d['min_cells'].iloc[0], 1), line_dash='dash', line_color='grey')
-    fig.update_traces(marker=dict(size=11, line=dict(width=1, color='DarkSlateGrey')))
-    sc_show(fig)
-    failed = d.loc[d['pass'] != 'PASS', 'label'].tolist()
-    if failed:
-        sc_note(f"**{len(failed)} unit(s) failed the gate** and are excluded from every "
-                f"analysis in these reports: {', '.join(failed)}.", 'warning')
-```
-**Figure SC2. Pseudobulk QC gate.** Each unit (a sample, or a sample × phenotype when `--pseudobulk_by_phenotype` is set) needs at least `pseudobulk_qc_min_clones` clonotypes and `pseudobulk_qc_min_cells` cells to enter the analysis. Units below either threshold are dropped. A sample missing from later sections was most likely dropped here.
-
-## Phenotypes of TCR+ cells {#sec-sc-tcr-annot}
-
-```{python}
-#| output: asis
-#| echo: false
-
-if sc_tcr is None or not sc_has_annot:
-    sc_note("No cell-type annotation is available for this run (VDJ-only route, or a single "
-            "label in the GEX object), so TCR+ cells cannot be broken down by phenotype.")
-else:
-    d = (sc_tcr.groupby(['sample', 'annot']).size().rename('cells').reset_index())
+    d = _pair.groupby(['sample', 'pairing']).size().rename('cells').reset_index()
     d['frac'] = d['cells'] / d.groupby('sample')['cells'].transform('sum')
-    d['label'] = d['sample'].map(sc_alias).fillna(d['sample'])
-    order = [sc_alias.get(s, s) for s in sc_sample_order if s in set(d['sample'])]
-    top = d.groupby('annot')['cells'].sum().nlargest(15).index
-    d['annot'] = d['annot'].where(d['annot'].isin(top), 'Other')
-    d = d.groupby(['label', 'annot'], as_index=False)[['cells', 'frac']].sum()
-    fig = px.bar(d, x='label', y='frac', color='annot', category_orders={'label': order},
-                 color_discrete_map=sc_annot_colors(d['annot'].unique()),
-                 hover_data={'cells': True, 'frac': ':.1%'},
-                 labels={'label': 'Sample', 'frac': 'Fraction of TCR+ cells', 'annot': 'Annotation'},
-                 title='Cell-type composition of TCR+ cells')
-    fig.update_yaxes(tickformat='.0%')
-    sc_show(fig, height=480)
+    lab = rb_label(d['sample'])
+    rb_sbar(pd.DataFrame({'cat': lab, 'val': d['frac'], 'grp': d['pairing'],
+                          'hover': [f"{l}<br>{p}<br>{c:,} cells ({f:.1%})" for l, p, c, f
+                                    in zip(lab, d['pairing'], d['cells'], d['frac'])]}),
+            "Chain pairing status by sample", "Fraction of cells")
 ```
-**Figure SC3. Cell-type composition of TCR+ cells.** These are the GEX annotations of cells carrying a productive TCR, with the 15 most common labels shown. Nearly all should fall in T-cell (or NKT/γδ) states. A substantial TCR+ fraction in non-T labels (epithelial, myeloid, B cells) suggests doublets or ambient TCR transcripts, and those cells inflate clone sizes in the samples where they occur.
+
+## Receptor retention {#sec-receptor-retention}
+
+On the VDJ+GEX route the analysis uses only receptors whose barcode matched a GEX cell, so an
+unmatched receptor is missing from every result, including GIANA, GLIPH2, TCRdist3 and the
+repertoire statistics. All receptors are kept in `bridge/merged_vdj_object/` with a
+`gex_matched` flag.
+
+```{python}
+#| output: asis
+#| echo: false
+
+_ov = rb_read('tcell', 'barcode_overlap_by_sample.tsv')
+if not rb_has_gex:
+    rb_note("No GEX object on this run (VDJ-only route): there is no barcode join, so every "
+            "receptor is analysed.")
+elif _ov is None or not {'sample', 'tcr_barcodes', 'overlap'} <= set(_ov.columns):
+    rb_note("T-cell integration did not report per-sample barcode overlap.")
+else:
+    _tot = pd.to_numeric(_ov['tcr_barcodes'], errors='coerce')
+    _hit = pd.to_numeric(_ov['overlap'], errors='coerce')
+    tot, hit = int(_tot.sum()), int(_hit.sum())
+    rate = hit / tot if tot else np.nan
+    if rate < 0.75:
+        rb_note(f"**{hit:,} of {tot:,} receptors ({rate:.1%}) matched a GEX cell.** Below about 75%, "
+                "check that the VDJ and GEX barcode conventions reconcile; the per-sample rates show "
+                "whether it is one sample or all of them.", 'warning')
+    else:
+        rb_note(f"**{hit:,} of {tot:,} receptors ({rate:.1%}) matched a GEX cell.**")
+    r = _hit / _tot
+    d = pd.DataFrame({'cat': rb_label(_ov['sample']), 'val': r,
+                      'hover': [f"{c}<br>{h:,.0f} of {t:,.0f} matched<br>{v:.1%}"
+                                for c, h, t, v in zip(rb_label(_ov['sample']), _hit, _tot, r)]})
+    rb_hbar(d, "Receptors matching a GEX cell, by sample", "Match rate", height=400, tickformat='.0%')
+```
+
+## Sample QC and the pseudobulk gate {#sec-pseudobulk-gate}
+
+Each sample (or sample × phenotype with `--pseudobulk_by_phenotype`) needs at least
+`pseudobulk_qc_min_clones` clones and `pseudobulk_qc_min_cells` cells; units below either are
+dropped from all downstream analysis. Look here first if a sample is missing later on.
+
+```{python}
+#| output: asis
+#| echo: false
+
+_pb = rb_read('pseudobulk', 'pseudobulk_qc_summary.csv')
+if _pb is None:
+    rb_note("No pseudobulk QC summary was produced for this run.")
+else:
+    lab = rb_label(_pb['sample'])
+    d = pd.DataFrame({'x': _pb['n_clones'], 'y': _pb['n_cells'], 'grp': _pb['pass'].astype(str),
+                      'hover': [f"{l}<br>clones: {c}<br>cells: {n}<br>{p}" for l, c, n, p
+                                in zip(lab, _pb['n_clones'], _pb['n_cells'], _pb['pass'])]})
+    mc, mn = _pb['min_clones'].iloc[0], _pb['min_cells'].iloc[0]
+    rb_scat(d, "Pseudobulk QC gate (dashed lines = thresholds)", "Clonotypes", "Cells", shapes=[
+        dict(type='line', x0=mc, x1=mc, y0=0, y1=_pb['n_cells'].max() * 1.05, line=dict(dash='dash', color='grey')),
+        dict(type='line', x0=0, x1=_pb['n_clones'].max() * 1.05, y0=mn, y1=mn, line=dict(dash='dash', color='grey'))])
+    failed = [l for l, p in zip(lab, _pb['pass']) if p != 'PASS']
+    if failed:
+        rb_note(f"**{len(failed)} unit(s) failed the gate** and are excluded from every analysis in "
+                f"these reports: {', '.join(failed)}.", 'warning')
+    rb_table(_pb.assign(sample=lab))
+```
+
+```{python}
+#| output: asis
+#| echo: false
+
+# Moved from the Master Summary: the run-level summary of the receptor-to-transcriptome
+# join (TCELL_INTEGRATION), on the VDJ+GEX route only.
+if rb_has_gex:
+    rb_heading("T-cell integration {#sec-tcell-integration}")
+    rb_text("How well the VDJ contigs were joined to the cells of the annotated GEX object. "
+            "Barcodes are harmonised between the two (sample prefixes, `-1` suffixes) and the "
+            "strategy with the largest overlap is used.")
+    _ti = rb_read('tcell', 'tcell_summary_rollup.tsv')
+    if _ti is None:
+        rb_note("No T-cell integration summary available.")
+    else:
+        rb_table(_ti)
+        rb_text("**Table. T-cell integration summary.** *TCR barcodes* are the cells with a "
+                "receptor in the contigs; *overlap* is how many of them were found in the GEX "
+                "object before and after barcode harmonisation, and the *final overlap rate* is "
+                "that share. *T-cell subset cells* are the GEX cells kept as T cells, of which "
+                "*TCR-positive* carry a receptor and *paired* a complete α+β pair. An overlap "
+                "rate well below ~70% usually means mismatched barcodes or sample names between "
+                "the GEX object and the contigs, rather than missing receptors.")
+    _cov = rb_read('tcell', 'tcr_merge_per_sample_coverage.tsv')
+    if _cov is not None:
+        if 'sample' in _cov.columns:
+            _cov = _cov.copy()
+            _cov['sample'] = rb_label(_cov['sample'])
+        rb_table(_cov)
+        rb_text("**Table. Receptor coverage per sample.** The same join per sample: GEX and "
+                "TCR cells, cells found in both (`matched_keys`), the share of GEX cells that got "
+                "a receptor (`gex_cov_pct`) and the share of receptor cells found in the GEX "
+                "object (`tcr_cov_pct`). One sample far below its peers points to a barcode or "
+                "naming problem for that library.")
+```
