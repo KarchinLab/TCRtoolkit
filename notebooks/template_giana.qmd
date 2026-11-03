@@ -501,11 +501,11 @@ if valid_patients:
             try:
                 upset_data = from_contents(clusters_by_timepoint)
                 
-                # We keep show_counts=False to bypass the NumPy 2.0 crash, 
-                # but we save the returned dictionary of axes to a variable.
+                # show_counts=False avoids an upsetplot error under NumPy 2;
+                # intersection sizes are added manually below.
                 axes = upset_plot(upset_data, show_counts=False, sort_by='cardinality', fig=fig)
                 
-                # --- NEW WORKAROUND: MANUALLY ADD INTERSECTION SIZES ---
+                # --- Intersection sizes ---
                 # Grab the specific sub-plot that holds the vertical bars
                 ax_intersections = axes['intersections']
                 

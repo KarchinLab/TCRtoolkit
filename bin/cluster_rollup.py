@@ -258,9 +258,8 @@ def resolve_cdr3(df):
 def cluster_key(df, cluster_col):
     """
     GIANA and GLIPH2 both number/label clusters *within* a patient, so the same id
-    reappears across patients for entirely unrelated clusters (45 of 77 collide in the
-    8-sample test set). Counting on the raw id silently merges them - scope it by the
-    patient the file came from.
+    reappears across patients for unrelated clusters. Counting on the raw id would merge
+    them, so the id is scoped by the patient the file came from.
     """
     if cluster_col not in df.columns:
         return None

@@ -99,10 +99,8 @@ import pandas as pd
 import numpy as np
 
 # --- Load precomputed clonal dynamics ---
-# The Fisher's-exact-test expansion/contraction computation used to run here
-# (and, identically, in template_discovery_brief.qmd). It now runs once in
-# the CLONAL_DYNAMICS Nextflow module (bin/clonal_dynamics.py) and both
-# notebooks just load its output.
+# Expansion/contraction (Fisher's exact test) is computed by the CLONAL_DYNAMICS
+# module (bin/clonal_dynamics.py).
 
 clone_cols = ['junction_aa', 'v_call', 'j_call']
 merge_cols = clone_cols + [subject_col, 'origin']

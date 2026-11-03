@@ -36,7 +36,7 @@ On HPC systems without Docker, the same images run under Singularity/Apptainer: 
 
 Below is a minimal example of how to run the pipeline. The `minimal-example` dataset provided is a small subset of the dataset from this manuscript by [Tumeh and Ribas et al. (2014)](https://www.nature.com/articles/nature13954). Note that the results are simply for demonstration purposes and are not intended for biological interpretation.
 
-With the update to [Nextflow strict syntax](https://docs.seqera.io/nextflow/strict-syntax#using-legacy-parameter-declarations), non-default parameters should be supplied in `params.yml` rather than the command line, to ensure that number- and boolean-type parameters do not get cast as strings.
+Supply non-default parameters in `params.yml` rather than on the command line, so that number- and boolean-type parameters are not read as strings (see [Nextflow strict syntax](https://docs.seqera.io/nextflow/strict-syntax#using-legacy-parameter-declarations)).
 
 ```bash
 nextflow run KarchinLab/TCRtoolkit \
@@ -108,9 +108,6 @@ Bulk runs are split into analysis stages, each switched on or off with its own f
 
 Single-cell runs always run all three analysis stages (sample, patient and compare).
 
-> [!NOTE]
-> `--workflow_level` (e.g. `sample,patient,compare`) is deprecated. It still works and overrides the `run_<stage>` flags, but prints a warning.
-
 ## HTML Reports
  
 After the pipeline finishes, `TCRtoolkit` generates interactive HTML reports using [Quarto](https://quarto.org/) (disable with `--run_reports false`). Report notebooks are rendered automatically depending on which stages ran:
@@ -137,7 +134,6 @@ Each report is published to its own folder under `<outdir>/report/`:
     └── SC_GEX_Report.html              # VDJ+GEX route only: the GEX section on its own
 ```
 
-The Discovery Brief (`template_discovery_brief.qmd`) is no longer published on its own: it is rendered with the other notebooks, flattened to markdown (`bin/notebook_to_markdown.py`) and included as the opening sections of the Master Summary. All notebooks read the run-level module tables from one `report_bundle/` directory (`REPORT_BUNDLE`).
  
 ### Conditional Report Sections
  
@@ -151,7 +147,7 @@ Certain sub-reports are automatically appended based on input and workflow optio
 
 ### Repertoire metrics (both modalities)
 
-Diversity, clone-size bins, overlap and clone sharing are computed once, by `REPERTOIRE_METRICS` (`bin/repertoire_metrics.py`) in the `sample` stage, and every report notebook and the Master Summary reads its tables instead of recomputing them:
+Diversity, clone-size bins, overlap and clone sharing are computed once, by `REPERTOIRE_METRICS` (`bin/repertoire_metrics.py`) in the `sample` stage, and every report notebook and the Master Summary reads its tables:
 
 | Output | Contents |
 |---|---|
@@ -163,7 +159,7 @@ Diversity, clone-size bins, overlap and clone sharing are computed once, by `REP
 | `repertoire/clone_sharing.tsv` | Per clone: samples, patients, conditions and timepoints it occurs in |
 | `repertoire/repertoire_summary.tsv` | Cohort rollup |
 
-The clone unit depends on the modality: bulk counts TRB clonotypes (reads/templates), and single-cell counts paired clones (`A:<CDR3a>|B:<CDR3b>`, cells), taken from `paired_clones.tsv` written by the route's bridge (`SC_TO_CDR3` or `VDJ_TO_BULK`), which define the clone identically. The public-clone analysis in `tcrsharing` stays on TRB CDR3 because generation probability (OLGA) is defined per CDR3.
+The clone unit depends on the modality: bulk counts TRB clonotypes (reads/templates), and single-cell counts paired clones (`A:<CDR3a>|B:<CDR3b>`, cells), taken from `paired_clones.tsv` written by the route's bridge (`SC_TO_CDR3` or `VDJ_TO_BULK`), which define the clone identically. The public-clone analysis in `tcrsharing` uses TRB CDR3 because generation probability (OLGA) is defined per CDR3.
 
 ### Clonotype clustering and Master Summary (both modalities)
 

@@ -488,8 +488,7 @@ def read_overlaps():
 # --- EXECUTION ---
 jaccard_df, morisita_df = read_overlaps()
 
-# Later sections group concat_df by patient (previously added as a side effect of the
-# in-notebook overlap calculation).
+# Later sections group concat_df by patient.
 concat_df[subject_col] = concat_df['sample'].map(meta.set_index('sample')[subject_col].to_dict())
 
 # --- RENAME MORISITA SAMPLES TO ALIAS (If applicable) ---
@@ -802,12 +801,10 @@ create_styled_table = rt_table
 import pandas as pd
 
 # --- Load precomputed clonal dynamics ---
-# The Fisher's-exact-test expansion/contraction computation used to run here
-# (and, identically, in template_overlap.qmd). It now runs once in the
-# CLONAL_DYNAMICS Nextflow module (bin/clonal_dynamics.py) and both notebooks
-# just load its output. fc_thold_up/fc_thold_down/signif_thold are kept here
-# (matching the module's defaults) since the status classification and
-# trajectory sections below still reference them directly.
+# Expansion/contraction (Fisher's exact test) is computed by the CLONAL_DYNAMICS
+# module (bin/clonal_dynamics.py). fc_thold_up/fc_thold_down/signif_thold match
+# the module's defaults and are used by the status classification and
+# trajectory sections below.
 
 fc_thold_up = 2.0
 fc_thold_down = 0.5

@@ -144,10 +144,9 @@ cat(sprintf("wrote contigs_after_qc.tsv: %d rows across %d samples\n",
 # (find_gex_cluster_degs -> sc.pl.dotplot) needs louvain GEX clustering to
 # find real, separable clusters with real differentially-expressed genes -
 # a small number of states (independent of TCR clone count) with big,
-# non-overlapping marker sets gives it that; too many/weak states (the
-# earlier version scaled state count with n_clones, diluting the signal)
-# left too few genes anywhere near significant, and CoNGA's own dotplot call
-# crashed on the resulting near-empty gene list (matplotlib
+# non-overlapping marker sets gives it that; too many/weak states
+# leave too few genes anywhere near significant, and CoNGA's own dotplot call
+# crashes on the resulting near-empty gene list (matplotlib
 # "left cannot be >= right" from a degenerate GridSpec).
 n_genes <- 500
 gene_names <- sprintf("Gene%04d", seq_len(n_genes))

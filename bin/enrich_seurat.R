@@ -154,7 +154,7 @@ if (length(gliph2_files) > 0) {
             cluster_col <- intersect(c("tag", "seq_ID", "ultCDR3b"), colnames(df))[1]
             if (is.na(cluster_col)) cluster_col <- colnames(df)[6]
             # Patient identity comes from the filename (${patient}_cluster_member_details.txt);
-            # fall back to the parent directory for legacy layouts.
+            # otherwise fall back to the parent directory name.
             patient_dir <- sub("_cluster_member_details.*$", "", basename(f))
             if (patient_dir == basename(f)) patient_dir <- basename(dirname(f))
             df %>%
