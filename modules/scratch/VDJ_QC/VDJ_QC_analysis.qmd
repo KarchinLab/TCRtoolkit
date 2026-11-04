@@ -65,6 +65,12 @@ params:
   cdr3_aa_min: 8
   cdr3_aa_max: 25
   drop_stop_or_frames: true
+
+  # VDJ <-> GEX sample pairing (bin/sample_name_matching.R)
+  sample_matcher: ""
+  sample_match_drop_tokens: !expr c("TCR","VDJ","VDJT","GEX","GE","RNA","LIB","LIBRARY")
+  sample_match_min_overlap: 0.2
+  sample_match_min_ratio: 3
   top_n_samples_table: 50
 
   # ======================================================
@@ -519,20 +525,46 @@ if (!is.null(metadata_tbl) && nrow(metadata_tbl) > 0) {
     ) %>%
     distinct(sample, .keep_all = TRUE)
 
+  # VDJ and GEX libraries are often named by library type ("...-TCR-LIB" vs
+  # "...-GEX-LIB"), so join through the shared VDJ->GEX pairing rather than on the
+  # raw sample name. `sample` itself keeps the VDJ name in this module's outputs;
+  # TCELL_INTEGRATION does the same pairing and switches to the GEX name there.
+  # bin/ is on the task shell's PATH but R's own startup files can reset PATH inside
+  # the container, so the module stages the script and passes its path.
+  matcher <- params$sample_matcher %||% ""
+  if (!nzchar(matcher) || !file.exists(matcher)) {
+    hits <- file.path(strsplit(Sys.getenv("PATH"), .Platform$path.sep)[[1]], "sample_name_matching.R")
+    matcher <- c(hits[file.exists(hits)], "")[1]
+  }
+  if (!nzchar(matcher)) stop("sample_name_matching.R not found: pass -P sample_matcher=<path>")
+  source(matcher)
+  sample_reconciliation <- reconcile_sample_names(
+    vdj = data.frame(sample = as.character(contigs_all_pre$sample),
+                     barcode = as.character(contigs_all_pre$barcode)),
+    gex = data.frame(sample = metadata_prep$md_sample, barcode = metadata_prep$md_barcode),
+    drop_tokens = params$sample_match_drop_tokens,
+    min_overlap = params$sample_match_min_overlap,
+    min_ratio   = params$sample_match_min_ratio
+  )
+  print_sample_reconciliation(sample_reconciliation)
+  save_table_safe(sample_reconciliation, "sample_name_reconciliation.tsv")
+  name_map <- sample_name_map(sample_reconciliation)
+
   contigs_all_pre <- contigs_all_pre %>%
     mutate(
       sample = as.character(sample),
+      md_key = unname(name_map[sample]),
       barcode_clean = sub("-1$", "", as.character(barcode))
     ) %>%
-    left_join(barcode_meta_map, by = c("sample", "barcode_clean")) %>%
-    left_join(sample_meta_map, by = "sample") %>%
+    left_join(barcode_meta_map, by = c("md_key" = "sample", "barcode_clean")) %>%
+    left_join(sample_meta_map, by = c("md_key" = "sample")) %>%
     mutate(
       patient_id = dplyr::coalesce(patient_id_join, patient_id_sample),
       condition  = dplyr::coalesce(condition_join, condition_sample),
       timepoint  = dplyr::coalesce(timepoint_join, timepoint_sample)
     ) %>%
     select(-any_of(c(
-      "barcode_clean",
+      "barcode_clean", "md_key",
       "patient_id_join", "condition_join", "timepoint_join",
       "patient_id_sample", "condition_sample", "timepoint_sample"
     )))
@@ -542,6 +574,37 @@ if (!is.null(metadata_tbl) && nrow(metadata_tbl) > 0) {
     sum(!is.na(contigs_all_pre$patient_id)), nrow(contigs_all_pre),
     sum(!is.na(contigs_all_pre$timepoint)), nrow(contigs_all_pre)
   ))
+}
+
+# Samplesheet fallback. The GEX object often carries no patient/timepoint (and is
+# absent in VDJ-only mode), while the samplesheet - keyed by the VDJ sample name -
+# usually does. Only fills gaps: a value from the GEX object is never overwritten.
+# read_samplesheet() keeps only sample/outs, so re-read the raw sheet for its metadata.
+ss_raw <- safe_read_table(params$sample_sheet) %>% as.data.frame()
+ss_raw$sample <- as.character(ss_raw[[params$sample_sheet_sample_col]])
+ss_meta_cols <- c(patient_id = params$meta_patient_col %||% "patient_id",
+                  condition = "condition", timepoint = "timepoint")
+ss_meta <- data.frame(sample = unique(ss_raw$sample), stringsAsFactors = FALSE)
+for (k in names(ss_meta_cols)) {
+  src <- ss_meta_cols[[k]]
+  ss_meta[[paste0(k, "_ss")]] <- if (src %in% colnames(ss_raw)) {
+    v <- as.character(ss_raw[[src]][match(ss_meta$sample, ss_raw$sample)])
+    ifelse(is.na(v) | trimws(v) == "", NA_character_, v)
+  } else NA_character_
+}
+if (any(!is.na(ss_meta[, -1]))) {
+  n_before <- sum(!is.na(contigs_all_pre$patient_id))
+  contigs_all_pre <- contigs_all_pre %>%
+    mutate(sample = as.character(sample)) %>%
+    left_join(ss_meta, by = "sample") %>%
+    mutate(
+      patient_id = dplyr::coalesce(patient_id, patient_id_ss),
+      condition  = dplyr::coalesce(condition, condition_ss),
+      timepoint  = dplyr::coalesce(timepoint, timepoint_ss)
+    ) %>%
+    select(-any_of(c("patient_id_ss", "condition_ss", "timepoint_ss")))
+  message(sprintf("Samplesheet metadata fallback: patient_id non-NA %d -> %d / %d",
+                  n_before, sum(!is.na(contigs_all_pre$patient_id)), nrow(contigs_all_pre)))
 }
 ```
 

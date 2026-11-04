@@ -20,6 +20,7 @@ process VDJ_QC {
         path(contigs_files, stageAs: 'staged_vdj/contigs_input*/*')
         path(clonotypes_files, stageAs: 'staged_vdj/clonotypes_input*/*')
         path(metrics_files, stageAs: 'staged_vdj/metrics_input*/*')
+        path(sample_matcher)   // bin/sample_name_matching.R, staged so R can source it
 
 
     output:
@@ -65,6 +66,10 @@ process VDJ_QC {
           -P cdr3_aa_min=${params.vdj_cdr3_aa_min} \
           -P cdr3_aa_max=${params.vdj_cdr3_aa_max} \
           -P drop_stop_or_frames=${params.vdj_drop_stop_or_frames} \
+          -P sample_matcher="${sample_matcher}" \
+          -P sample_match_drop_tokens="${params.sample_match_drop_tokens}" \
+          -P sample_match_min_overlap=${params.sample_match_min_overlap} \
+          -P sample_match_min_ratio=${params.sample_match_min_ratio} \
           -P report_label="${project_name} VDJ QC"
         """
 }

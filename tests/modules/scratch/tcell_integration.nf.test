@@ -19,6 +19,7 @@ nextflow_process {
                 input[1] = file("${projectDir}/tests/fixtures/singlecell/gex/seurat_annotated.rds")
                 input[2] = file("${projectDir}/modules/scratch/TCELL_INTEGRATION/TCell_Integration_Report.qmd")
                 input[3] = "test_project"
+                input[4] = file("${projectDir}/bin/sample_name_matching.R")
                 """
             }
         }

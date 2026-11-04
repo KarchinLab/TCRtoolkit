@@ -38,6 +38,7 @@ nextflow_process {
                 input[4] = [file("${projectDir}/assets/NO_FILE")]
                 input[5] = [file("${projectDir}/assets/NO_FILE")]
                 input[6] = [file("${projectDir}/assets/NO_FILE")]
+                input[7] = file("${projectDir}/bin/sample_name_matching.R")
                 """
             }
         }

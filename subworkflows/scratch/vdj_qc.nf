@@ -43,7 +43,8 @@ workflow VDJ_QC_SW {
         ch_project_name,
         contigs_files,
         clonotypes_files,
-        metrics_files
+        metrics_files,
+        file("${projectDir}/bin/sample_name_matching.R", checkIfExists: true)
     )
 
     emit:

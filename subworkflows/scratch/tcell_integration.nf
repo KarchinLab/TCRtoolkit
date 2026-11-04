@@ -19,7 +19,8 @@ workflow TCELL_INTEGRATION_SW {
         contigs_after_qc,
         annotated_object,
         ch_notebook,
-        project_name
+        project_name,
+        file("${projectDir}/bin/sample_name_matching.R", checkIfExists: true)
     )
 
     emit:

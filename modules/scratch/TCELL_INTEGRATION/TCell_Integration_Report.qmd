@@ -102,6 +102,14 @@ params:
   clean_duplicated_sample_prefix: true
 
   # ======================================================
+  # VDJ <-> GEX sample pairing (bin/sample_name_matching.R)
+  # ======================================================
+  sample_matcher: ""
+  sample_match_drop_tokens: !expr c("TCR","VDJ","VDJT","GEX","GE","RNA","LIB","LIBRARY")
+  sample_match_min_overlap: 0.2
+  sample_match_min_ratio: 3
+
+  # ======================================================
   # T-cell subset controls
   # ======================================================
   subset_tcells: true
@@ -722,6 +730,43 @@ head(contigs_all_post)
 
 ```
 
+## reconcile-sample-names
+```{r}
+#| label: reconcile-sample-names
+# TCR and GEX libraries from the same well are usually named by library type
+# ("...-TCR-LIB" vs "...-GEX-LIB") and finalized names cannot be changed, while every
+# join below (scRepertoire, barcode harmonization, the final merge) keys on the sample
+# name. Pair each VDJ sample with its GEX sample - exact name, then name without
+# library-type tokens, then barcode overlap - and carry the GEX name from here on, so
+# everything downstream (export_cells, bridges, CoNGA, TCRi) uses one naming.
+# The original name is kept in `vdj_sample`. See bin/sample_name_matching.R.
+# bin/ is on the task shell's PATH but R's own startup files can reset PATH inside
+# the container, so the module stages the script and passes its path.
+matcher <- params$sample_matcher %||% ""
+if (!nzchar(matcher) || !file.exists(matcher)) {
+  hits <- file.path(strsplit(Sys.getenv("PATH"), .Platform$path.sep)[[1]], "sample_name_matching.R")
+  matcher <- c(hits[file.exists(hits)], "")[1]
+}
+if (!nzchar(matcher)) stop("sample_name_matching.R not found: pass -P sample_matcher=<path>")
+source(matcher)
+
+gex_sample_col_rec <- first_existing_col(seu@meta.data, params$sample_col, params$sample_candidates) %||% "orig.ident"
+sample_reconciliation <- reconcile_sample_names(
+  vdj = contigs_all_post[, c("sample", "barcode")],
+  gex = data.frame(sample = as.character(seu@meta.data[[gex_sample_col_rec]]),
+                   barcode = colnames(seu), stringsAsFactors = FALSE),
+  drop_tokens = params$sample_match_drop_tokens,
+  min_overlap = params$sample_match_min_overlap,
+  min_ratio   = params$sample_match_min_ratio
+)
+print_sample_reconciliation(sample_reconciliation)
+save_table_safe(sample_reconciliation, "sample_name_reconciliation.tsv")
+
+name_map <- sample_name_map(sample_reconciliation)
+contigs_all_post$vdj_sample <- contigs_all_post$sample
+contigs_all_post$sample <- unname(name_map[contigs_all_post$sample])
+```
+
 ## SCrepertoire prepare
 ```{r}
 #| label: prepare-screpertoire
@@ -1008,6 +1053,17 @@ per_cell[, CTaa := fifelse(
 
 clone_source <- dt[, .(clone_id_raw = raw_clonotype_id[1L]), by = .(sample, barcode)]
 per_cell <- merge(per_cell, clone_source, by = c("sample", "barcode"), all.x = TRUE)
+
+# Per-cell patient/condition/timepoint from the contigs (VDJ_QC fills them from the GEX
+# object or the samplesheet). final-merge-to-seurat asks for these columns, but without
+# this they never existed here and were always created empty - so a patient known only
+# to the samplesheet never reached the cells.
+first_value <- function(x) { x <- as.character(x); x <- x[!is.na(x) & nzchar(x)]; if (length(x)) x[1L] else NA_character_ }
+meta_cols_ctg <- intersect(c("patient_id", "condition", "timepoint"), names(dt))
+if (length(meta_cols_ctg)) {
+  cell_meta <- dt[, lapply(.SD, first_value), by = .(sample, barcode), .SDcols = meta_cols_ctg]
+  per_cell <- merge(per_cell, cell_meta, by = c("sample", "barcode"), all.x = TRUE)
+}
 ```
 
 ## evaluate-merge-strategies
@@ -1154,7 +1210,24 @@ md_dt <- as.data.table(seu@meta.data, keep.rownames = "cell_id")
 setkey(md_dt, cell_id)
 md_dt <- seu_join[md_dt]
 
-# Map metadata to internal keys
+# When the GEX object has its own patient_id/condition/timepoint, the join above keeps the
+# TCR-side copy under the plain name and renames the object's to "i.<col>". Fold them back
+# into one column: the GEX object's value where it has one, the TCR/samplesheet value
+# otherwise - so neither source silently hides the other.
+for (cc in c("patient_id", "condition", "timepoint")) {
+  ic <- paste0("i.", cc)
+  if (has_col(md_dt, ic)) {
+    gex_v <- as.character(md_dt[[ic]]); gex_v[!is.na(gex_v) & !nzchar(gex_v)] <- NA_character_
+    md_dt[, (cc) := dplyr::coalesce(gex_v, as.character(md_dt[[cc]]))]
+    md_dt[, (ic) := NULL]
+  }
+}
+
+# Map metadata to internal keys. META_PATIENT / META_TIMECOND only exist when the GEX
+# object has such a column; create them empty so a patient/timepoint carried in from the
+# samplesheet (via VDJ_QC's contigs) can fill them instead of erroring "object not found".
+if (!has_col(md_dt, "META_PATIENT"))  md_dt[, META_PATIENT := NA_character_]
+if (!has_col(md_dt, "META_TIMECOND")) md_dt[, META_TIMECOND := NA_character_]
 if (has_col(md_dt, "patient_id")) md_dt[, META_PATIENT := coalesce(as.character(META_PATIENT), as.character(patient_id))]
 if (has_col(md_dt, "condition"))  md_dt[, META_TIMECOND := coalesce(as.character(META_TIMECOND), as.character(condition))]
 if (has_col(md_dt, "timepoint"))  md_dt[, META_TIMECOND := coalesce(as.character(META_TIMECOND), as.character(timepoint))]

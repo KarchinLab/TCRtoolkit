@@ -15,6 +15,7 @@ process TCELL_INTEGRATION {
       path (annotated_object)
       path (qmd)
       val  (project_name)
+      path (sample_matcher)   // bin/sample_name_matching.R, staged so R can source it
 
     output:
       path "TCell_Integration_Report.html", emit: report_html
@@ -47,6 +48,10 @@ process TCELL_INTEGRATION {
       -P harmonize_apply_to="${params.harmonize_apply_to}" \
       -P harmonization_overlap_threshold=${params.harmonization_overlap_threshold} \
       -P minimum_final_overlap_fraction=${params.minimum_final_overlap_fraction} \
+      -P sample_matcher="${sample_matcher}" \
+      -P sample_match_drop_tokens="${params.sample_match_drop_tokens}" \
+      -P sample_match_min_overlap=${params.sample_match_min_overlap} \
+      -P sample_match_min_ratio=${params.sample_match_min_ratio} \
       -P subset_tcells=${params.subset_tcells} \
       -P tcell_regex="${params.tcell_regex}" \
       -P reduction_use="${params.reduction_use}" \
