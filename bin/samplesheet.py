@@ -9,7 +9,7 @@ def samplesheet(samplesheet):
     ss.to_csv('samplesheet_utf8.csv', index=False, encoding='utf-8-sig')
     
     stats = ss.describe()
-    stats.to_csv('samplesheet_stats.csv', index=False, encoding='utf-8-sig')
+    stats.to_csv('samplesheet_stats.csv', index=True, encoding='utf-8-sig')
     
     print(ss.head())
 

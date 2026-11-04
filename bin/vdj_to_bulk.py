@@ -17,6 +17,8 @@ Usage:
 Outputs:
     bulk_samples/<sample>_bulk.tsv   — one AIRR TSV per sample
     synthetic_samplesheet.csv        — TCRtoolkit-compatible samplesheet
+    paired_clones.tsv                — sample, clone_id (A:<CDR3a>|B:<CDR3b>), n_cells:
+                                       the single-cell clone unit REPERTOIRE_METRICS uses
 """
 
 import sys
@@ -25,6 +27,29 @@ import pandas as pd
 
 
 META_COLS = ['patient_id', 'condition', 'timepoint']
+
+
+def write_paired_clones(df, sample_col):
+    """
+    Cells per (sample, paired clone), with the clone_id TCELL_INTEGRATION builds on the
+    GEX route: first alpha and first beta CDR3 of each cell, 'A:<a>|B:<b>', or the single
+    chain it has. Keeping one definition makes both single-cell routes comparable.
+    """
+    if 'barcode' not in df.columns:
+        print("[Bridge 3] no barcode column; paired_clones.tsv not written.")
+        return
+    c = df[df['cdr3'].notna() & (df['cdr3'].astype(str) != 'NA')]
+    key = [sample_col, 'barcode']
+    a = c[c['chain'] == 'TRA'].groupby(key, sort=False)['cdr3'].first().rename('cdr3a')
+    b = c[c['chain'] == 'TRB'].groupby(key, sort=False)['cdr3'].first().rename('cdr3b')
+    cells = pd.concat([a, b], axis=1).reset_index()
+    cells['clone_id'] = [
+        f"A:{x}|B:{y}" if pd.notna(x) and pd.notna(y) else (f"B:{y}" if pd.notna(y) else f"A:{x}")
+        for x, y in zip(cells['cdr3a'], cells['cdr3b'])
+    ]
+    (cells.groupby([sample_col, 'clone_id']).size().reset_index(name='n_cells')
+          .rename(columns={sample_col: 'sample'})
+          .to_csv('paired_clones.tsv', sep='\t', index=False))
 
 
 def main():
@@ -55,6 +80,8 @@ def main():
     if missing:
         raise ValueError(f"contigs_after_qc.tsv is missing columns: {missing}. "
                          f"Available: {list(df.columns)}")
+
+    write_paired_clones(df, sample_col)
 
     # keep beta chain only, drop rows with no CDR3
     df = df[df['chain'] == 'TRB'].copy()

@@ -24,6 +24,8 @@ Outputs:
     per_sample/{unit}_cdr3.tsv  — one file per pseudobulk unit
     concat_cdr3.tsv             — all units concatenated (input for ANNOTATE_SORT_CDR3)
     unit_map.csv                — unit -> sample/patient/phenotype/file (for meta building)
+    paired_clones.tsv           — unit, clone_id (A:<CDR3a>|B:<CDR3b>), n_cells: the
+                                  single-cell clone unit REPERTOIRE_METRICS works on
 """
 
 import sys
@@ -36,6 +38,27 @@ OUTPUT_COLS = [
     "duplicate_count", "junction_aa_length", "duplicate_frequency_percent",
     "sequence", "sequence_id", "junction", "sample",
 ]
+
+
+def write_paired_clones(df):
+    """
+    Cells per (unit, paired clone). Unlike the beta-only pseudobulk this keeps alpha-only
+    cells, so the repertoire metrics see every cell with a receptor. clone_id comes from
+    TCELL_INTEGRATION ('A:<CDR3a>|B:<CDR3b>', first chain of each type per cell).
+    """
+    if 'clone_id' in df.columns:
+        cid = df['clone_id']
+    elif 'CTaa' in df.columns:
+        cid = df['CTaa']
+    else:
+        print("[SC_TO_CDR3] no clone_id/CTaa column; paired_clones.tsv not written.")
+        return
+    cells = pd.DataFrame({'sample': df['unit'], 'clone_id': cid})
+    cells = cells[cells['clone_id'].notna() & (cells['clone_id'].astype(str).str.strip() != '')]
+    if 'has_tcr' in df.columns:
+        cells = cells[df.loc[cells.index, 'has_tcr'].astype(str).str.upper().isin(['TRUE', '1'])]
+    (cells.groupby(['sample', 'clone_id']).size().reset_index(name='n_cells')
+          .to_csv('paired_clones.tsv', sep='\t', index=False))
 
 
 def main():
@@ -80,6 +103,8 @@ def main():
               f"not found; falling back to sample-level pooling.")
     df['phenotype'] = df[args.pheno_col].astype(str) if by_pheno else ''
     df['unit'] = (df['sample'].astype(str) + '__' + df['phenotype']) if by_pheno else df['sample'].astype(str)
+
+    write_paired_clones(df)
 
     # Keep only cells with a valid beta CDR3
     df = df[df['junction_aa'].notna() & (df['junction_aa'] != '') & (df['junction_aa'] != 'None')]

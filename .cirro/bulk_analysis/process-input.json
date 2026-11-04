@@ -1,9 +1,8 @@
 {
     "input_format": "airr",
-    "convert_lvl": false,
-    "sample_lvl": "$.params.dataset.paramJson.sample_lvl",
-    "patient_lvl": "$.params.dataset.paramJson.patient_lvl",
-    "compare_lvl": "$.params.dataset.paramJson.compare_lvl",
+    "run_sample": "$.params.dataset.paramJson.sample_lvl",
+    "run_patient": "$.params.dataset.paramJson.patient_lvl",
+    "run_compare": "$.params.dataset.paramJson.compare_lvl",
     "olga_chunk_length": "$.params.dataset.paramJson.olga_chunk_length",
     "matrix_sparsity": "sparse",
     "distance_metric": "$.params.dataset.paramJson.distance_metric",

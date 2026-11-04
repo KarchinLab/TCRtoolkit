@@ -46,4 +46,5 @@ workflow VDJ_TO_BULK_SW {
     emit:
     sample_map
     samplesheet_utf8
+    paired_clones = VDJ_TO_BULK.out.paired_clones
 }

@@ -6,8 +6,7 @@
 */
 
 include { SAMPLE_CALC; SAMPLE_CALC_PIVOT } from '../../modules/local/sample/sample_calc'
-include { TCRDIST3_MATRIX; TCRDIST3_HISTOGRAM_CALC; TCRDIST3_HISTOGRAM_PLOT} from '../../modules/local/sample/tcrdist3'
-include { OLGA_SAMPLE_MERGE; OLGA_HISTOGRAM_CALC; OLGA_HISTOGRAM_PLOT } from '../../modules/local/olga'
+include { OLGA_SAMPLE_MERGE } from '../../modules/local/olga'
 include { CONVERGENCE } from '../../modules/local/sample/convergence'
 include { TCRPHENO } from '../../modules/local/sample/tcrpheno'
 include { VDJDB_GET; VDJDB_VDJMATCH } from '../../modules/local/sample/tcrspecificity'
@@ -25,6 +24,7 @@ workflow SAMPLE {
     per_sample_stats
     cdr3_pgen
     olga_stats
+    run_tcrpheno    // bool: false on the single-cell VDJ+GEX route, which has measured phenotypes
 
     main:
 
@@ -33,10 +33,8 @@ workflow SAMPLE {
     def sample_calc_input = processed_samples.join(per_sample_stats)
     SAMPLE_CALC( sample_calc_input )
 
-    // Published as a side effect (storeDir) - the aggregated CSV itself isn't consumed
-    // further downstream; bulktcr_analysis.nf computes its own in-memory copy for reports.
-    SAMPLE_CALC.out.sample_csv
-        .collectFile(name: "sample_stats.csv", keepHeader: true, skip: 1, sort: true, storeDir: "${params.outdir}/sample")
+    // sample_stats.csv is published by REPERTOIRE_METRICS (bulktcr_analysis.nf), which
+    // adds the diversity columns to these per-sample rows.
 
     def v_family_agg = SAMPLE_CALC.out.v_family_csv
         .collectFile(name: "v_family_long.csv", keepHeader: true, skip: 1, sort: true)
@@ -49,54 +47,18 @@ workflow SAMPLE {
 
     SAMPLE_CALC_PIVOT( v_family_agg, d_family_agg, j_family_agg )
 
-    TCRDIST3_MATRIX(
-        processed_samples,
-        params.matrix_sparsity,
-        params.distance_metric,
-        file(params.db_path)
-    )
-
-    def global_x_max_value = TCRDIST3_MATRIX.out.max_matrix_value
-        .map { tcrdist_xmax -> tcrdist_xmax.text.trim().toDouble() }
-        .collect()
-        .map { values -> values.max() }
-    global_x_max_value.view { global_xmax -> "Global x max matrix value: $global_xmax" }
-
-    TCRDIST3_HISTOGRAM_CALC( 
-        TCRDIST3_MATRIX.out.tcrdist_output,
-        params.matrix_sparsity,
-        params.distance_metric,
-        global_x_max_value
-    )
-
-    def global_y_max_value = TCRDIST3_HISTOGRAM_CALC.out.max_histogram_count
-        .map { tcrdist_ymax -> tcrdist_ymax.text.trim().toDouble() }
-        .collect()
-        .map { values -> values.max() }
-    global_y_max_value.view { global_ymax -> "Global y max matrix value: $global_ymax" }
-
-    TCRDIST3_HISTOGRAM_PLOT( 
-        TCRDIST3_HISTOGRAM_CALC.out.histogram_data,
-        global_y_max_value
-    )
+    // TCRdist3 runs per patient (PATIENT subworkflow), which also writes each sample's
+    // block of the patient matrix for the per-sample report sections.
 
     OLGA_SAMPLE_MERGE ( processed_samples,
         cdr3_pgen.first(),
         olga_stats )
 
-    OLGA_HISTOGRAM_CALC ( OLGA_SAMPLE_MERGE.out.olga_pgen, olga_stats )
-
-    def olga_y_max_value = OLGA_HISTOGRAM_CALC.out.olga_ymax
-        .map { ymax -> ymax.text.trim().toDouble() }
-        .collect()
-        .map { values -> values.max() }
-    olga_y_max_value.view { olga_ymax -> "Olga y max matrix value: $olga_ymax" }
-
-    OLGA_HISTOGRAM_PLOT( OLGA_HISTOGRAM_CALC.out.olga_histogram, olga_y_max_value )
-
     CONVERGENCE ( processed_samples )
 
-    TCRPHENO ( processed_samples )
+    if (run_tcrpheno) {
+        TCRPHENO ( processed_samples )
+    }
 
     VDJDB_GET ()
 
@@ -104,21 +66,13 @@ workflow SAMPLE {
 
     emit:
         sample_csv        = SAMPLE_CALC.out.sample_csv
-        // Additive: expose tcrdist outputs so the single-cell modality can feed
-        // CLUSTER_TO_SC without a second TCRDIST3_MATRIX run. Bulk ignores these.
-        tcrdist_clone_df  = TCRDIST3_MATRIX.out.clone_df
-        tcrdist_output    = TCRDIST3_MATRIX.out.tcrdist_output
         v_family          = SAMPLE_CALC_PIVOT.out.v_family_wide
         j_family          = SAMPLE_CALC_PIVOT.out.j_family_wide
-        tcrdist_files     = TCRDIST3_MATRIX.out.tcrdist_output.map { _sample_meta, dist -> dist }
-                                .mix( TCRDIST3_MATRIX.out.clone_df )
-                                .flatten()
-                                .collect()
         olga_files        = OLGA_SAMPLE_MERGE.out.olga_pgen.map { _sample_meta, pgen -> pgen }
                                 .collect()
         vdjdb_files       = VDJDB_VDJMATCH.out.vdjmatch_txt
                                 .mix( VDJDB_VDJMATCH.out.annot_summary )
                                 .collect()
         convergence_files = CONVERGENCE.out.convergence_output.collect()
-        tcrpheno_files    = TCRPHENO.out.tcrpheno_output.map { _sample_meta, f -> f }.collect()
+        tcrpheno_files    = run_tcrpheno ? TCRPHENO.out.tcrpheno_output.map { _sample_meta, f -> f }.collect() : channel.value([])
 }

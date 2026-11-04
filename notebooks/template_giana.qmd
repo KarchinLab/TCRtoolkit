@@ -25,7 +25,7 @@ import plotly.graph_objects as go
 import itertools
 import numpy as np
 import scipy.cluster.hierarchy as sch
-from IPython.display import display, Markdown
+from IPython.display import display, Markdown, HTML
 
 import warnings
 warnings.filterwarnings(
@@ -34,17 +34,41 @@ warnings.filterwarnings(
     module="plotly"
 )
 
+# Matplotlib figures are saved as PNGs under FIGURES_DIR and embedded as
+# static images, instead of relying on quarto's default figure capture.
+FIGURES_DIR = "figures"
+os.makedirs(FIGURES_DIR, exist_ok=True)
+
+def save_fig(fig, name):
+    import matplotlib.pyplot as plt
+    path = f"{FIGURES_DIR}/{name}.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return Markdown(f"![]({path})")
+
 # Loading data
 ## reading sample metadata
 meta = pd.read_csv(sample_table, sep=',')
+
+# alias_col is optional; default to sample name if missing.
+if alias_col not in meta.columns:
+    meta[alias_col] = meta['sample']
+
 meta_cols = meta.columns.tolist()
 
 ```
 
 
-## Similar TCR sequences within each individual {#sec-GIANA}
-**GIANA** (Geometry Isometry based TCR AligNment Algorithm) is a powerful computational tool designed to rapidly analyze vast amounts of T-cell receptor (TCR) sequencing data. Its core function is to group or **cluster similar TCR sequences, which is essential for identifying T-cells that likely recognize the same antigen.** This allows researchers to **pinpoint key T-cell populations driving an immune response** in cancer, infectious diseases, or autoimmunity.
+## GIANA: similar TCR sequences within each individual {#sec-GIANA}
 
+::: {.callout-tip title="In short" appearance="simple"}
+- **What it shows:** clusters of CDR3β sequences that GIANA finds near-identical within each patient: the top clusters, which samples contribute to them, and how they change over time.
+- **Why it matters:** receptors with very similar CDR3s usually recognise the same epitope, so a cluster (a "metaclone") captures a whole antigen-specific response that exact matching would split up.
+- **How to read it:** large clusters with several distinct CDR3s are the strongest candidates. Prefer clusters that grow between timepoints (scatter plot, above the diagonal) or persist across them (UpSet plot).
+:::
+**GIANA** (Geometry Isometry based TCR AligNment Algorithm; Zhang *et al.*, *Nat Commun* 2021, [doi:10.1038/s41467-021-25006-7](https://doi.org/10.1038/s41467-021-25006-7)) is a powerful computational tool designed to rapidly analyze vast amounts of T-cell receptor (TCR) sequencing data. Its core function is to group or **cluster similar TCR sequences, which is essential for identifying T-cells that likely recognize the same antigen.** This allows researchers to **pinpoint key T-cell populations driving an immune response** in cancer, infectious diseases, or autoimmunity.
+
+:::: {.callout-note title="More detail: how GIANA works" collapse="true"}
 **<u>How GIANA Works?</u>**  
 GIANA uses a novel geometric approach, instead of relying on traditional sequence alignment methods that tend to be *slower*. It converts the amino acid sequences of the hypervariable CDR3 region into *numerical *vectors. This transforms the complex problem of comparing biological sequences into a much faster mathematical problem of finding the nearest neighbors in a high-dimensional space. By doing this, it can efficiently sift through millions of TCRs to find functionally related groups.
 
@@ -55,6 +79,7 @@ GIANA stands out from other TCR analysis tools for several key reasons:
 - **High Scalability:** Its efficiency allows it to scale effortlessly from small pilot studies to large-scale clinical cohorts, enabling the analysis of thousands of samples simultaneously.
 
 - **Antigen-Specific Classification:** Because it's so fast, GIANA can be used to compare a patient's TCR repertoire against large, pre-existing databases of TCRs with known antigen specificities. This allows for the rapid identification of T-cell responses to known viruses (like CMV, EBV, or Influenza) or other targets.
+::::
 
 ```{python}
 #| output: asis
@@ -96,37 +121,9 @@ def plot_giana_tables_per_patient(meta_df, giana_dir, subject_col, timepoint_col
 
         standard_cols = ['Cluster', 'Total Counts', 'Unique TCRs']
         patient_cols = sorted([c for c in final_df.columns if c not in standard_cols])
-        display_df = final_df[standard_cols + patient_cols]
-
-        col_widths = [180, 140, 100] + [180] * len(patient_cols)
-        total_table_width = sum(col_widths)
-
-        fig = go.Figure(data=[go.Table(
-            columnwidth=col_widths,
-            header=dict(
-                # Wrap the column names in <b> tags for bolding
-                values=[f"<b>{col}</b>" for col in display_df.columns],
-                fill_color='paleturquoise',
-                align='left',
-                font=dict(size=12, color='black'), # 'weight' removed here
-                line_color='darkslategray'
-            ),
-            cells=dict(
-                values=[display_df[col] for col in display_df.columns],
-                fill_color='lavender',
-                align='left',
-                font=dict(size=11, color='black'),
-                line_color='darkslategray'
-            )
-        )])
-
-        fig.update_layout(
-            title_text=title,
-            title_x=0.5,
-            margin=dict(l=10, r=10, t=50, b=10),
-            width=max(total_table_width, 1000)
-        )
-        fig.show()
+        display_df = final_df[standard_cols + patient_cols].rename(
+            columns={c: 'CDR3β sequences (timepoint: CDR3β)' for c in patient_cols})
+        display(rt_table(display_df, title=title, max_height='520px', formatter={'Total Counts': '{:,.0f}'}))
 
     # --- Start the Quarto Tabset ---
     display(Markdown("::: {.panel-tabset}\n"))
@@ -202,7 +199,7 @@ plot_giana_tables_per_patient(
 )
 
 ```
-**Table. Top TCR Clusters Identified by GIANA** Summary tables detailing the top 10 most abundant TCR clusters across the cohort, grouped by sequence similarity using GIANA. **Top 10 (All Clusters):** Displays the absolute top 10 clusters by total counts. This view could be dominated by massive, singular clonal expansions. **Top 10 (>2 Unique TCRs)**: Filters the data to strictly show the top 10 most abundant clusters containing at least three unique CDR3β sequences. 
+**Table `{python} tab_no()`. Top TCR clusters identified by GIANA.** One tab per patient, with two tables over all of the patient's samples. **All clusters:** the 10 GIANA clusters with the highest total counts (reads for bulk data, cells for single-cell data); this view can be dominated by single large clones that form a cluster on their own. **≥2 unique TCRs:** the 10 largest clusters that contain at least two distinct CDR3β sequences, i.e. genuine groups of similar receptors. *Unique TCRs* is the number of distinct CDR3β sequences in the cluster; the last column lists them with the timepoint each was seen at. A cluster with several distinct CDR3βs seen at more than one timepoint is a persistent, convergent response and a strong candidate for a shared antigen.
 
 
 If you only analyze exact CDR3 sequence matches, you are actively ignoring a fundamental truth of immunology: different T-cell clones can recognize the exact same antigen if their receptors are structurally similar. To capture the full scope of a targeted response, we have to group these functional "metaclones" together.
@@ -331,7 +328,8 @@ giana_df = giana_df.dropna(subset=[subject_col])
 ```
 
 ```{python}
-#| fig-cap: "**GIANA clusters found in each sample/timepoint.** Sunburst chart displays the hierarchical contribution of T-cell receptor (TCR) clusters across all samples. The central circle represents the entire dataset, the middle ring breaks down the data by individual sample, and the outer ring shows the specific clusters within each sample."
+#| output: asis
+#| echo: false
 
 # --- 1. Manually Prepare Data for Each Hierarchy Level ---
 
@@ -389,17 +387,16 @@ fig = go.Figure(go.Sunburst(
     )
 ))
 
-fig.update_layout(
-    title_text="TCR Cluster Contribution by Sample",
-    font_size=16, title_font_size=24, title_x=0.5, 
-    margin=dict(t=50, l=0, r=0, b=0) 
-)
-fig.show()
+fig.update_layout(title=f"GIANA clusters by sample", height=650, margin=dict(t=60, l=0, r=0, b=0))
+rt_show_box(fig)
 
 ```
 
+**Figure `{python} fig_no()`. GIANA clusters found in each sample.** Sample-centric sunburst: the centre is all clustered TCRs, the middle ring the samples (aliases) and the outer ring the GIANA clusters found in each sample. Segment size and colour are the total counts (reads for bulk data, cells for single-cell data) of the cluster's TCRs; hover a segment for its number of unique CDR3βs. A sample whose ring is dominated by a few wide segments has a repertoire focused on a few receptor families. Click a segment to zoom in, and the centre to zoom out.
+
 ```{python}
-#| fig-cap: "**Samples/timepoints found in each GIANA cluster.** Sunburst chart providing a 'cluster-centric' view of the TCR repertoire, designed to show how individual samples contribute to each shared immune response."
+#| output: asis
+#| echo: false
 
 # --- 1. Prepare Data for the Hierarchy ---
 
@@ -450,22 +447,22 @@ fig = go.Figure(go.Sunburst(
     )
 ))
 
-fig.update_layout(
-    title_text="Sample Contribution by TCR Cluster",
-    font_size=16, title_font_size=24, title_x=0.5,
-    margin=dict(t=50, l=0, r=0, b=0)
-)
-fig.show()
+fig.update_layout(title=f"Samples by GIANA cluster", height=650, margin=dict(t=60, l=0, r=0, b=0))
+rt_show_box(fig)
 
 ```
 
+**Figure `{python} fig_no()`. Samples found in each GIANA cluster.** Cluster-centric sunburst: the middle ring is the GIANA clusters and the outer ring the samples (aliases) contributing to each. Segment size and colour are total counts; hover for the number of unique CDR3βs. A cluster split among several samples is a receptor family shared across timepoints or compartments; one confined to a single sample is a local response. Click to zoom.
 
+
+:::: {.callout-note title="More detail: reading the two sunburst charts" collapse="true"}
 **<u>Biological Insight</u>**  
 The previous visualizations offer two complementary perspectives on the TCR data. **The first plot highlights individual samples**, showing all the TCR clusters they contain. This allows you to appreciate the total number of TCRs per cluster and the sum of clone sizes. **The second visualization**, the sunburst chart,** emphasizes the clusters themselves**, revealing which samples contribute to each one. This is crucial for identifying clusters of TCRs with similar sequences that are shared between patients.
 
 The clone size shown in both visualizations is a key piece of information. **Since clonal expansion is associated with antigen recognition, a larger clone size suggests a more significant immune response.** This insight helps you better interpret the biological relevance of each cluster.
 
 To get the most out of this plot, it is recommend to compare samples across different conditions, such as "pre-" and "post-treatment." This way, you can directly visualize how a therapy impacts the immune response. Look for new or expanding clusters in your post-treatment samples, as this provides strong evidence of treatment-induced immune activation and helps you pinpoint the exact TCRs driving the therapeutic effect.
+::::
 
 ### GIANA clusters over time  
 
@@ -504,11 +501,11 @@ if valid_patients:
             try:
                 upset_data = from_contents(clusters_by_timepoint)
                 
-                # We keep show_counts=False to bypass the NumPy 2.0 crash, 
-                # but we save the returned dictionary of axes to a variable.
+                # show_counts=False avoids an upsetplot error under NumPy 2;
+                # intersection sizes are added manually below.
                 axes = upset_plot(upset_data, show_counts=False, sort_by='cardinality', fig=fig)
                 
-                # --- NEW WORKAROUND: MANUALLY ADD INTERSECTION SIZES ---
+                # --- Intersection sizes ---
                 # Grab the specific sub-plot that holds the vertical bars
                 ax_intersections = axes['intersections']
                 
@@ -518,7 +515,7 @@ if valid_patients:
                 # -------------------------------------------------------
                 
                 plt.suptitle(f"Cluster Sharing over Time: {patient}", fontsize=14)
-                plt.show()
+                display(save_fig(fig, f"giana_upset_{patient}"))
             except Exception as e:
                 print(f"\n*Could not generate plot for {patient}: {e}*\n")
                 
@@ -528,7 +525,7 @@ if valid_patients:
     print(":::\n")
 
 ```
-**Longitudinal tracking of shared TCR clusters in patients.** This UpSet plot visualizes the intersection of GIANA clusters across distinct timepoints. The horizontal bar chart (bottom left) displays the total number of unique clusters identified at each timepoint. The vertical bar chart (top) represents the size of each intersection. The connectivity matrix (bottom dots) indicates which timepoints are included in each intersection.
+**Figure `{python} fig_no()`. Longitudinal tracking of shared TCR clusters in patients.** One tab per patient with at least two timepoints. This UpSet plot visualizes the intersection of GIANA clusters across distinct timepoints. The horizontal bar chart (bottom left) displays the total number of unique clusters identified at each timepoint. The vertical bar chart (top) represents the size of each intersection. The connectivity matrix (bottom dots) indicates which timepoints are included in each intersection.
 
 ### Metaclonotype enrichment between timepoints (e.g. pre- and post-treatment)
 
@@ -539,7 +536,6 @@ These expanding clusters represent the specific T-cell "armies" that have been m
 ```{python}
 #| output: asis
 #| echo: false
-#| fig-cap: "**GIANA cluster enrichment** Scatter plot comparing the abundance of each T-cell receptor (TCR) metaclonotype between timepoints for an individual patient."
 
 def create_patient_tabs_abundance_scatter(df):
     df = df.copy()
@@ -633,6 +629,8 @@ create_patient_tabs_abundance_scatter(giana_df)
 
 ```
 
+**Figure `{python} fig_no()`. GIANA cluster enrichment between timepoints.** One tab per patient; the slider picks the pair of timepoints. Each point is a GIANA cluster (metaclonotype), placed by its abundance at the earlier (x) and later (y) timepoint in counts per million of the timepoint's clustered TCRs, plus 1 (log scales). The dashed diagonal is equal abundance: clusters above it grew, clusters below it shrank, and points at the lowest value of an axis were found at the other timepoint only. Hover a point for the cluster ID and its abundances.
+
 **<u>Understand the plot</u>**   
 The plot shows the abundance of metaclones at two given timepoints.  
 
@@ -649,6 +647,7 @@ Each point on the plot represents a single metaclonotype. **The diagonal line (y
 - **The Far-Left Boundary ($X = 1$):** Clusters that were completely absent at the first timepoint but emerged by the second timepoint.   
 - **The Bottom Boundary ($Y = 1$):** Clusters that were present at the first timepoint but completely vanished (zero counts) by the second timepoint.  
 
+:::: {.callout-note title="More detail: what enriched clusters mean in a cancer context" collapse="true"}
 **<u>What This Represents in a Cancer Context</u>**  
 In the context of cancer immunotherapy (like checkpoint inhibitors or cancer vaccines), the enrichment of specific metaclonotypes post-treatment is a critical finding. **It provides strong evidence that the therapy was successful in stimulating an anti-tumor immune response.**
 
@@ -659,5 +658,6 @@ These expanding clusters represent the T-cell "armies" that have been activated 
 - They are potential biomarkers: The magnitude of this expansion could correlate with a patient's clinical outcome, serving as a biomarker to predict who will respond to therapy.
 
 - They are candidates for next-generation therapies: The TCR sequences within these expanding clusters can be isolated and used to develop highly targeted and personalized TCR-T cell therapies. 🔬
+::::
 
 **Visualizing this enrichment is not just a quality check; it is a discovery tool. It allows you to directly identify the most biologically active and therapeutically relevant T-cells that are driving a patient's response to cancer treatment.**

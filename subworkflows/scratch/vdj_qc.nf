@@ -3,10 +3,8 @@ nextflow.enable.dsl = 2
 
 include { VDJ_QC } from '../../modules/scratch/VDJ_QC/main.nf'
 
-// A workflow-local `def as_file_list = { ... }` closure isn't callable from
-// this Nextflow version's strict-syntax parser ("as_file_list is not
-// defined") - a plain top-level function is, matching the same workaround
-// already used for `enabled()` in workflows/tcrtoolkit_sc.nf.
+// Top-level function (not a workflow-local closure) so it is callable under
+// Nextflow strict syntax, like `enabled()` in workflows/tcrtoolkit_sc.nf.
 def as_file_list(param_value, nofile) {
     (param_value ?: '').split(',', -1).collect { entry -> entry ? file(entry) : nofile }
 }

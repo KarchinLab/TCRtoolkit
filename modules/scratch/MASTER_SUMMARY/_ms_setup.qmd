@@ -1,0 +1,235 @@
+<!-- Shared setup for Master_Summary_Report.qmd and SC_GEX_Report.qmd: libraries, table
+     access, interactive helpers and every module table, loaded once. -->
+
+```{r}
+#| label: setup
+suppressPackageStartupMessages({
+  library(data.table)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(forcats)
+  library(scales)
+  library(plotly)
+  library(reactable)
+  library(htmltools)
+})
+
+dir.create(file.path(params$outdir, "tables"),  recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, "figures"), recursive = TRUE, showWarnings = FALSE)
+
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
+
+# ── Input access ────────────────────────────────────────────────────────────
+# Every upstream module stages its tables under <tables_dir>/<module>/. A module that
+# did not run on this route simply has no directory, so T() returns NULL and the
+# corresponding section renders an explanatory note rather than silently nothing.
+T <- function(module, name) {
+  p <- file.path(params$tables_dir, module, name)
+  if (!file.exists(p) || file.size(p) == 0) return(NULL)
+  out <- tryCatch({
+    if (tolower(tools::file_ext(name)) == "csv") fread(p) else fread(p, sep = "\t")
+  }, error = function(e) NULL)
+  if (is.null(out) || nrow(out) == 0) return(NULL)
+  as.data.frame(out)
+}
+
+# `-P label_col=` (an empty params.label_col) reaches R as NULL, and nzchar(NULL) is
+# logical(0), which makes if() error rather than return FALSE. Normalise every incoming
+# string param to a length-1 character before testing it.
+as_str1 <- function(x) {
+  if (is.null(x) || length(x) == 0) return("")
+  x <- as.character(x)[1]
+  if (is.na(x)) "" else trimws(x)
+}
+
+# Count distinct values, ignoring NA and empty strings (a blank column otherwise counts
+# as one value).
+n_distinct_real <- function(x) {
+  if (is.null(x)) return(NA_integer_)
+  x <- trimws(as.character(x))
+  x <- x[!is.na(x) & nzchar(x)]
+  if (!length(x)) return(NA_integer_)
+  length(unique(x))
+}
+
+have <- function(x) !is.null(x) && nrow(x) > 0
+
+note <- function(txt) knitr::asis_output(paste0("\n::: {.callout-note appearance=\"simple\"}\n",
+                                                txt, "\n:::\n\n"))
+
+save_table <- function(df, filename) {
+  if (have(df)) fwrite(df, file.path(params$outdir, "tables", filename), sep = "\t")
+  invisible(df)
+}
+
+theme_ms <- function(base_size = params$base_size) {
+  theme_bw(base_size = base_size) +
+    theme(
+      plot.title      = element_text(face = "bold", size = base_size + 1, hjust = 0),
+      axis.title      = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+      strip.background = element_rect(fill = "grey95", color = "grey80"),
+      strip.text      = element_text(face = "bold"),
+      legend.title    = element_text(face = "bold")
+    )
+}
+
+# ── Interactive output helpers ──────────────────────────────────────────────
+# Figures are built with plot_ly() directly rather than ggplotly(). The container pairs
+# ggplot2 4.0.2 with plotly 4.10.4, and that plotly predates ggplot2's 4.x internals, so
+# ggplotly() dies with "subscript out of bounds" on most plots. Native plot_ly() calls do
+# not touch ggplot internals and are version-robust.
+#
+# Every figure supports: hover for exact values, drag to zoom, double-click to reset,
+# click legend entries to toggle series.
+pal <- c("#2c7fb8", "#d95f02", "#7570b3", "#1b9e77",
+         "#e7298a", "#66a61e", "#e6ab02", "#a6761d")
+
+pconf <- function(p) {
+  plotly::config(p, displaylogo = FALSE,
+                 modeBarButtonsToRemove = c("select2d", "lasso2d"),
+                 toImageButtonOptions = list(format = "png", scale = 2))
+}
+
+ttl <- function(t) list(text = t, x = 0, xanchor = "left",
+                        font = list(size = params$base_size + 4))
+
+# Horizontal bar. df: cat (chr), val (num), hover (chr)
+hbar <- function(df, title, xlab, colour = "#2c7fb8", height = 440, tickformat = NULL) {
+  df <- df[order(df$val), , drop = FALSE]
+  df$cat <- factor(df$cat, levels = unique(df$cat))
+  pconf(plotly::plot_ly(df, x = ~val, y = ~cat, type = "bar", orientation = "h", textposition = "none",
+                        marker = list(color = colour),
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(title = ttl(title), height = height,
+                       margin = list(l = 140, t = 60),
+                       xaxis = list(title = xlab, tickformat = tickformat),
+                       yaxis = list(title = "")))
+}
+
+# Stacked horizontal bar. df: cat, val, grp, hover
+sbar <- function(df, title, xlab, height = 470, tickformat = ".0%", colors = pal, legend_title = "") {
+  pconf(plotly::plot_ly(df, x = ~val, y = ~cat, color = ~grp, colors = colors,
+                        type = "bar", orientation = "h", textposition = "none",
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(barmode = "stack", title = ttl(title), height = height,
+                       margin = list(l = 140, t = 60),
+                       xaxis = list(title = xlab, tickformat = tickformat),
+                       yaxis = list(title = ""),
+                       # On the right: a horizontal legend under a short chart collides
+                       # with the axis title.
+                       legend = list(orientation = "v", x = 1.02, y = 1, yanchor = "top",
+                                     title = list(text = legend_title))))
+}
+
+# Grouped vertical bar. df: cat, val, grp, hover
+gbar <- function(df, title, xlab, ylab, height = 470) {
+  pconf(plotly::plot_ly(df, x = ~cat, y = ~val, color = ~grp, colors = pal,
+                        type = "bar", textposition = "none",
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(barmode = "group", title = ttl(title), height = height,
+                       margin = list(t = 60),
+                       xaxis = list(title = xlab), yaxis = list(title = ylab),
+                       legend = list(orientation = "h", y = -0.2)))
+}
+
+# Box plot with points. df: grp, val, hover
+boxby <- function(df, title, ylab, height = 470, logy = FALSE, angle = 0) {
+  pconf(plotly::plot_ly(df, x = ~grp, y = ~val, color = ~grp, colors = pal,
+                        type = "box", boxpoints = "all", jitter = 0.4, pointpos = 0,
+                        marker = list(size = 4, opacity = 0.55),
+                        text = ~hover, hoverinfo = "text") %>%
+        plotly::layout(title = ttl(title), height = height, showlegend = FALSE,
+                       margin = list(t = 60, b = 110),
+                       xaxis = list(title = "", tickangle = angle),
+                       yaxis = list(title = ylab,
+                                    type = if (logy) "log" else "linear")))
+}
+
+# Scatter. df: x, y, grp, hover  (grp may be a constant)
+scat <- function(df, title, xlab, ylab, height = 470, size = 11) {
+  pconf(plotly::plot_ly(df, x = ~x, y = ~y, color = ~grp, colors = pal,
+                        type = "scatter", mode = "markers",
+                        marker = list(size = size, opacity = 0.85),
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(title = ttl(title), height = height, margin = list(t = 60),
+                       xaxis = list(title = xlab), yaxis = list(title = ylab)))
+}
+
+# Line/step. df: x, y, grp, hover
+lplot <- function(df, title, xlab, ylab, logx = TRUE, logy = TRUE, height = 470) {
+  pconf(plotly::plot_ly(df, x = ~x, y = ~y, color = ~grp, colors = pal,
+                        type = "scatter", mode = "lines",
+                        text = ~hover, hovertemplate = "%{text}<extra></extra>") %>%
+        plotly::layout(title = ttl(title), height = height, margin = list(t = 60),
+                       xaxis = list(title = xlab, type = if (logx) "log" else "linear"),
+                       yaxis = list(title = ylab, type = if (logy) "log" else "linear")))
+}
+
+itable <- function(df, caption = NULL, pageSize = 10, ...) {
+  if (!have(df)) return(note("No data available."))
+  # Whole-number columns (counts) without decimals; other numbers to 3 digits.
+  counts <- names(df)[vapply(df, function(x) is.numeric(x) && all(is.na(x) | x == round(x)), logical(1))]
+  cols <- setNames(lapply(counts, function(c) colDef(format = colFormat(digits = 0, separators = TRUE))), counts)
+  reactable(
+    columns = if (length(cols)) cols else NULL,
+    df,
+    searchable = TRUE, sortable = TRUE, filterable = FALSE,
+    highlight = TRUE, compact = TRUE, striped = TRUE,
+    defaultPageSize = pageSize, showPageSizeOptions = TRUE,
+    pageSizeOptions = c(5, 10, 25, 50, 100),
+    defaultColDef = colDef(
+      format = colFormat(digits = 3),
+      minWidth = 90,
+      headerStyle = list(background = "#f7f7f8", fontWeight = 600)
+    ),
+    ...
+  )
+}
+```
+
+```{r}
+#| label: load-all
+# Only the tables the Master Summary still renders: consensus clustering and the GEX
+# section. The run-level QC, repertoire, overlap and sequence-clustering tables moved with
+# their sections to the QC & Run Info and Details reports.
+
+# ── GEX-dependent ──
+tcell_roll     <- T("tcell", "tcell_summary_rollup.tsv")
+conga_roll     <- T("conga", "conga_summary_rollup.tsv")
+conga_clusters <- T("conga", "conga_cluster_summary.tsv")
+cons_roll      <- T("consensus", "consensus_summary_rollup.tsv")
+tcri_roll      <- T("tcri", "tcri_summary_rollup.tsv")
+tcri_scores    <- T("tcri", "high_tcri_clone_summary.tsv")
+cons_clusters  <- T("consensus", "consensus_cluster_summary.tsv")
+
+# ── Per-cell export ──
+export_cells <- NULL
+.ec <- as_str1(params$export_cells_file)
+if (nzchar(.ec) && file.exists(.ec) && file.size(.ec) > 0) {
+  export_cells <- tryCatch(as.data.frame(fread(.ec, sep = "\t")),
+                           error = function(e) NULL)
+}
+
+pick_col <- function(df, preferred, candidates) {
+  if (is.null(df) || !ncol(df)) return(NULL)
+  preferred <- as_str1(preferred)
+  cand <- trimws(unlist(strsplit(gsub('"', "", as_str1(candidates)), ";", fixed = TRUE)))
+  cand <- cand[nzchar(cand)]
+  if (nzchar(preferred) && preferred %in% names(df)) return(preferred)
+  hit <- intersect(cand, names(df))
+  if (length(hit)) hit[[1]] else NULL
+}
+sample_col  <- pick_col(export_cells, params$sample_col,  params$sample_candidates)
+patient_col <- pick_col(export_cells, params$patient_col, params$patient_candidates)
+label_col   <- pick_col(export_cells, params$label_col,   params$label_candidates)
+clone_col   <- pick_col(export_cells, params$clone_id_col, params$clone_id_candidates)
+cons_col    <- pick_col(export_cells, params$consensus_cluster_col, params$consensus_cluster_candidates)
+
+has_gex <- !is.null(tcell_roll) || !is.null(cons_roll) || !is.null(conga_roll) || !is.null(tcri_roll)
+is_bulk <- identical(tolower(as_str1(params$modality)), "bulk")
+route   <- if (is_bulk) "Bulk TCR repertoire (clonotype-level; no cells)" else
+           if (has_gex) "Full single-cell (GEX + VDJ)" else "VDJ-only (no GEX object)"
+```

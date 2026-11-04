@@ -1,0 +1,231 @@
+{{< include ./_report_bundle.qmd >}}
+
+<!-- Bulk counterpart of _sc_details_compare.qmd, staged under that name on the bulk route
+     (subworkflows/local/report.nf). Bulk data have no cells or cell states, so clones are
+     followed by frequency and grouped by clone-size class instead. Reads clonotypes_df (the
+     CLONAL_DYNAMICS clonotype table, loaded in template_overlap.qmd) and the clone-size bins
+     from REPERTOIRE_METRICS. -->
+
+## Clone sizes over time and across compartments {#sec-bulk-compare}
+
+The longitudinal and compartment questions answered with clone frequencies: how the share of
+each patient's repertoire held by expanded clones changes over time, how clones seen at
+consecutive timepoints change in size, how much of a tissue repertoire is also detected in
+blood, and how the patient's largest clones change across samples. Patients are compared only
+with themselves; a clone counts as absent only from samples that were collected.
+
+```{python}
+#| include: false
+
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+_bc = clonotypes_df.copy()
+_bc['frequency'] = pd.to_numeric(_bc['frequency'], errors='coerce')
+if 'origin' not in _bc.columns:
+    _bc['origin'] = 'all'
+_bc['origin'] = _bc['origin'].fillna('NA').astype(str)
+_bc['tp_rank'] = pd.to_numeric(_bc['timepoint_rank'], errors='coerce')
+# Clone = CDR3b + TRBV + TRBJ, as in the clonal dynamics tests.
+_bc['clone'] = _bc['junction_aa'].astype(str) + ' · ' + _bc['v_call'].astype(str).str.split('*').str[0]
+_bc_patients = sorted(_bc[subject_col].dropna().unique())
+_bc_samples = (_bc[['sample', subject_col, 'origin', timepoint_col, 'tp_rank']].drop_duplicates('sample')
+               .sort_values([subject_col, 'tp_rank', 'origin']))
+_bc_samples['label'] = _bc_samples[timepoint_col].astype(str) + ' · ' + _bc_samples['origin']
+_BC_BINS = ['Rare', 'Small', 'Medium', 'Large', 'Hyperexpanded']
+_BC_BIN_COLOURS = dict(zip(_BC_BINS, ['#d9d9d9', '#9ecae1', '#4292c6', '#08519c', '#d95f02']))
+
+
+def _bc_patient_tabs(render):
+    if len(_bc_patients) == 1:
+        render(_bc_patients[0])
+        return
+    print("::: {.panel-tabset}\n")
+    for p in _bc_patients:
+        print(f"## {p}\n")
+        render(p)
+    print(":::\n")
+```
+
+### Clone-size composition over time {#sec-bulk-composition-time}
+
+```{python}
+#| output: asis
+#| echo: false
+
+_bins = rb_read('repertoire', 'clone_size_bins.tsv')
+if _bins is None:
+    rb_note("No clone-size bins available (REPERTOIRE_METRICS).")
+else:
+    _bins = _bins.merge(_bc_samples, on='sample', how='inner')
+
+    def _comp(p):
+        d = _bins[_bins[subject_col] == p]
+        if d.empty:
+            print("No samples for this patient.\n")
+            return
+        order = _bc_samples[_bc_samples[subject_col] == p]['label'].tolist()
+        fig = px.bar(d, x='label', y='frac_tcrs', color='clone_bin',
+                     category_orders={'label': order, 'clone_bin': _BC_BINS},
+                     color_discrete_map=_BC_BIN_COLOURS,
+                     hover_data={'n_clones': ':,', 'frac_tcrs': ':.1%'},
+                     labels={'label': 'Timepoint · compartment', 'frac_tcrs': 'Share of the repertoire',
+                             'clone_bin': 'Clone size', 'n_clones': 'Clones'},
+                     title=f'{p}: repertoire share by clone-size class')
+        fig.update_yaxes(tickformat='.0%', range=[0, 1])
+        fig.update_layout(height=440)
+        fig.show()
+        print("\n")
+
+    _bc_patient_tabs(_comp)
+```
+**Figure `{python} fig_no()`. Clone-size composition over time.** Each sample's repertoire split by the
+frequency class of its clones: Rare ≤ 0.01%, Small ≤ 0.1%, Medium ≤ 1%, Large ≤ 10%,
+Hyperexpanded > 10%. A growing Large/Hyperexpanded share means the repertoire is being taken
+over by expansions (as in an antigen-driven response); a shrinking one, that expansions are
+resolving or new diversity is entering.
+
+### Size change of persistent clones {#sec-bulk-fate}
+
+```{python}
+#| output: asis
+#| echo: false
+
+def _fate(p):
+    d = _bc[_bc[subject_col] == p]
+    pairs = []
+    for o, od in d.groupby('origin'):
+        tps = od[['tp_rank', timepoint_col]].drop_duplicates().sort_values('tp_rank')[timepoint_col].tolist()
+        pairs += [(o, a, b) for a, b in zip(tps, tps[1:])]
+    if not pairs:
+        print("This patient has a single timepoint per compartment.\n")
+        return
+    pal = px.colors.qualitative.Set2
+    fig = make_subplots(rows=1, cols=len(pairs), shared_yaxes=True, horizontal_spacing=0.04,
+                        subplot_titles=[f"{a} → {b}" + (f" ({o})" if d['origin'].nunique() > 1 else '')
+                                        for o, a, b in pairs])
+    for k, (o, a, b) in enumerate(pairs):
+        od = d[d['origin'] == o]
+        fa = od[od[timepoint_col] == a].groupby('clone')['frequency'].sum()
+        fb = od[od[timepoint_col] == b].groupby('clone')['frequency'].sum()
+        both = pd.concat([fa.rename('a'), fb.rename('b')], axis=1, join='inner')
+        if both.empty:
+            continue
+        fc = both['b'] / both['a']
+        cls = np.where(fc > 2, 'up > 2×', np.where(fc < 0.5, 'down > 2×', 'stable'))
+        for c, col in zip(('up > 2×', 'stable', 'down > 2×'), ('#d7301f', '#bdbdbd', '#2171b5')):
+            m = cls == c
+            fig.add_trace(go.Scatter(
+                x=both['a'][m], y=both['b'][m], mode='markers', name=c, legendgroup=c, showlegend=k == 0,
+                marker=dict(color=col, size=7, opacity=0.75), text=both.index[m],
+                hovertemplate='%{text}<br>%{x:.2%} → %{y:.2%}<extra></extra>'), row=1, col=k + 1)
+        lo = min(both.min()) / 2
+        hi = max(both.max()) * 2
+        fig.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode='lines', line=dict(dash='dot', color='grey'),
+                                 showlegend=False, hoverinfo='skip'), row=1, col=k + 1)
+    fig.update_xaxes(type='log', tickformat='.1%', title_text='Frequency, earlier')
+    fig.update_yaxes(type='log', tickformat='.1%')
+    fig.update_yaxes(title_text='Frequency, later', col=1)
+    fig.update_layout(title=f'{p}: clones detected at consecutive timepoints', height=440,
+                      legend_title_text='Change')
+    fig.show()
+    print("\n")
+
+_bc_patient_tabs(_fate)
+```
+**Figure `{python} fig_no()`. Size change of persistent clones.** Each point is a clone detected at two
+consecutive timepoints of the same compartment, its frequency before (x) against after (y); the
+dotted line is no change. Red points grew more than 2-fold, blue shrank more than 2-fold. This
+is a descriptive view: the significance tests are in the tables above and below. Clones in the
+top-right that keep growing are the persistent expansions worth following.
+
+### Blood and tissue {#sec-bulk-blood-tissue}
+
+```{python}
+#| output: asis
+#| echo: false
+
+_blood = {o for o in _bc['origin'].unique() if pd.Series([o]).str.contains('blood|pbmc|periph|plasma', case=False).iloc[0]}
+if not _blood or _blood == set(_bc['origin'].unique()):
+    rb_note("This comparison needs both blood (an origin containing *blood*, *PBMC* or "
+            "*peripheral*) and a tissue compartment in the samplesheet's `origin` column.")
+else:
+    rows = []
+    for p in _bc_patients:
+        d = _bc[_bc[subject_col] == p]
+        bl = d[d['origin'].isin(_blood)]
+        if bl.empty:
+            continue
+        any_blood = set(bl['junction_aa'])
+        for s, sd in d[~d['origin'].isin(_blood)].groupby('sample'):
+            tp = sd[timepoint_col].iloc[0]
+            same = set(bl.loc[bl[timepoint_col] == tp, 'junction_aa'])
+            top = sd.nlargest(max(1, int(np.ceil(0.1 * len(sd)))), 'frequency')
+            rows.append(dict(patient=p, label=rb_label([s])[0], timepoint=tp,
+                             same=sd.loc[sd['junction_aa'].isin(same), 'frequency'].sum() if same else np.nan,
+                             any=sd.loc[sd['junction_aa'].isin(any_blood), 'frequency'].sum(),
+                             top=top['junction_aa'].isin(any_blood).mean()))
+    if not rows:
+        rb_note("No patient has both a blood and a tissue sample.")
+    else:
+        long = pd.DataFrame(rows).melt(id_vars=['patient', 'label', 'timepoint'],
+                                       value_vars=['same', 'any', 'top'], var_name='ref', value_name='frac').dropna()
+        long['ref'] = long['ref'].map({'same': 'repertoire share in same-timepoint blood',
+                                       'any': 'repertoire share in any blood sample',
+                                       'top': 'top 10% tissue clones found in blood'})
+        fig = px.bar(long, x='label', y='frac', color='ref', barmode='group',
+                     color_discrete_sequence=['#66c2a5', '#3288bd', '#d53e4f'],
+                     hover_data={'patient': True, 'timepoint': True, 'frac': ':.1%'},
+                     labels={'label': 'Tissue sample', 'frac': 'Fraction', 'ref': ''},
+                     title='Tissue clones also detected in blood')
+        fig.update_yaxes(tickformat='.0%', range=[0, 1])
+        fig.update_layout(height=460)
+        fig.show()
+```
+**Figure `{python} fig_no()`. Blood and tissue.** For each tissue sample: the share of its repertoire (by
+frequency) whose CDR3β is also found in the same patient's blood at the same timepoint and at
+any timepoint, and the fraction of its largest clones (top 10%) found in blood. Expanded tissue
+clones detectable in blood are candidates for blood-based monitoring; tissue-restricted
+expansions are often tissue-resident.
+
+### Following individual clones over time {#sec-bulk-clone-tracking}
+
+```{python}
+#| output: asis
+#| echo: false
+
+_BC_TOP = 10
+
+def _track(p):
+    d = _bc[_bc[subject_col] == p]
+    top = d.groupby('clone')['frequency'].max().nlargest(_BC_TOP).index
+    origins = sorted(d['origin'].unique())
+    fig = make_subplots(rows=1, cols=len(origins), subplot_titles=origins, shared_yaxes=True,
+                        horizontal_spacing=0.05)
+    pal = px.colors.qualitative.Dark24
+    tps = d[['tp_rank', timepoint_col]].drop_duplicates().sort_values('tp_rank')[timepoint_col].tolist()
+    for j, o in enumerate(origins):
+        od = d[d['origin'] == o]
+        sampled = od[['tp_rank', timepoint_col]].drop_duplicates().sort_values('tp_rank')
+        for k, cl in enumerate(top):
+            f = od[od['clone'] == cl].groupby(timepoint_col)['frequency'].sum()
+            y = [f.get(t, 0.0) for t in sampled[timepoint_col]]
+            fig.add_trace(go.Scatter(x=sampled[timepoint_col], y=y, mode='lines+markers', name=cl,
+                                     legendgroup=cl, showlegend=j == 0, line=dict(color=pal[k % len(pal)]),
+                                     marker=dict(size=8), hovertemplate=cl + '<br>%{x}: %{y:.2%}<extra></extra>'),
+                          row=1, col=j + 1)
+    fig.update_xaxes(categoryorder='array', categoryarray=tps)
+    fig.update_yaxes(tickformat='.1%', title_text='Frequency', col=1)
+    fig.update_layout(title=f'{p}: largest clones across samples', legend_title_text='Clone (CDR3β · TRBV)',
+                      height=460)
+    fig.show()
+    print("\n")
+
+_bc_patient_tabs(_track)
+```
+**Figure `{python} fig_no()`. The patient's largest clones across samples.** The 10 clones reaching the
+highest frequency in any of the patient's samples, one panel per compartment. A clone not
+detected in a collected sample is drawn at 0; timepoints that were not sampled are skipped.
+Clones that persist across timepoints, and appear in both blood and tissue, are the most robust
+candidates for follow-up.

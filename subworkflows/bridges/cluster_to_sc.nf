@@ -15,9 +15,9 @@ include { CLUSTER_TO_SC } from '../../modules/bridges/cluster_to_sc.nf'
  *   giana_clusters    - channel of *_giana.txt files from PATIENT.out.giana_clusters
  *   gliph2_details    - channel of cluster_member_details files from
  *                       PATIENT.out.gliph2_cluster_details  (may be empty)
- *   tcrdist_clone_dfs - channel of *_clone_df.csv from TCRDIST3_MATRIX.out.clone_df
+ *   tcrdist_clone_dfs - channel of <patient>_tcrdist_patient_clones.csv (TCRDIST3_MATRIX)
  *   tcrdist_matrices  - channel of distance matrix files from
- *                       TCRDIST3_MATRIX.out.tcrdist_output (file only, meta stripped)
+ *                       TCRDIST3_MATRIX.out.patient_matrix (file only, patient stripped)
  *
  * Emits:
  *   enriched_seurat   - Seurat RDS with giana/gliph2/tcrdist cluster columns added

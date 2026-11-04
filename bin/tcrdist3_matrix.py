@@ -118,20 +118,33 @@ def find_matching_gene(row, db):
     return transform_row  # Return original vMaxResolved if no match is found
 
 
+def write_matrix(mat, prefix, sparsity):
+    """Write a distance matrix in the layout the report notebooks and enrich_seurat.R read."""
+    if sparsity == "full":
+        np.savetxt(f"{prefix}.csv", mat, delimiter=",", fmt="%d")
+    else:
+        mat = sp.csr_matrix(mat)
+        with h5py.File(f"{prefix}.hdf5", "w") as f:
+            f.create_dataset("data", data=mat.data)
+            f.create_dataset("indices", data=mat.indices)
+            f.create_dataset("indptr", data=mat.indptr)
+            f.create_dataset("shape", data=mat.shape)
+
+
 if __name__ == "__main__":
     # Parse input arguments
-    parser = argparse.ArgumentParser(description="Take positional args")
-
-    parser.add_argument(
-        "sample_tsv",
-        type=str,
-        help="Path to TSV file containing TCR count table.",
+    parser = argparse.ArgumentParser(
+        description="TCRdist3 distances for one patient: every clone of every sample of "
+                    "that patient against every other, so similar TCRs are found across "
+                    "the patient's timepoints and tissues. Each sample's block of the "
+                    "patient matrix is also written under the per-sample file names the "
+                    "per-sample report sections read."
     )
 
     parser.add_argument(
         "basename",
         type=str,
-        help="Sample ID name for output files.",
+        help="Patient ID used to name the patient-level output files.",
     )
 
     parser.add_argument(
@@ -159,6 +172,14 @@ if __name__ == "__main__":
         type=int,
         help="Number of CPU cores to use for parallel computation.",
     )
+
+    parser.add_argument(
+        "--input",
+        nargs="+",
+        required=True,
+        metavar="SAMPLE=TSV",
+        help="Per-sample TCR count tables of this patient, as sample=path pairs.",
+    )
     add_logging_args(parser)
     args = parser.parse_args()
 
@@ -169,8 +190,8 @@ if __name__ == "__main__":
     if args.verbose:
         logger.debug("Verbose logging enabled")
 
-    logger.info(f"sample_tsv: {args.sample_tsv}")
-    logger.info(f"basename: {args.basename}")
+    logger.info(f"patient: {args.basename}")
+    logger.info(f"inputs: {args.input}")
     logger.info(f"matrix_sparsity: {args.matrix_sparsity}")
     logger.info(f"distance_metric: {args.distance_metric}")
     logger.info(f"ref_database: {args.ref_database}")
@@ -183,9 +204,17 @@ if __name__ == "__main__":
 
     db = db[db['organism']=='human']
 
-    df = pd.read_table(args.sample_tsv, delimiter = '\t')
-
-    df = df[['sequence', 'junction_aa', 'v_call', 'duplicate_count']]
+    frames = []
+    for item in args.input:
+        sample, _, path = item.partition("=")
+        part = pd.read_table(path, delimiter = '\t')
+        part = part[['sequence', 'junction_aa', 'v_call', 'duplicate_count']]
+        # 'sample' is an index column for TCRrep (every column except count / cell_id /
+        # clone_id is), so the same TCR in two samples stays two clones.
+        part['sample'] = sample
+        frames.append(part)
+    df = pd.concat(frames, ignore_index=True)
+    samples = [item.partition("=")[0] for item in args.input]
 
     df = df.rename(columns={'sequence': 'cdr3_b_nucseq',
                         'junction_aa': 'cdr3_b_aa',
@@ -260,23 +289,30 @@ if __name__ == "__main__":
         radius = 50
 
     tr.cpus = args.cores
-    clone_df = tr.clone_df
-    clone_df.to_csv(f"{basename}_clone_df.csv", index=False)
+    clone_df = tr.clone_df.reset_index(drop=True)
+    clone_df.to_csv(f"{basename}_tcrdist_patient_clones.csv", index=False)
 
     # Full matrix
     if args.matrix_sparsity == "full":
         tr.compute_distances()
-        max_val = tr.pw_beta.max()
-        np.savetxt(f"{basename}_distance_matrix.csv", tr.pw_beta, delimiter=",", fmt="%d")
-    # Sparse matrix
+        mat = tr.pw_beta
+        max_val = mat.max()
+    # Sparse matrix (true zero distances are stored as -1, as tcrdist3 does)
     else:
         tr.compute_sparse_rect_distances(radius = radius, chunk_size = 100)
-        max_val = tr.rw_beta.max()
-        with h5py.File(f"{basename}_distance_matrix.hdf5", "w") as f:
-            f.create_dataset("data", data=tr.rw_beta.data)
-            f.create_dataset("indices", data=tr.rw_beta.indices)
-            f.create_dataset("indptr", data=tr.rw_beta.indptr)
-            f.create_dataset("shape", data=tr.rw_beta.shape)
+        mat = tr.rw_beta.tocsr()
+        max_val = mat.max()
+    write_matrix(mat, f"{basename}_tcrdist_patient_matrix", args.matrix_sparsity)
+
+    # --- 3. Per-sample blocks of the patient matrix ---
+    # A distance depends only on the two TCRs compared, so a sample's block is exactly the
+    # matrix a per-sample run would have produced.
+    for sample in samples:
+        idx = np.flatnonzero(clone_df['sample'].to_numpy() == sample)
+        sample_clones = clone_df.iloc[idx].drop(columns=['sample'])
+        sample_clones.to_csv(f"{sample}_clone_df.csv", index=False)
+        block = mat[idx][:, idx]
+        write_matrix(block, f"{sample}_distance_matrix", args.matrix_sparsity)
 
     with open(f"matrix_maximum_value.txt", "w") as f:
         f.write(str(max_val))

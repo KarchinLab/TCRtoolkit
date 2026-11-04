@@ -1,0 +1,15 @@
+<!--
+Shared look of the QC & Run Info and Details reports, matching the Master Summary
+(modules/scratch/MASTER_SUMMARY): cosmo theme and left TOC (set in each notebook's YAML),
+the interactive-figures note, table styling, and the plot palette. The Discovery Brief,
+embedded in the Master Summary, takes only the CSS and plot theme.
+-->
+
+{{< include ./_report_css.qmd >}}
+
+::: {.callout-tip appearance="simple"}
+**Most figures in this report are interactive.** Hover a point or bar for exact values, drag
+to zoom, double-click to reset, and click legend entries to show or hide series.
+:::
+
+{{< include ./_report_theme.qmd >}}
