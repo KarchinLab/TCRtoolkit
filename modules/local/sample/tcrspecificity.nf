@@ -25,6 +25,7 @@ process VDJDB_VDJMATCH {
     path "logs/${sample_meta.sample}.vdjmatch.log", emit: 'log'
 
     script:
+    def v_match = params.vdjdb_v_match ? '--v-match' : ''
     def memGb = (task.memory.toMega() * 0.8 / 1024).intValue()
     
     """
@@ -51,7 +52,7 @@ process VDJDB_VDJMATCH {
     mkdir -p logs
 
     java -Xmx${memGb}G -jar /usr/local/bin/vdjmatch.jar match \
-        -S human -R TRB --search-scope 2,2,2 --vdjdb-conf 0 --database "${ref_db}/vdjdb" \
+        -S human -R TRB --search-scope ${params.vdjdb_search_scope} --vdjdb-conf ${params.vdjdb_min_confidence} ${v_match} --database "${ref_db}/vdjdb" \
         "vdjmatch.tsv" "${sample_meta.sample}" \
         > logs/${sample_meta.sample}.vdjmatch.log 2>&1
     """

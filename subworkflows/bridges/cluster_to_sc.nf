@@ -15,9 +15,9 @@ include { CLUSTER_TO_SC } from '../../modules/bridges/cluster_to_sc.nf'
  *   giana_clusters    - channel of *_giana.txt files from PATIENT.out.giana_clusters
  *   gliph2_details    - channel of cluster_member_details files from
  *                       PATIENT.out.gliph2_cluster_details  (may be empty)
- *   tcrdist_clone_dfs - channel of *_clone_df.csv from TCRDIST3_MATRIX.out.clone_df
- *   tcrdist_matrices  - channel of distance matrix files from
- *                       TCRDIST3_MATRIX.out.tcrdist_output (file only, meta stripped)
+ *   tcrdist_maps      - channel of <patient>_tcrdist_cluster_map.tsv (TCRDIST3_MATRIX):
+ *                       clusters already cut at --tcrdist_radius, so no distance matrix
+ *                       is staged here
  *
  * Emits:
  *   enriched_seurat   - Seurat RDS with giana/gliph2/tcrdist cluster columns added
@@ -31,25 +31,23 @@ workflow CLUSTER_TO_SC_SW {
     export_cells
     giana_clusters
     gliph2_details
-    tcrdist_clone_dfs
-    tcrdist_matrices
+    tcrdist_maps
 
     main:
     def nofile = file("${projectDir}/assets/NO_FILE")
 
-    // Collect all per-patient / per-sample files into single inputs
-    giana_collected    = giana_clusters.collect().ifEmpty([nofile])
-    gliph2_collected   = gliph2_details.collect().ifEmpty([nofile])
-    clone_dfs_collected = tcrdist_clone_dfs.collect().ifEmpty([nofile])
-    matrices_collected  = tcrdist_matrices.collect().ifEmpty([nofile])
+    // Collect all per-patient files into single inputs, sorted so the task hash does not
+    // depend on the order patients finished in (-resume then reuses the task).
+    giana_collected    = giana_clusters.collect(sort: true).ifEmpty([nofile])
+    gliph2_collected   = gliph2_details.collect(sort: true).ifEmpty([nofile])
+    maps_collected     = tcrdist_maps.collect(sort: true).ifEmpty([nofile])
 
     CLUSTER_TO_SC(
         seurat_rds,
         export_cells,
         giana_collected,
         gliph2_collected,
-        clone_dfs_collected,
-        matrices_collected,
+        maps_collected,
         params.tcrdist_radius ?: 24
     )
 

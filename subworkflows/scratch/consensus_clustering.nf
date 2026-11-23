@@ -10,6 +10,7 @@ workflow CONSENSUS_SW {
     gliph_export_cells
     tcrdist_export_cells
     giana_export_cells
+    conga_export_cells
     project_name
 
     main:
@@ -24,6 +25,7 @@ workflow CONSENSUS_SW {
         gliph_export_cells,
         tcrdist_export_cells,
         giana_export_cells,
+        conga_export_cells,
         ch_notebook,
         project_name
     )

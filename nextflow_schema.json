@@ -182,7 +182,15 @@
           "default": 100000,
           "minimum": 1000,
           "description": "Number of sequences processed per OLGA chunk. Larger values reduce parallelization and increase memory usage."
-        }
+        },
+        "run_selection_test": {"type": "boolean", "default": true, "description": "Test clonotype sharing against the generative null."},
+        "selection_fdr": {"type": "number", "default": 0.05, "minimum": 0, "maximum": 1, "description": "FDR for calling selection candidates."},
+        "selection_min_subjects": {"type": "integer", "default": 3, "minimum": 2, "description": "Fewest subjects for the selection test."},
+        "vdjdb_search_scope": {"type": "string", "default": "0,0,0", "description": "vdjmatch search scope: substitutions, indels, total edits."},
+        "vdjdb_v_match": {"type": "boolean", "default": true, "description": "Require V-gene agreement for a VDJdb match."},
+        "vdjdb_min_confidence": {"type": "integer", "default": 1, "minimum": 0, "maximum": 3, "description": "Minimum VDJdb confidence score."},
+        "quarto_heap_mb": {"type": "integer", "default": 16384, "minimum": 1024, "description": "JavaScript heap in MB for rendering the Master Summary."},
+        "selection_anchors": {"type": "string", "format": "file-path", "description": "OLGA anchor sequences used to calibrate the selection test."}
       }
     },
     "giana_options": {
@@ -214,19 +222,19 @@
           "default": true
         },
         "local_min_pvalue": {
-          "type": "string",
-          "default": 0.001
+          "type": ["string", "number"],
+          "default": "0.001"
         },
         "simulation_depth": {
           "type": "string",
           "default": 1000
         },
         "kmer_min_depth": {
-          "type": "string",
-          "default": 3
+          "type": ["string", "integer"],
+          "default": "3"
         },
         "local_min_OVE": {
-          "type": "string",
+          "type": ["string", "integer"],
           "default": "c(1000, 100, 10)"
         },
         "all_aa_interchangeable": {
@@ -261,6 +269,10 @@
       "fa_icon": "fas fa-dna",
       "description": "Single-cell TCR modality (--mode singlecell). Ignored in bulk mode.",
       "properties": {
+        "run_plasticity": {"type": "boolean", "default": true, "description": "Clone-level state change between timepoints (VDJ+GEX route)."},
+        "plasticity_min_cells": {"type": "integer", "default": 5, "minimum": 2, "description": "Cells a clone needs at both timepoints."},
+        "plasticity_n_boot": {"type": "integer", "default": 1000, "minimum": 100, "description": "Bootstrap resamples for confidence intervals."},
+        "plasticity_n_perm": {"type": "integer", "default": 10000, "minimum": 100, "description": "Permutations for each null."},
         "mode": {
           "type": "string",
           "enum": ["bulk", "singlecell"],
@@ -331,12 +343,17 @@
         "run_consensus": {
           "type": "boolean",
           "default": true,
-          "description": "Run consensus clustering (full-SC only)."
+          "description": "Run consensus clustering of GIANA / GLIPH2 / TCRdist3 (both modalities)."
         },
-        "run_repertoire": {
+        "run_reports": {
           "type": "boolean",
           "default": true,
-          "description": "Run repertoire analysis."
+          "description": "Render the QC / discovery-brief / details report notebooks (both modalities)."
+        },
+        "run_clonotype_clustering": {
+          "type": "boolean",
+          "default": true,
+          "description": "Bulk: after COMPARE, run clonotype export -> CLUSTER_TO_SC -> consensus -> Master Summary."
         },
         "run_master_summary": {
           "type": "boolean",
@@ -626,6 +643,33 @@
       "type": "integer",
       "default": 24
     },
+    "trace_report_suffix": {
+      "type": "string",
+      "description": "Suffix of the trace, report and timeline files in <outdir>/pipeline_info/ (default: launch timestamp)."
+    },
+    "run_results_export": {
+      "type": "boolean",
+      "default": true,
+      "description": "Write the core results tables to <outdir>/results/ (also with --run_reports false)."
+    },
+    "write_figure_tables": {
+      "type": "boolean",
+      "default": false,
+      "description": "Also write each Master Summary figure's data as its own TSV (redundant with results/)."
+    },
+    "tcrdist_max_patient_clones": {
+      "type": "integer",
+      "default": 0,
+      "description": "Fail TCRDIST3_MATRIX before any distance is computed when a patient has more clones than this (exit status 3, logged as TCRDIST_LIMIT). 0 = no limit."
+    },
+    "aws_queue": {
+      "type": "string",
+      "description": "AWS Batch queue for -profile aws_spot."
+    },
+    "aws_region": {
+      "type": "string",
+      "description": "AWS region for -profile aws_spot."
+    },
     "tcrdist_min_cells_per_group": {
       "type": "integer",
       "default": 10
@@ -670,10 +714,6 @@
       "type": "integer",
       "default": 2
     },
-    "consensus_use_majority_vote": {
-      "type": "boolean",
-      "default": true
-    },
     "consensus_assign_singleton": {
       "type": "boolean"
     },
@@ -693,33 +733,15 @@
       "type": "integer",
       "default": 20
     },
-    "repertoire_min_cells_per_clone_plot": {
-      "type": "integer",
-      "default": 2
-    },
-    "repertoire_top_n_shared_clones": {
-      "type": "integer",
-      "default": 50
-    },
-    "repertoire_top_n_flux_clones": {
-      "type": "integer",
-      "default": 30
-    },
-    "repertoire_shareability_min_n_groups": {
-      "type": "integer",
-      "default": 2
-    },
-    "repertoire_min_cells_per_group": {
-      "type": "integer",
-      "default": 10
-    },
-    "repertoire_overlap_metric": {
+    "clone_bin_breaks": {
       "type": "string",
-      "default": "jaccard"
+      "default": "0;1e-4;0.001;0.01;0.1;1.0",
+      "description": "Clone-frequency bin breaks (';'-separated fractions of a sample's TCRs) for REPERTOIRE_METRICS."
     },
-    "repertoire_use_relative_clone_freqs": {
-      "type": "boolean",
-      "default": true
+    "clone_bin_labels": {
+      "type": "string",
+      "default": "Rare;Small;Medium;Large;Hyperexpanded",
+      "description": "One label per clone-frequency bin."
     },
     "tcri_high_cutoff": {
       "type": "number",

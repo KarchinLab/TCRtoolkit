@@ -1,0 +1,288 @@
+```{python}
+#| include: false
+
+# =============================================================================
+# SINGLE-CELL SECTION SETUP (shared by the _sc_*.qmd sections)
+# -----------------------------------------------------------------------------
+# Included at the end of a main report notebook when the run has single-cell data.
+# Reads the per-module tables RENDER_NOTEBOOK stages under report_bundle/<module>/
+# (see modules/bridges/report_bundle.nf) and builds one per-cell table,
+# `sc_cells`, with sample metadata joined from the report samplesheet.
+#
+# Sampling is rarely balanced: patients have different timepoints, and blood /
+# tissue are not always collected together. Every longitudinal view therefore
+# places samples on the cohort-wide timepoint rank and draws only what each
+# patient actually has - nothing is interpolated or assumed missing-at-zero.
+# =============================================================================
+
+import os
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from IPython.display import display, Markdown, HTML
+
+SC_DIR = 'report_bundle'
+SC_MAX_POINTS = 40000        # cap on points per embedding plot (keeps the HTML light)
+SC_MIN_CELLS = 10            # minimum cells for a per-group fraction to be shown
+SC_EXPANDED_MIN = 2          # a clone with >= this many cells in a sample is "expanded"
+SC_TOP_CLONES = 10           # clones tracked per patient in the trajectory plots
+SC_HEIGHT = 420
+
+SC_SIZE_BINS = [0, 1, 2, 5, 20, np.inf]
+SC_SIZE_LABELS = ['1 cell', '2 cells', '3-5 cells', '6-20 cells', '>20 cells']
+SC_SIZE_COLORS = ['#a6a6a6', '#9ecae1', '#4292c6', '#08519c', '#de2d26']
+SC_NO_TCR_COLOR = '#ececec'
+SC_ORIGIN_DASH = ['solid', 'dash', 'dot', 'dashdot', 'longdash']
+
+
+def sc_read(module, name):
+    """A module table from the bundle, or None when the module did not run / wrote nothing."""
+    path = os.path.join(SC_DIR, module, name)
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return None
+    try:
+        df = pd.read_csv(path, sep=',' if name.endswith('.csv') else '\t', low_memory=False)
+    except Exception:
+        return None
+    return df if len(df) else None
+
+
+def sc_note(text, kind='note'):
+    print(f"\n::: {{.callout-{kind}}}\n{text}\n:::\n")
+
+
+def sc_show(fig, height=SC_HEIGHT):
+    fig.update_layout(template='plotly_white', height=height, margin=dict(t=60, l=60, r=20, b=60))
+    fig.show()
+    print("\n")
+
+
+def sc_first_col(df, candidates):
+    return next((c for c in candidates if c in df.columns), None)
+
+
+def sc_bool(series):
+    return series.astype(str).str.strip().str.upper().isin(['TRUE', 'T', '1', 'YES'])
+
+
+def sc_beta(clone_id):
+    """TRB CDR3 from a scRepertoire CTaa ('A:...|B:...') or '<CDR3>_<V>' clone id."""
+    s = clone_id.astype('string')
+    beta = s.str.extract(r'B:([A-Z]+)', expand=False)
+    plain = s.str.split('_', n=1).str[0]
+    return beta.fillna(plain.where(~s.str.contains(':', na=False)))
+
+
+def sc_clone_labels(clone_ids, width=24):
+    """Readable, unique labels: the CDR3β, suffixed (2), (3)... when clones share a β chain."""
+    ids = pd.Series(pd.unique(pd.Series(clone_ids).astype(str)))
+    base = sc_beta(ids).fillna(ids).str.slice(0, width)
+    n = base.groupby(base).cumcount()
+    return dict(zip(ids, base + n.map(lambda i: '' if i == 0 else f' ({i + 1})')))
+
+
+sc_route = 'unknown'
+if os.path.isfile(os.path.join(SC_DIR, 'route.txt')):
+    sc_route = open(os.path.join(SC_DIR, 'route.txt')).read().strip()
+sc_has_gex = sc_route == 'full'
+
+# ---- Sample metadata (report samplesheet) -----------------------------------
+# Re-read rather than reuse the main notebook's `meta`, which its sections modify.
+sc_meta = pd.read_csv(sample_table, sep=',', dtype=str).fillna('')
+if alias_col not in sc_meta.columns:
+    sc_meta[alias_col] = sc_meta['sample']
+if subject_col not in sc_meta.columns:
+    sc_meta[subject_col] = sc_meta['sample']
+if timepoint_col not in sc_meta.columns:
+    sc_meta[timepoint_col] = ''
+if 'origin' not in sc_meta.columns:
+    sc_meta['origin'] = 'unknown'
+sc_meta['origin'] = sc_meta['origin'].replace('', 'unknown')
+
+# Phenotype-pooled units ({sample}__{phenotype}) map back to their base sample, which
+# is what the per-cell tables carry.
+sc_meta['base_sample'] = sc_meta['sample']
+if 'phenotype' in sc_meta.columns:
+    has_ph = sc_meta['phenotype'] != ''
+    sc_meta.loc[has_ph, 'base_sample'] = [
+        s[: -len(p) - 2] if s.endswith('__' + p) else s
+        for s, p in zip(sc_meta.loc[has_ph, 'sample'], sc_meta.loc[has_ph, 'phenotype'])]
+    sc_meta.loc[has_ph, alias_col] = [
+        a[: -len(p) - 2] if a.endswith('__' + p) else a
+        for a, p in zip(sc_meta.loc[has_ph, alias_col], sc_meta.loc[has_ph, 'phenotype'])]
+sc_meta = sc_meta.drop_duplicates('base_sample')
+
+# Cohort-wide timepoint rank - same rules as _timepoint_order.qmd.
+_tps = [t for t in sc_meta[timepoint_col].unique() if t != '']
+if timepoint_order:
+    _order = [t.strip() for t in timepoint_order.split(',')]
+    _rank = {t: i for i, t in enumerate(_order)}
+    for i, t in enumerate(sorted(t for t in _tps if t not in _rank)):
+        _rank[t] = len(_order) + i
+else:
+    try:
+        _rank = {t: r for r, t in enumerate(sorted(_tps, key=float))}
+    except ValueError:
+        _rank = {t: r for r, t in enumerate(sorted(_tps))}
+sc_tp_rank = _rank
+sc_tp_order = sorted(_rank, key=_rank.get)
+sc_meta['tp_rank'] = sc_meta[timepoint_col].map(_rank)
+sc_meta['tp_label'] = sc_meta[timepoint_col].replace('', 'NA')
+
+sc_patients = sorted(sc_meta[subject_col].unique())
+sc_origins = sorted(sc_meta['origin'].unique())
+sc_multi_tp = sc_meta.groupby(subject_col)[timepoint_col].nunique().gt(1).any()
+sc_multi_origin = len(sc_origins) > 1
+sc_origin_dash = {o: SC_ORIGIN_DASH[i % len(SC_ORIGIN_DASH)] for i, o in enumerate(sc_origins)}
+sc_origin_colors = {o: px.colors.qualitative.Set2[i % 8] for i, o in enumerate(sc_origins)}
+sc_sample_order = (sc_meta.sort_values([subject_col, 'tp_rank', 'origin'])['base_sample'].tolist())
+sc_alias = dict(zip(sc_meta['base_sample'], sc_meta[alias_col]))
+
+# ---- Per-cell table ----------------------------------------------------------
+# Base: the T-cell integration export (full route) or the synthetic clonotype export
+# (VDJ-only). Consensus / CoNGA / TCRi columns are joined on cell_id.
+_cells = sc_read('cells', 'tcr_export_cells_with_embedding.tsv')
+if _cells is None:
+    _cells = sc_read('cells', 'export_cells.tsv')
+if _cells is None:
+    _cells = sc_read('tcell', 'tcr_export_cells_with_embedding.tsv')
+
+sc_cells = None
+if _cells is not None and 'cell_id' in _cells.columns:
+    c = _cells.copy()
+    c['cell_id'] = c['cell_id'].astype(str)
+    c['sample'] = c['sample'].astype(str)
+    c['has_tcr'] = sc_bool(c['has_tcr']) if 'has_tcr' in c.columns else True
+    c['annot'] = (c['annot'].astype('string').str.strip().replace('', pd.NA).fillna('Unannotated')
+                  if 'annot' in c.columns else 'Unannotated')
+    if 'cdr3b' in c.columns:
+        c['cdr3b'] = c['cdr3b'].astype('string')
+    elif 'junction_aa' in c.columns:
+        c['cdr3b'] = c['junction_aa'].astype('string')
+    else:
+        c['cdr3b'] = sc_beta(c['clone_id'])
+    c['clone_id'] = c['clone_id'].astype('string')
+
+    _emb = [col for col in c.columns if col.upper() in ('U_1', 'UMAP_1')]
+    _emb2 = [col for col in c.columns if col.upper() in ('U_2', 'UMAP_2')]
+    if _emb and _emb2:
+        c = c.rename(columns={_emb[0]: 'emb_1', _emb2[0]: 'emb_2'})
+
+    _cons = sc_read('cells', 'consensus_export_cells.tsv')
+    if _cons is not None and 'cell_id' in _cons.columns:
+        keep = [k for k in ('cell_id', 'consensus_cluster', 'consensus_methods', 'n_methods_nonmissing',
+                            'giana_cluster', 'gliph_cluster', 'tcrdist_cluster', 'conga_cluster')
+                if k in _cons.columns]
+        _cons = _cons[keep].assign(cell_id=lambda d: d['cell_id'].astype(str))
+        c = c.drop(columns=[k for k in keep if k != 'cell_id' and k in c.columns]).merge(_cons, on='cell_id', how='left')
+
+    _conga = sc_read('conga', 'conga_export_cells.tsv')
+    if _conga is not None and 'conga_score' in _conga.columns:
+        keep = [k for k in ('cell_id', 'conga_score', 'conga_gex_cluster', 'conga_tcr_cluster', 'is_invariant')
+                if k in _conga.columns]
+        c = c.merge(_conga[keep].assign(cell_id=lambda d: d['cell_id'].astype(str)), on='cell_id', how='left')
+
+    _tcri = sc_read('tcri', 'tcri_export_cells.tsv')
+    if _tcri is not None and 'tcri_score' in _tcri.columns:
+        keep = [k for k in ('cell_id', 'tcri_score', 'tcri_group', 'tcri_predicted_phenotype')
+                if k in _tcri.columns]
+        c = c.merge(_tcri[keep].assign(cell_id=lambda d: d['cell_id'].astype(str)), on='cell_id', how='left')
+
+    # Sample metadata. The per-cell `patient` column (from the GEX object) is dropped in
+    # favour of the samplesheet's, so every section groups patients identically.
+    meta_cols = ['base_sample', subject_col, timepoint_col, 'tp_rank', 'tp_label', 'origin', alias_col]
+    c = c.drop(columns=[k for k in (subject_col, timepoint_col, 'origin', alias_col) if k in c.columns])
+    c = c.merge(sc_meta[meta_cols].rename(columns={'base_sample': 'sample'}), on='sample', how='left')
+    c[subject_col] = c[subject_col].fillna(c['sample'])
+    c['origin'] = c['origin'].fillna('unknown')
+    c['tp_label'] = c['tp_label'].fillna('NA')
+    c[alias_col] = c[alias_col].fillna(c['sample'])
+
+    # Per-sample clone size: cells of that clonotype in that sample (the export's
+    # clone_size is cohort-wide).
+    t = c['has_tcr'] & c['clone_id'].notna() & (c['clone_id'] != '')
+    c['clone_cells'] = 0
+    c.loc[t, 'clone_cells'] = c.loc[t].groupby(['sample', 'clone_id'])['cell_id'].transform('size')
+    c['size_bin'] = pd.cut(c['clone_cells'], SC_SIZE_BINS, labels=SC_SIZE_LABELS, right=True)
+    c['size_bin'] = c['size_bin'].cat.add_categories('no TCR').fillna('no TCR')
+    c['expanded'] = c['clone_cells'] >= SC_EXPANDED_MIN
+    if 'conga_score' in c.columns:
+        # CoNGA scores are Bonferroni-adjusted p-values: < 1 is a significant
+        # TCR/GEX neighbourhood overlap ("CoNGA hit"); lower is stronger.
+        c['conga_hit'] = pd.to_numeric(c['conga_score'], errors='coerce') < 1
+    sc_cells = c
+
+sc_tcr = sc_cells[sc_cells['has_tcr']] if sc_cells is not None else None
+sc_has_annot = sc_tcr is not None and sc_tcr['annot'].nunique() > 1
+sc_has_emb = sc_cells is not None and 'emb_1' in sc_cells.columns
+sc_has_conga = sc_cells is not None and 'conga_hit' in sc_cells.columns and sc_cells['conga_score'].notna().any()
+sc_has_tcri = sc_cells is not None and 'tcri_score' in sc_cells.columns and sc_cells['tcri_score'].notna().any()
+sc_has_consensus = sc_cells is not None and 'consensus_cluster' in sc_cells.columns
+
+
+def sc_annot_colors(values):
+    pal = px.colors.qualitative.Safe + px.colors.qualitative.Vivid + px.colors.qualitative.Pastel
+    return {v: pal[i % len(pal)] for i, v in enumerate(sorted(map(str, values)))}
+
+
+def sc_downsample(df, n=SC_MAX_POINTS, seed=0):
+    return df.sample(n, random_state=seed) if len(df) > n else df
+
+
+def sc_patient_tabs(render, patients=None, label='Patient'):
+    """One tab per patient (or a dropdown-free single panel for one patient)."""
+    patients = sc_patients if patients is None else patients
+    if len(patients) == 1:
+        render(patients[0])
+        return
+    print("::: {.panel-tabset}\n")
+    for p in patients:
+        print(f"## {p}\n")
+        render(p)
+    print(":::\n")
+
+
+def sc_trajectory(df, value_col, title, y_title, hover_cols=None, yfmt=None):
+    """
+    Small multiples, one panel per patient: x = cohort timepoint rank (only timepoints
+    the patient has are drawn), one line per origin. Single-timepoint patients appear as
+    isolated markers instead of being dropped.
+    """
+    d = df.dropna(subset=[value_col]).copy()
+    if d.empty:
+        sc_note("No values to plot.")
+        return
+    d['x'] = d['tp_rank'].fillna(-1)
+    pats = sorted(d[subject_col].unique())
+    ncol = min(4, len(pats))
+    nrow = int(np.ceil(len(pats) / ncol))
+    fig = make_subplots(rows=nrow, cols=ncol, subplot_titles=pats, shared_yaxes=True,
+                        horizontal_spacing=0.04, vertical_spacing=0.12 if nrow > 1 else 0.1)
+    colors = sc_origin_colors
+    shown = set()
+    for i, p in enumerate(pats):
+        r, cc = divmod(i, ncol)
+        pdf = d[d[subject_col] == p]
+        for o, odf in pdf.groupby('origin'):
+            odf = odf.sort_values('x')
+            hover = (odf[alias_col].astype(str) + '<br>' + odf['tp_label'].astype(str) +
+                     ' · ' + o + '<br>' + y_title + ': ' +
+                     odf[value_col].map(lambda v: f'{v:{yfmt}}' if yfmt else f'{v:.3g}'))
+            if hover_cols:
+                for hc in hover_cols:
+                    hover = hover + f'<br>{hc}: ' + odf[hc].astype(str)
+            fig.add_trace(go.Scatter(
+                x=odf['x'], y=odf[value_col], mode='lines+markers', name=o, legendgroup=o,
+                showlegend=o not in shown, line=dict(color=colors[o], dash=sc_origin_dash[o]),
+                marker=dict(size=9), hovertext=hover, hoverinfo='text'), row=r + 1, col=cc + 1)
+            shown.add(o)
+    ticks = dict(tickmode='array', tickvals=list(range(len(sc_tp_order))), ticktext=sc_tp_order)
+    fig.update_xaxes(**ticks, range=[-0.5, max(len(sc_tp_order) - 0.5, 0.5)])
+    if yfmt:
+        fig.update_yaxes(tickformat=yfmt)
+    fig.update_layout(title=title, legend_title_text='Origin')
+    fig.update_yaxes(title_text=y_title, col=1)
+    sc_show(fig, height=max(SC_HEIGHT, 300 * nrow))
+```

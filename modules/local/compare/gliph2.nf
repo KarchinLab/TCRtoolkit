@@ -118,11 +118,12 @@ process GLIPH2_TURBOGLIPH {
     cat \$input_file > ${patient}/local_similarities.txt
 
     # Copy to patient-prefixed top-level names to avoid basename collisions
-    # when multiple patients' outputs are staged together downstream.
-    cp ${patient}/all_motifs.txt ${patient}_all_motifs.txt
-    cp ${patient}/clone_network.txt ${patient}_clone_network.txt
-    cp ${patient}/cluster_member_details.txt ${patient}_cluster_member_details.txt
-    cp ${patient}/global_similarities.txt ${patient}_global_similarities.txt
+    # when multiple patients' outputs are staged together downstream. dd, not cp or cat: both
+    # use copy_file_range, whose NFS server-side copy can hang forever on files over about
+    # 2 MB after the data has landed (handle_async_copy). dd uses plain read and write.
+    for f in all_motifs clone_network cluster_member_details global_similarities; do
+        dd if=${patient}/\${f}.txt of=${patient}_\${f}.txt bs=1M status=none
+    done
     """
 }
 

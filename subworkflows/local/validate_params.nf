@@ -5,6 +5,6 @@ workflow VALIDATE_PARAMS {
     main:
     validateParameters()
     
-    // TODO: Disabled due to error after updating to Nextflow 26.04.3. Re-enable when nf-core/schema catches up.
+    // Parameter summary logging is off: paramsSummaryLog fails under Nextflow 26.04.
     // log.info paramsSummaryLog(workflow)
 }

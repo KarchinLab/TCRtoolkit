@@ -20,8 +20,9 @@ process CLUSTER_ROLLUP {
     input:
       path giana_files,   stageAs: 'giana/*'
       path gliph2_files,  stageAs: 'gliph2/*'
+      // Per-patient TCRdist3 cluster maps (clone rows + cluster labels): the raw distance
+      // matrices are no longer collected here.
       path tcrdist_files, stageAs: 'tcrdist/*'
-      path tcrdist_mats,  stageAs: 'tcrdistmat/*'
       path export_cells,  stageAs: 'in_export_cells.tsv'
       // Staged rather than invoked as ${projectDir}/bin/... so its contents take part in
       // the task hash: otherwise editing the script leaves -resume silently reusing the
@@ -54,7 +55,6 @@ process CLUSTER_ROLLUP {
     giana_args=()
     gliph_args=()
     tcrdist_args=()
-    matrix_args=()
 
     g=( giana/* )
     if [ \${#g[@]} -gt 0 ]; then giana_args=( --giana "\${g[@]}" ); fi
@@ -65,14 +65,10 @@ process CLUSTER_ROLLUP {
     t=( tcrdist/* )
     if [ \${#t[@]} -gt 0 ]; then tcrdist_args=( --tcrdist "\${t[@]}" ); fi
 
-    m=( tcrdistmat/* )
-    if [ \${#m[@]} -gt 0 ]; then matrix_args=( --tcrdist-matrix "\${m[@]}" ); fi
-
     python3 cluster_rollup.py \\
         --outdir . \\
         --export-cells in_export_cells.tsv \\
         --tcrdist-radius ${params.tcrdist_radius} \\
-        \${matrix_args[@]+"\${matrix_args[@]}"} \\
         \${giana_args[@]+"\${giana_args[@]}"} \\
         \${gliph_args[@]+"\${gliph_args[@]}"} \\
         \${tcrdist_args[@]+"\${tcrdist_args[@]}"}

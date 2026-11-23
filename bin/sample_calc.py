@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Description: this script calculates the clonality of a TCR repertoire
+Description: per-sample productive, CDR3-length, convergence and gene-family statistics.
+Diversity (num_clones, clonality, Simpson, ...) is computed once for the cohort by
+repertoire_metrics.py, which merges it into the published sample_stats.csv.
 
 @author: Dylan Tamayo, Domenick Braccia
 @contributor: elhanaty
@@ -9,8 +11,6 @@ Description: this script calculates the clonality of a TCR repertoire
 ## import packages
 import argparse
 import pandas as pd
-import numpy as np
-from scipy.stats import entropy
 import numpy as np
 import re
 
@@ -34,15 +34,6 @@ def calc_gene_family(sample_name, counts, gene_column, output_file):
 
 def calc_sample_stats(sample_name, counts, pre_stats, output_file):
     """Calculate sample level statistics of TCR repertoire."""
-
-    ## first pass stats
-    clone_counts = counts['duplicate_count']
-    clone_entropy = entropy(clone_counts, base=2)
-    num_clones = len(clone_counts)
-    num_TCRs = sum(clone_counts)
-    clonality = 1 - clone_entropy / np.log2(num_clones)
-    simpson_index = sum(clone_counts**2)/(num_TCRs**2)
-    simpson_index_corrected = sum(clone_counts*(clone_counts-1))/(num_TCRs*(num_TCRs-1))
 
     # productive stats from pre-filter sidecar (input is productive-only)
     num_prod = int(pre_stats['productive_clones'])
@@ -73,11 +64,6 @@ def calc_sample_stats(sample_name, counts, pre_stats, output_file):
     ratio_convergent = num_convergent/len(aas)
 
     row_data = {
-        'num_clones': num_clones,
-        'num_TCRs': num_TCRs,
-        'simpson_index': simpson_index,
-        'simpson_index_corrected': simpson_index_corrected,
-        'clonality': clonality,
         'num_prod': num_prod,
         'num_nonprod': num_nonprod,
         'pct_prod': pct_prod,
@@ -99,7 +85,7 @@ def calc_sample_stats(sample_name, counts, pre_stats, output_file):
 
 def main():
     # initialize parser
-    parser = argparse.ArgumentParser(description='Calculate clonality of a TCR repertoire')
+    parser = argparse.ArgumentParser(description='Per-sample TCR repertoire statistics')
 
     # add arguments
     parser.add_argument('-s', '--sample_name', 

@@ -1,0 +1,59 @@
+<!-- Generative-null sharing test. Reads the SELECTION_TEST tables from the report bundle
+     (bin/selection_test.py). Rendered on every route; CDR3beta in all of them. -->
+
+# Selection against recombination bias {#sec-selection}
+
+A CDR3 can appear in many people because it is easy to generate, not because an antigen selected
+it. This section compares how many subjects carry each clonotype with how many the V(D)J
+generation model predicts. **Selection candidates** are shared more than generation explains;
+**generation-consistent** clonotypes are public, but no more than expected. A candidate is
+evidence of excess sharing, not of what antigen drove it.
+
+```{python}
+#| output: asis
+#| echo: false
+
+_sel = rb_read('compare', 'selection_test.tsv')
+_sel_sum = rb_read('compare', 'selection_summary.tsv')
+if _sel_sum is None:
+    rb_note("The selection test did not run (produced by SELECTION_TEST).")
+else:
+    rb_table(_sel_sum.rename(columns={'metric': 'Metric', 'value': 'Value'}))
+    if _sel is None:
+        rb_note("No clonotype could be tested: see Status above.")
+    else:
+        rb_heading("Observed against expected sharing", 2)
+        rb_text("Each point is a clonotype found in at least two subjects. Points on the dashed line "
+                "are shared as often as generation predicts; candidates sit above it. Observed counts "
+                "are whole numbers, so points form rows.")
+        _d = _sel.sort_values('q_value', ascending=False)
+        _d = pd.concat([_d[_d['call'] == 'selection_candidate'],
+                        _d[_d['call'] != 'selection_candidate'].sample(min(20000, (_d['call'] != 'selection_candidate').sum()), random_state=1)])
+        fig = go.Figure()
+        for _call, _name, _col, _sym in (('generation_consistent', 'Consistent with generation', '#8c8c8c', 'circle'),
+                                         ('selection_candidate', 'Selection candidate', '#d95926', 'diamond')):
+            _g = _d[_d['call'] == _call]
+            fig.add_trace(go.Scattergl(x=_g['expected_k'], y=_g['k'], mode='markers', name=_name,
+                                       marker=dict(color=_col, symbol=_sym, size=6, opacity=0.7),
+                                       text=_g['junction_aa'],
+                                       hovertemplate='%{text}<br>Expected %{x:.2f}, observed %{y}<extra></extra>'))
+        _top = float(max(_d['k'].max(), _d['expected_k'].max()))
+        _low = float(max(_d['expected_k'].min(), 1e-6))
+        fig.add_trace(go.Scatter(x=[_low, _top], y=[_low, _top], mode='lines', name='Observed = expected',
+                                 line=dict(color='#222222', dash='dash', width=1), hoverinfo='skip'))
+        _rb_layout(fig, "Sharing against the generative null", 520,
+                   xaxis=dict(title='Expected subjects', type='log'), yaxis=dict(title='Observed subjects', type='log'))
+
+        rb_heading("Most public clonotypes", 2)
+        rb_text("The clonotypes shared by the most subjects, which descriptive summaries would highlight, "
+                "with what the test concludes about each.")
+        _cols = {'junction_aa': 'CDR3b', 'k': 'Subjects', 'expected_k': 'Expected', 'log10_pgen': 'log10 Pgen',
+                 'q_value': 'q', 'call': 'Call'}
+        rb_table(_sel.sort_values(['k', 'q_value'], ascending=[False, True]).head(25)[list(_cols)].rename(columns=_cols).round(3))
+        rb_heading("Top selection candidates", 2)
+        _cand = _sel[_sel['call'] == 'selection_candidate']
+        if _cand.empty:
+            rb_note("No clonotype exceeded the generative null at this FDR.")
+        else:
+            rb_table(_cand.head(50)[list(_cols)].rename(columns=_cols).round(3))
+```

@@ -1,0 +1,2 @@
+<!-- Staged in place of the _sc_*.qmd single-cell sections when the run has no
+single-cell data (bulk mode), so the main notebooks' includes resolve to nothing. -->

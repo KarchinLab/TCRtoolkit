@@ -1,0 +1,3 @@
+<!-- TCRpheno is not run on the single-cell VDJ+GEX route: the GEX object gives each cell's
+     measured phenotype, so a phenotype predicted from the TCR sequence adds nothing there.
+     Staged as template_pheno.qmd in place of template_pheno_bulk.qmd (bulktcr_analysis.nf). -->

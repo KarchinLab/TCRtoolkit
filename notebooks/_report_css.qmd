@@ -1,0 +1,40 @@
+<!-- Table and tab styling shared by the report notebooks, matching the Master Summary's tables. -->
+
+<style>
+  /* Compact tab buttons (many per-patient / per-sample tabs). */
+  .panel-tabset .nav-link {
+    font-size: 0.9rem !important;
+    padding: 0.4rem 0.7rem !important;
+  }
+  .panel-tabset .nav-link.active { font-weight: 600; }
+  /* Tables styled like the Master Summary's reactable tables. */
+  .cell-output-display table {
+    font-size: 0.9rem;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+  }
+  .cell-output-display table thead th {
+    background: #f7f7f8;
+    font-weight: 600;
+    border-bottom: 1px solid #dee2e6;
+  }
+  .cell-output-display table td,
+  .cell-output-display table th { padding: 0.35rem 0.6rem; }
+  .cell-output-display table tbody tr:nth-child(even) { background: #fafafa; }
+  /* Figures wider than the page (rt_show_wide): kept at full size in a box that scrolls sideways. */
+  .fig-scroll {
+    overflow-x: auto;
+    max-width: 100%;
+    border: 1px solid #eee;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+  }
+  /* Figures outside a tabset (rt_show_box): framed like a tab panel, scrolling sideways when wide. */
+  .fig-box {
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    overflow-x: auto;
+  }
+</style>

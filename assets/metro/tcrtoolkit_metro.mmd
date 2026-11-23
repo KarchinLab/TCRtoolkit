@@ -1,0 +1,128 @@
+%%metro title: TCRtoolkit
+%%metro style: nfcore
+%%metro mode: light
+%%metro legend: bl
+%%metro line: bulk | Bulk TCR-seq (--mode bulk) | #0072B2
+%%metro line: sc_vdj | Single-cell VDJ only (--mode singlecell) | #E69F00
+%%metro line: sc_full | Single-cell VDJ + GEX (--mode singlecell, annotated GEX object) | #009E73
+%%metro files: bulk_in | TSV | AIRR / Adaptive
+%%metro files: vdj_in | CSV | VDJ contigs
+%%metro file: gex_in | RDS | Annotated GEX
+%%metro files: notebooks_out | HTML | Run Report
+%%metro files: summary_out | HTML | Master Summary
+%%metro off_track: gex_in
+%%metro grid: bulk_input | 0,0
+%%metro grid: sc_preprocess | 0,1
+%%metro grid: annotate | 1,0,3,1
+%%metro grid: sample_level | 2,0
+%%metro grid: patient_level | 2,1
+%%metro grid: cohort_level | 2,2
+%%metro grid: downstream | 3,0,3,1
+
+graph LR
+    subgraph bulk_input [Bulk input]
+        bulk_in[ ]
+        input_check[Samplesheet check]
+        convert[Convert Adaptive]
+        annotate_process[Process & filter]
+
+        bulk_in -->|bulk| input_check
+        input_check -->|bulk| convert
+        convert -->|bulk| annotate_process
+    end
+
+    subgraph sc_preprocess [Single-cell pre-processing]
+        vdj_in[ ]
+        gex_in[ ]
+        vdj_qc[VDJ QC]
+        vdj_to_bulk[Contig pseudobulk]
+        tcell_int[T-cell integration]
+        sc_to_cdr3[Phenotype pseudobulk]
+        pseudobulk_qc[Pseudobulk QC]
+
+        vdj_in -->|sc_vdj,sc_full| vdj_qc
+        vdj_qc -->|sc_vdj| vdj_to_bulk
+        vdj_qc -->|sc_full| tcell_int
+        gex_in -->|sc_full| tcell_int
+        tcell_int -->|sc_full| sc_to_cdr3
+        vdj_to_bulk -->|sc_vdj| pseudobulk_qc
+        sc_to_cdr3 -->|sc_full| pseudobulk_qc
+    end
+
+    subgraph annotate [Clonotype annotation]
+        sort_cdr3[Sort CDR3]
+        dedup[Deduplicate clonotypes]
+        olga[OLGA Pgen]
+
+        sort_cdr3 -->|bulk,sc_vdj,sc_full| dedup
+        dedup -->|bulk,sc_vdj,sc_full| olga
+    end
+
+    subgraph sample_level [Sample level]
+        sample_calc[V/J usage]
+        rep_metrics[Repertoire metrics]
+        convergence[Convergence]
+        tcrpheno[TCRpheno]
+        vdjdb[VDJdb specificity]
+
+        sample_calc -->|bulk,sc_vdj,sc_full| rep_metrics
+        rep_metrics -->|bulk,sc_vdj,sc_full| convergence
+        convergence -->|bulk,sc_vdj| tcrpheno
+        tcrpheno -->|bulk,sc_vdj| vdjdb
+        convergence -->|sc_full| vdjdb
+    end
+
+    subgraph patient_level [Patient level]
+        patient_merge[Patient merge]
+        tcrdist3[TCRdist3]
+        giana[GIANA]
+        gliph2[GLIPH2]
+
+        patient_merge -->|bulk,sc_vdj,sc_full| tcrdist3
+        tcrdist3 -->|bulk,sc_vdj,sc_full| giana
+        giana -->|bulk,sc_vdj,sc_full| gliph2
+    end
+
+    subgraph cohort_level [Cohort level]
+        tcrsharing[TCR sharing]
+        clonal_dynamics[Clonal dynamics]
+
+        tcrsharing -->|bulk,sc_vdj,sc_full| clonal_dynamics
+    end
+
+    subgraph downstream [Clonotype clustering & reporting]
+        _join[ ]
+        notebooks[Run Report]
+        notebooks_out[ ]
+        bulk_to_export[Clonotype export]
+        cluster_to_sc[Clusters to cells]
+        consensus[Consensus clustering]
+        rollup[Cluster roll-up]
+        conga[CoNGA]
+        tcri[TCRi]
+        master_summary[Master Summary]
+        summary_out[ ]
+
+        _join -->|bulk,sc_vdj,sc_full| notebooks
+        _join -->|bulk,sc_vdj| bulk_to_export
+        _join -->|sc_full| cluster_to_sc
+        notebooks -->|bulk,sc_vdj,sc_full| notebooks_out
+        bulk_to_export -->|bulk,sc_vdj| cluster_to_sc
+        cluster_to_sc -->|bulk,sc_vdj,sc_full| consensus
+        consensus -->|bulk,sc_vdj,sc_full| rollup
+        rollup -->|bulk,sc_vdj| master_summary
+        rollup -->|sc_full| conga
+        conga -->|sc_full| tcri
+        tcri -->|sc_full| master_summary
+        master_summary -->|bulk,sc_vdj,sc_full| summary_out
+    end
+
+    %% Inter-section edges
+    annotate_process -->|bulk| sort_cdr3
+    pseudobulk_qc -->|sc_vdj,sc_full| sort_cdr3
+    olga -->|bulk,sc_vdj,sc_full| sample_calc
+    olga -->|bulk,sc_vdj,sc_full| patient_merge
+    olga -->|bulk,sc_vdj,sc_full| tcrsharing
+    vdjdb -->|bulk,sc_vdj,sc_full| _join
+    gliph2 -->|bulk,sc_vdj,sc_full| _join
+    clonal_dynamics -->|bulk,sc_vdj,sc_full| _join

@@ -4,17 +4,16 @@
  * Builds a merged per-cell TCR object from the VDJ_QC contig tables, at both the pre- and
  * post-QC stage.
  *
- * Why this exists: on the VDJ-only route nothing emits a per-cell object. The pipeline
- * pools samples into pseudobulk, and BULK_TO_EXPORT then synthesizes a clonotype-level
- * export whose "cells" are reconstructed rather than real barcodes (4,372 synthetic rows
- * against 23,764 actual cells on the 8-sample test set). This process keeps real barcode
- * identity, so cross-sample clonal questions can be asked at the cell level.
+ * On the VDJ-only route the pipeline pools samples into pseudobulk, and BULK_TO_EXPORT
+ * builds a clonotype-level export whose "cells" are reconstructed rather than real
+ * barcodes. This process keeps real barcode identity, so cross-sample clonal questions
+ * can be asked at the cell level.
  *
  * It runs on both routes. With a GEX object TCELL_INTEGRATION already produces the
  * authoritative Seurat, but the pre/post-QC pair here is still the cleanest way to see what
  * VDJ QC actually removed.
  *
- * Note the emitted Seurat carries a placeholder counts assay — cellranger vdj has no genes.
+ * The emitted Seurat carries a placeholder counts assay — cellranger vdj has no genes.
  * See bin/merge_vdj_object.R's header for what that does and does not permit.
  */
 process MERGE_VDJ_OBJECT {

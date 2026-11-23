@@ -5,8 +5,10 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { TCRSHARING_CALC; TCRSHARING_HISTOGRAM; TCRSHARING_SCATTERPLOT } from '../../modules/local/compare/tcrsharing'
+include { TCRSHARING_CALC } from '../../modules/local/compare/tcrsharing'
 include { OLGA_MERGE as TCRSHARING_OLGA_MERGE } from '../../modules/local/olga'
+include { CLONAL_DYNAMICS } from '../../modules/local/compare/clonal_dynamics'
+include { SELECTION_TEST } from '../../modules/local/compare/selection_test'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -18,6 +20,7 @@ workflow COMPARE {
     take:
     concat_cdr3_sorted
     cdr3_pgen
+    samplesheet     // bulk-style samplesheet (patient / timepoint / origin per sample)
 
     main:
     TCRSHARING_OLGA_MERGE (concat_cdr3_sorted, cdr3_pgen)
@@ -26,14 +29,31 @@ workflow COMPARE {
         TCRSHARING_OLGA_MERGE.out.concat_cdr3_pgen
     )
 
-    TCRSHARING_HISTOGRAM(
-        TCRSHARING_CALC.out.shared_cdr3
+    CLONAL_DYNAMICS(
+        concat_cdr3_sorted,
+        samplesheet
     )
 
-    TCRSHARING_SCATTERPLOT(
-        TCRSHARING_CALC.out.shared_cdr3
-    )
+    def ch_selection = channel.empty()
+    if (params.run_selection_test) {
+        SELECTION_TEST(
+            TCRSHARING_OLGA_MERGE.out.concat_cdr3_pgen,
+            samplesheet,
+            file(params.selection_anchors)
+        )
+        ch_selection = SELECTION_TEST.out.results
+            .mix(SELECTION_TEST.out.summary, SELECTION_TEST.out.calibration)
+    }
 
     emit:
-        TCRSHARING_CALC.out.shared_cdr3
+        shared_cdr3 = TCRSHARING_CALC.out.shared_cdr3
+        selection_files = ch_selection
+        clonal_dynamics_files = CLONAL_DYNAMICS.out.clonotypes
+            .mix(CLONAL_DYNAMICS.out.detailed_expansion)
+            .mix(CLONAL_DYNAMICS.out.detailed_contraction)
+            .mix(CLONAL_DYNAMICS.out.expanded_summary)
+            .mix(CLONAL_DYNAMICS.out.contracting_summary)
+            .mix(CLONAL_DYNAMICS.out.expansion_counts)
+            .mix(CLONAL_DYNAMICS.out.contraction_counts)
+            .collect()
 }

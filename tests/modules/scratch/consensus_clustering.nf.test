@@ -4,7 +4,7 @@ nextflow_process {
     script "modules/scratch/CONSENSUS_CLUSTERING/main.nf"
     process "CONSENSUS_CLUSTERING"
 
-    test("Should build a consensus from real GIANA-enriched cells (GLIPH2/TCRdist absent)") {
+    test("Should build a consensus from real GIANA-enriched cells (GLIPH2/TCRdist/CoNGA absent)") {
 
         tag "singlecell"
 
@@ -20,8 +20,9 @@ nextflow_process {
                 input[2] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/NO_FILE_gliph2")
                 input[3] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/NO_FILE_tcrdist_clone")
                 input[4] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/giana_export_cells.tsv")
-                input[5] = file("${projectDir}/modules/scratch/CONSENSUS_CLUSTERING/Clonotype_Clustering_Consensus_Report.qmd")
-                input[6] = "test_project"
+                input[5] = file("${projectDir}/tests/fixtures/singlecell/cluster_to_sc/NO_FILE_conga")
+                input[6] = file("${projectDir}/modules/scratch/CONSENSUS_CLUSTERING/Clonotype_Clustering_Consensus_Report.qmd")
+                input[7] = "test_project"
                 """
             }
         }

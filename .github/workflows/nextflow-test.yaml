@@ -12,6 +12,7 @@ on:
   workflow_dispatch:
 
 env:
+  NXF_VER: '26.10.5'
   DEFAULT_CONTAINER: ${{ vars.CONTAINER || 'ghcr.io/karchinlab/tcrtoolkit:main' }}
 
 jobs:

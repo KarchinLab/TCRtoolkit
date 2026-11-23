@@ -23,11 +23,10 @@ process GIANA_CALC {
 
     # PATIENT_CONCATENATE pools a patient's samples by stacking rows, so one clonotype seen
     # in N samples arrives as N identical (CDR3b, TRBV, j_call) rows and GIANA reports those
-    # duplicates as clusters. On an 8-sample single-cell test set that was 76 of 77
-    # "clusters", and patients with a single sample produced no output at all.
+    # duplicates as clusters; patients with a single sample would produce no output.
     #
-    # Off by default so existing bulk results are unchanged; the single-cell route enables it
-    # via params.giana_dedup_clonotypes. Bulk can opt in after review.
+    # Controlled by params.giana_dedup_clonotypes: enabled on the single-cell route, off by
+    # default for bulk.
     if ${dedup_clonotypes}:
         key = [c for c in ("CDR3b", "TRBV", "j_call") if c in df.columns]
         if key:

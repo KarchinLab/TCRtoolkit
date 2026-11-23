@@ -1,0 +1,187 @@
+{{< include ./_report_bundle.qmd >}}
+
+<!-- V and J gene usage (moved from QC & Run Info). Single-cell data: TRA and TRB, counted per
+     QC-passed contig (one per cell and chain) from the VDJ QC tables. Bulk data: TRB, counted
+     per clonotype (sample/v_family.csv and the clonotype table). V genes are grouped by family,
+     J genes are shown whole. -->
+
+## Gene usage {#sec-gene-family-usage}
+
+Each T cell builds its receptor by recombining one V, (for β) one D and one J gene segment; the
+CDR3 forms at their junction. When antigen-specific T cells proliferate, the segments they use
+grow in proportion, so biased usage, and especially a segment that grows between timepoints,
+is a sign of an antigen-driven response. Systematic shifts shared by every sample of a batch
+point to a primer or library effect instead. Single-cell data show TRA and TRB; bulk data show
+TRB.
+
+```{python}
+#| include: false
+
+GU_CHAINS = ['TRA', 'TRB'] if rb_is_sc else ['TRB']
+_gu_contigs = rb_read('vdj_qc', 'cdr3_lengths_all.tsv') if rb_is_sc else None
+
+
+# V genes are grouped by family (TRBV7-9 -> TRBV7). J genes are kept whole: TRBJ1-1..1-6 and
+# TRBJ2-1..2-7 would collapse into two families (TRAJ genes have no family number to drop).
+_GU_GROUP = {'v': r'^(TR[AB]V\d+)', 'j': r'^(TR[AB]J[\d-]+)'}
+
+
+def _gu_family_wide(seg):
+    """{chain: sample x gene-family (V) or gene (J) count table merged with the samplesheet}."""
+    if not rb_is_sc and seg == 'v':
+        return {'TRB': v_family}
+    out = {}
+    if not rb_is_sc:
+        d = concat_df.assign(chain='TRB', j_gene=concat_df['j_call'])
+    elif _gu_contigs is None:
+        return out
+    else:
+        d = _gu_contigs
+    for ch in GU_CHAINS:
+        dc = d[d['chain'] == ch]
+        fam = dc[f'{seg}_gene'].astype(str).str.extract(_GU_GROUP[seg])[0]
+        w = pd.crosstab(dc['sample'], fam).reset_index()
+        w = w.merge(meta, on='sample', how='left')
+        out[ch] = w[meta_cols + [c for c in w.columns if c not in meta_cols]].sort_values(by=[subject_col])
+    return out
+
+
+def _gu_gene_freq(seg, ch):
+    """Long table: sample, gene, freq (share of the sample's receptors of that chain)."""
+    if rb_is_sc:
+        if _gu_contigs is None:
+            return None
+        d = _gu_contigs[_gu_contigs['chain'] == ch]
+        g = d[f'{seg}_gene']
+    else:
+        d = concat_df
+        g = d[f'{seg}_call']
+    t = pd.DataFrame({'sample': d['sample'].values,
+                      'gene': g.astype(str).str.split('*').str[0].values})
+    t = t[t['gene'].str.startswith(f'{ch}{seg.upper()}')]
+    if t.empty:
+        return None
+    w = pd.crosstab(t['sample'], t['gene'])
+    w = w.div(w.sum(axis=1), axis=0)
+    return w.reset_index().melt(id_vars='sample', var_name='gene', value_name='freq')
+
+
+def _gu_natural(g):
+    """TRBV2 < TRBV3 < TRBV10, TRBJ1-2 < TRBJ1-10: sort genes and families by their numbers."""
+    import re
+    m = re.match(r'^(\D+)(\d+)(?:-(\d+))?', str(g))
+    return (m.group(1), int(m.group(2)), int(m.group(3) or 0)) if m else (str(g), 0, 0)
+
+
+def gu_prepare(df, seg, ch):
+    """Long format: share of each sample's receptors per gene family."""
+    cols = df.columns[df.columns.str.startswith(f'{ch}{seg.upper()}')].tolist()
+    long = pd.melt(df, id_vars=['sample', alias_col, subject_col, 'origin', timepoint_col, timepoint_order_col],
+                   value_vars=cols, var_name='family', value_name='count')
+    long['total'] = long.groupby('sample')['count'].transform('sum')
+    long = long[long['total'] > 0]
+    long['proportion'] = long['count'] / long['total']
+    long['_r'] = pd.to_numeric(long[timepoint_order_col].astype(str), errors='coerce')
+    return long
+
+
+def gu_patient_plot(long, patient, seg, ch, colors, families):
+    """One stacked horizontal bar per sample of the patient (Master Summary style)."""
+    d = long[(long[subject_col] == patient) & (long['count'] > 0)].sort_values(['origin', '_r', alias_col])
+    d = d.assign(cat=[f"{a} (n={int(n):,})" for a, n in zip(d[alias_col], d['total'])])
+    return rt_sbar(pd.DataFrame({
+        'cat': d['cat'], 'grp': d['family'], 'val': d['proportion'],
+        'hover': [f"{a}<br>{g}: {p:.1%} ({int(c):,} of {int(n):,} receptors)"
+                  for a, g, p, c, n in zip(d[alias_col], d['family'], d['proportion'], d['count'], d['total'])]}),
+        f"{ch}{seg.upper()} {'gene families' if seg == 'v' else 'genes'}: {patient}", "Fraction of the sample's receptors",
+        colors=colors, cat_order=d['cat'].drop_duplicates().tolist(),
+        grp_order=[f for f in families if f in set(d['family'])], legend_title=f"{ch}{seg.upper()} {'family' if seg == 'v' else 'gene'}")
+
+
+def gu_chain_tabs(render):
+    """One tab per chain on single-cell data; the plot alone for bulk data."""
+    if len(GU_CHAINS) == 1:
+        render(GU_CHAINS[0])
+        return
+    print("::::: {.panel-tabset}\n")
+    for ch in GU_CHAINS:
+        print(f"#### {ch}\n")
+        render(ch)
+        print("\n")
+    print(":::::\n")
+```
+
+### Gene family usage by patient
+
+The share of receptors using each V gene family (then each J gene) in every sample of a patient: one tab
+per chain (single-cell data) and, within it, one per patient. Each bar is one sample (alias, with
+its number of receptors), ordered by compartment and then timepoint from the top, and sums to 100%
+of the sample's receptors; each colour is one gene family or gene, in the same colour for every
+patient. J genes are shown individually rather than by family, because the 13 TRBJ genes form only
+two families (TRBJ1 and TRBJ2) and grouping them would hide almost all J variation.
+
+**How to read it.** Follow a colour down a patient's bars. A family that widens sharply between
+timepoints (for example TRBV7-9 from 4% before treatment to 35% after) is evidence of a response
+driven by T cells using that segment, usually one or a few expanded clones: check the clone tables
+above for a dominant clone with that V gene. Families that differ between every sample of a batch
+in the same way suggest a technical effect. Samples with few receptors (small n) give noisy shares.
+
+```{python}
+#| output: asis
+#| echo: false
+
+for _seg in ('v', 'j'):
+    _wide = _gu_family_wide(_seg)
+    if not _wide:
+        rb_note(f"No {_seg.upper()} gene counts available.")
+        continue
+    rb_text("**V gene families.**" if _seg == 'v' else "**J genes.**")
+
+    def _render(ch, _seg=_seg, _wide=_wide):
+        if ch not in _wide:
+            rb_note(f"No {ch} data.")
+            return
+        long = gu_prepare(_wide[ch], _seg, ch)
+        families = sorted(long.loc[long['count'] > 0, 'family'].unique(), key=_gu_natural)
+        colors = rt_colors(families)
+        pats = sorted(long[subject_col].dropna().unique())
+        print(":::: {.panel-tabset}\n")
+        for pat in pats:
+            print(f"##### {pat}\n")
+            rt_show(gu_patient_plot(long, pat, _seg, ch, colors, families))
+        print("::::\n")
+
+    gu_chain_tabs(_render)
+```
+
+**Figure `{python} fig_no()`. Gene family usage by patient.** V gene families (first set of tabs) and individual J genes (second set), by chain and patient. Each bar is one sample, labelled by its alias and its number of receptors (n), ordered by compartment and then timepoint; segments are the share of the sample's receptors using each V gene family or J gene (cells per chain for single-cell data, clonotypes for bulk data). Hover a segment for its count.
+
+### V and J gene usage across samples
+
+Usage frequency of the most used genes, each point one sample. A gene used far more in a few
+samples than in the rest marks a clonal expansion in those samples; a whole batch shifted
+together suggests a technical effect.
+
+```{python}
+#| output: asis
+#| echo: false
+
+def _render_usage(ch):
+    for seg in ('v', 'j'):
+        d = _gu_gene_freq(seg, ch)
+        if d is None:
+            rb_note(f"No {ch}{seg.upper()} usage available.")
+            continue
+        top = d.groupby('gene')['freq'].mean().nlargest(RB_TOP_GENES).index
+        d = d[d['gene'].isin(top)]
+        order = d.groupby('gene')['freq'].median().sort_values(ascending=False).index
+        d = d.set_index('gene').loc[order].reset_index()
+        rb_boxby(pd.DataFrame({'grp': d['gene'], 'val': d['freq'],
+                               'hover': [f"{g}<br>{s}<br>{f:.1%}" for g, s, f
+                                         in zip(d['gene'], rb_label(d['sample']), d['freq'])]}),
+                 f"Top {RB_TOP_GENES} {ch}{seg.upper()} genes", "Usage frequency", height=520, angle=-45)
+
+gu_chain_tabs(_render_usage)
+```
+
+**Figure `{python} fig_no()`. V and J gene usage across samples.** The `{python} RB_TOP_GENES` most used genes of each chain and segment, ordered by their median usage. Each point is one sample (hover for its alias) and its height the share of the sample's receptors using that gene; the box gives the quartiles across samples. A gene with a few points far above its box is used heavily by a few samples, usually because of an expanded clone; a gene whose whole box sits high is used broadly across the cohort.

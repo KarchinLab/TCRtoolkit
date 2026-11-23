@@ -408,6 +408,10 @@ if ((is.null(metadata_tbl) || nrow(metadata_tbl) == 0) &&
   })
 
   seu <- readRDS(params$input_annotated_object)
+  # Object size, for ranking memory across processes (bin/trace_memory_summary.py).
+  cat(sprintf("OBJECT_LOAD\tprocess=VDJ_QC\tfile=%s\tfile_mb=%.0f\tobject_mb=%.0f\tcells=%d\tfeatures=%d\tr_max_used_mb=%.0f",
+    basename(params$input_annotated_object), file.size(params$input_annotated_object) / 2^20, as.numeric(utils::object.size(seu)) / 2^20,
+    ncol(seu), nrow(seu), sum(gc()[, 6])), "\n", file = stderr())
 
   metadata_tbl <- seu@meta.data %>%
     tibble::rownames_to_column("cell_id_full") %>%
@@ -906,6 +910,16 @@ save_table_safe(contigs_all_post, "contigs_after_qc.tsv")
 save_table_safe(removed, "contigs_removed_by_qc.tsv")
 save_table_safe(qc_summary, "vdj_qc_summary_before_after.tsv")
 save_table_safe(qc_retention, "qc_contigs_before_after_summary.tsv")
+# Productive fraction per sample and chain, on the contigs as read (before any QC filter):
+# the filters keep productive contigs only, so after them the fraction is always 100%.
+productivity_before_qc <- contigs_all_pre %>%
+  filter(!is.na(chain), chain != "") %>%
+  group_by(sample, chain) %>%
+  summarise(n_contigs = n(),
+            n_productive = sum(productive %in% TRUE),
+            .groups = "drop") %>%
+  mutate(pct_productive = 100 * n_productive / pmax(1L, n_contigs))
+save_table_safe(productivity_before_qc, "productivity_before_qc.tsv")
 save_table_safe(pairing_all, "pairing_status_all.tsv")
 save_table_safe(sample_qc, "vdj_qc_per_sample_compact.tsv")
 save_table_safe(cdr3_len_all, "cdr3_lengths_all.tsv")

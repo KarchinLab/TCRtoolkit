@@ -667,6 +667,10 @@ require_file(params$seurat_rds, sprintf("Seurat RDS not found: %s", params$seura
 require_file(params$contigs_file, sprintf("Filtered contigs file not found: %s", params$contigs_file))
 
 seu <- readRDS(params$seurat_rds)
+# Object size, for ranking memory across processes (bin/trace_memory_summary.py).
+cat(sprintf("OBJECT_LOAD\tprocess=TCELL_INTEGRATION\tfile=%s\tfile_mb=%.0f\tobject_mb=%.0f\tcells=%d\tfeatures=%d\tr_max_used_mb=%.0f",
+  basename(params$seurat_rds), file.size(params$seurat_rds) / 2^20, as.numeric(utils::object.size(seu)) / 2^20,
+  ncol(seu), nrow(seu), sum(gc()[, 6])), "\n", file = stderr())
 contigs_all_post <- safe_read_table(params$contigs_file) %>% as.data.frame()
 clonotypes_tbl <- safe_read_table(params$clonotypes_file)
 metadata_tbl <- safe_read_table(params$metadata_file)
@@ -1493,7 +1497,8 @@ save_rds_safe(seu_t, "seurat_tcells_with_TCR.rds")
 sample_col_export <- choose_col(seu_t@meta.data, "META_SAMPLE", sample_col_seu)
 patient_col_export <- choose_col(seu_t@meta.data, "META_PATIENT", patient_col_seu)
 condition_col_export <- choose_col(seu_t@meta.data, "META_TIMECOND", condition_col_seu)
-timepoint_col_export <- choose_col(seu_t@meta.data, "META_TIMECOND", timepoint_col_seu)
+# META_TIMECOND is filled from condition first, so it is not a timepoint source.
+timepoint_col_export <- choose_col(seu_t@meta.data, timepoint_col_seu)
 
 umap_df <- as.data.frame(Embeddings(seu_t, reduction_to_use)) %>%
   tibble::rownames_to_column("cell_id")
@@ -1505,6 +1510,7 @@ export_cells <- seu_t@meta.data %>%
     sample = if (!is.null(sample_col_export)) .data[[sample_col_export]] else NA_character_,
     patient = if (!is.null(patient_col_export)) .data[[patient_col_export]] else NA_character_,
     condition = if (!is.null(condition_col_export)) .data[[condition_col_export]] else NA_character_,
+    timepoint = if (!is.null(timepoint_col_export)) as.character(.data[[timepoint_col_export]]) else NA_character_,
     annot = .data[[label_col_seu]],
     CTaa = dplyr::coalesce(.data[["CTaa"]], NA_character_),
     clone_id = dplyr::coalesce(.data[["clone_id"]], NA_character_),

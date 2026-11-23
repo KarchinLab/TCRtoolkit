@@ -1,0 +1,57 @@
+{{< include ./_report_bundle.qmd >}}
+
+<!-- Clone rank abundance (moved from the Master Summary). It comes from the single-cell VDJ QC
+     and prints its heading only on single-cell runs. -->
+
+```{python}
+#| output: asis
+#| echo: false
+
+if rb_is_sc:
+    rb_heading("Clone rank abundance {#sec-rank-abundance}")
+    rb_text(
+        "Every clone of a sample is ranked by size, the largest first (rank 1), and its size (cells) is "
+        "plotted against its rank on log-log axes. This shows the whole shape of the clone-size "
+        "distribution in one line per sample, and so complements the frequency categories and clone "
+        "tables above, which summarise it.")
+    rb_text(
+        "**How to read it.**\n\n"
+        "- **Where the line starts (rank 1)** is the size of the sample's largest clone. A line that "
+        "starts high belongs to a sample dominated by one clone.\n"
+        "- **The steepness of the head** (the first ranks) shows how quickly clone size drops after the "
+        "largest clones. A steep head means a few dominant clones (an oligoclonal, focused response); "
+        "a gentle head means many clones of similar, moderate size.\n"
+        "- **The flat tail at size 1** is the singletons: clones seen in one cell only, mostly unexpanded "
+        "naive or memory T cells. Where the line reaches size 1 tells how many clones are expanded "
+        "(at least 2 cells): the further right, the more expanded clones; the longer the tail beyond, "
+        "the more diverse the repertoire.\n"
+        "- **Where the line ends** is the number of clones in the sample (its richness), which depends on "
+        "how many cells were captured.\n\n"
+        "**Comparing samples.** Compare lines of the same patient across timepoints or compartments. A "
+        "line that rises at the head and shortens in the tail at a later timepoint shows clonal "
+        "expansion at the expense of diversity, as in an active response; the reverse shows the "
+        "response receding and the repertoire diversifying again. Because richness depends on the "
+        "number of cells, compare the head and the point where the line reaches size 1 rather than the "
+        "length of the tail, and treat samples with few cells with caution.")
+    _ra = rb_read('vdj_qc', 'clone_rank_abundance.tsv')
+    rc = rb_col(_ra, ['rank', 'clone_rank']) if _ra is not None else None
+    nc = rb_col(_ra, ['n_cells', 'n', 'cells', 'count', 'clone_size', 'size']) if _ra is not None else None
+    if _ra is None:
+        rb_note("No clone rank abundance table available.")
+    elif rc is None or nc is None:
+        rb_note("Rank abundance table lacks rank/size columns.")
+    else:
+        d = _ra.assign(_r=pd.to_numeric(_ra[rc], errors='coerce'), _n=pd.to_numeric(_ra[nc], errors='coerce'))
+        d = d[(d['_r'] > 0) & (d['_n'] > 0)]
+        grp = rb_label(d['sample']) if 'sample' in d.columns else ['all'] * len(d)
+        rb_lplot(pd.DataFrame({'x': d['_r'], 'y': d['_n'], 'grp': grp,
+                               'hover': [f"{g}<br>rank {r:.0f}<br>{n:.0f} cells" for g, r, n
+                                         in zip(grp, d['_r'], d['_n'])]}),
+                 "Clone rank abundance (log-log)", "Clone rank", "Clone size (cells)")
+        rt_caption("Clone rank abundance",
+                   "Each line is a sample (labelled by its alias): clone size in cells (y) against the "
+                   "clone's rank within the sample (x), largest clone first, on log-log axes. A line that "
+                   "starts high and drops steeply is dominated by a few large clones; a low line that "
+                   "reaches size 1 early and runs flat is a diverse repertoire of mostly single-cell "
+                   "clones. Click legend entries to hide samples and compare a few at a time.")
+```

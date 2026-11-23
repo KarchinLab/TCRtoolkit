@@ -1,0 +1,40 @@
+{{< include ./_report_bundle.qmd >}}
+
+<!-- Run-level technical QC: which modules produced output. The single-cell checks are in
+     the Single-cell QC section (_sc_qc.qmd). -->
+
+## Module coverage {#sec-module-coverage}
+
+Which analysis modules produced output. `absent` is expected for the GEX-dependent modules
+on the VDJ-only and bulk routes, and for the single-cell QC modules on bulk data.
+
+```{python}
+#| output: asis
+#| echo: false
+
+_mods = {
+    "VDJ QC": rb_read('vdj_qc', 'vdj_qc_per_sample_compact.tsv'),
+    "Pseudobulk QC": rb_read('pseudobulk', 'pseudobulk_qc_summary.csv'),
+    "Sample statistics": rb_read('sample', 'sample_stats.csv'),
+    "Clonotype sharing": rb_read('compare', 'cdr3_sharing.tsv'),
+    "GIANA": rb_read('rollup', 'giana_summary_rollup.tsv'),
+    "GLIPH2": rb_read('rollup', 'gliph2_summary_rollup.tsv'),
+    "TCRdist3": rb_read('rollup', 'tcrdist3_summary_rollup.tsv'),
+    "Repertoire": rb_read('repertoire', 'repertoire_summary.tsv'),
+    "T-cell integration": rb_read('tcell', 'tcell_summary_rollup.tsv'),
+    "CoNGA": rb_read('conga', 'conga_summary_rollup.tsv'),
+    "Consensus": rb_read('consensus', 'consensus_summary_rollup.tsv'),
+    "TCRi": rb_read('tcri', 'tcri_summary_rollup.tsv'),
+}
+d = pd.DataFrame({'cat': list(_mods), 'val': [int(rb_have(v)) for v in _mods.values()]})
+d['hover'] = [f"{m}: {'present' if v else 'absent'}" for m, v in zip(d['cat'], d['val'])]
+fig = go.Figure(go.Bar(x=d['val'][::-1], y=d['cat'][::-1], orientation='h', marker_color='#2c7fb8',
+                       text=d['hover'][::-1], hovertemplate='%{text}<extra></extra>', textposition='none'))
+_rb_layout(fig, "Module output availability", 460, margin_l=140,
+           xaxis=dict(title='', tickvals=[0, 1], ticktext=['absent', 'present'], range=[0, 1.05]),
+           yaxis=dict(title='', type='category'))
+```
+
+**Figure. Module coverage.** One row per analysis module: whether it produced output on this
+run. Any module marked absent that should have run on this route points to a failed or skipped
+step; check the pipeline log before reading the sections that depend on it.

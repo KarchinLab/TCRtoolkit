@@ -1,0 +1,218 @@
+{{< include ./_sc_common.qmd >}}
+
+## Consensus clusters in single cells {#sec-sc-clustering}
+
+The cluster assignments mapped back onto cells: how much of each patient's TCR+ cells every
+method clustered, which samples and cell states the consensus clusters occupy, and how they
+relate to CoNGA and TCRi.
+
+### Clustering coverage {#sec-sc-cluster-coverage}
+
+```{python}
+#| output: asis
+#| echo: false
+
+_methods = [('giana_cluster', 'GIANA'), ('gliph_cluster', 'GLIPH2'),
+            ('tcrdist_cluster', 'TCRdist3'), ('conga_cluster', 'CoNGA'), ('consensus_cluster', 'Consensus')]
+if sc_tcr is None or not sc_has_consensus:
+    sc_note("Consensus clustering did not run for this run, so no per-cell cluster assignments "
+            "are available.")
+else:
+    rows = []
+    for col, name in _methods:
+        if col in sc_tcr.columns:
+            has = sc_tcr[col].astype('string').fillna('').str.strip().ne('')
+            for p, v in has.groupby(sc_tcr[subject_col]):
+                rows.append(dict(patient=p, method=name, frac=v.mean(), cells=int(v.sum()), total=len(v)))
+    d = pd.DataFrame(rows)
+    fig = px.bar(d, x='patient', y='frac', color='method', barmode='group',
+                 category_orders={'method': [m for _, m in _methods], 'patient': sc_patients},
+                 color_discrete_sequence=['#66c2a5', '#fc8d62', '#8da0cb', '#a6d854', '#e78ac3'],
+                 hover_data={'cells': True, 'total': True, 'frac': ':.1%'},
+                 labels={'patient': 'Patient', 'frac': 'Fraction of TCR+ cells clustered', 'method': ''},
+                 title='Share of TCR+ cells assigned to a cluster, per method')
+    fig.update_yaxes(tickformat='.0%')
+    sc_show(fig)
+```
+**Figure `{python} fig_no()`. Clustering coverage.** One group of bars per patient: the share of the patient's TCR+ cells whose clonotype was placed in a cluster by each method, and by the consensus (hover for cell counts). The methods use different notions of similarity, so their coverage differs. The consensus is the most conservative because it needs agreement. Low coverage is expected for small or very diverse repertoires.
+
+**How to read it.** Compare the bars within a patient first: the gap between the individual methods
+and the consensus bar shows how much of each method's clustering the other methods confirm. Then
+compare patients: a patient whose consensus bar is clearly higher has more of its T cells in
+convergent receptor families, typical of a strong, focused response; a patient near zero has a
+diverse or unexpanded repertoire, or too few cells for clusters to form.
+
+```{python}
+#| output: asis
+#| echo: false
+
+# Moved from the Master Summary, then from the Details: Comparison report: the share of each cell state's cells that each sequence
+# clustering method places in a cluster (CLUSTER_ROLLUP and CONSENSUS annotation tables).
+# Needs cell states, so only the VDJ+GEX route draws it.
+if rb_has_gex:
+    rb_heading("Clustering coverage by cell state {#sec-cluster-coverage-state}", level=3)
+    rb_text("The share of each cell state's TCR+ cells that a clustering method places in a "
+            "cluster, i.e. that have at least one similar receptor in the same patient. GIANA, "
+            "GLIPH2 and TCRdist3 use the receptor sequence only; the consensus keeps clusters "
+            "that at least two methods agree on (CoNGA included).")
+    _panels = [('GIANA', 'rollup', 'annotation_giana_summary.tsv'),
+               ('GLIPH2', 'rollup', 'annotation_gliph2_summary.tsv'),
+               ('TCRdist3', 'rollup', 'annotation_tcrdist3_summary.tsv'),
+               ('Consensus', 'consensus', 'annotation_consensus_summary.tsv')]
+    _rows = []
+    for _m, _mod, _f in _panels:
+        _d = rb_read(_mod, _f)
+        if _d is None:
+            continue
+        _fc = rb_col(_d, ['frac_giana', 'frac_gliph', 'frac_tcrdist', 'frac_consensus', 'frac_clustered'])
+        _ac = 'annot' if 'annot' in _d.columns else _d.columns[0]
+        if _fc is None:
+            continue
+        _rows.append(pd.DataFrame({'grp': _m, 'cat': _d[_ac].astype(str),
+                                   'val': pd.to_numeric(_d[_fc], errors='coerce')}))
+    if not _rows:
+        rb_note("No per-cell-state clustering summaries are available on this run.")
+    else:
+        _cv = pd.concat(_rows, ignore_index=True).dropna(subset=['val'])
+        # States ordered by their mean coverage across methods, highest first.
+        _order = _cv.groupby('cat')['val'].mean().sort_values(ascending=False).index.tolist()
+        _cv['cat'] = pd.Categorical(_cv['cat'], _order)
+        # Traces in method order (GIANA, GLIPH2, TCRdist3, Consensus), states in coverage order.
+        _cv['rank'] = _cv['grp'].map({m: i for i, (m, _, _) in enumerate(_panels)})
+        _cv = _cv.sort_values(['rank', 'cat'])
+        _cv['cat'] = _cv['cat'].astype(str)
+        _cv['val'] = 100 * _cv['val']
+        _cv['hover'] = _cv['grp'] + '<br>' + _cv['cat'] + '<br>' + _cv['val'].round(1).astype(str) + '% of cells clustered'
+        rb_gbar(_cv, "Clustering coverage by cell state", "", "% of the state's TCR+ cells clustered",
+                height=520)
+        rt_caption("Clustering coverage by cell state",
+                   "One bar per method and state (legend: method), states ordered by their mean coverage "
+                   "across methods; hover a bar for the exact share. Antigen-experienced states (effector, "
+                   "exhausted, proliferating) are expected to cluster more, since they hold expanded and "
+                   "convergent receptors; naive cells rarely cluster. Innate-like states (MAIT, iNKT) can "
+                   "score high because their receptors are semi-invariant, not because they share an "
+                   "antigen. A state covered by GIANA but not by the consensus is clustered on loose "
+                   "similarity that the other methods do not confirm.")
+```
+
+### Consensus clusters {#sec-sc-consensus}
+
+```{python}
+#| output: asis
+#| echo: false
+
+if sc_tcr is None or not sc_has_consensus:
+    sc_note("Consensus clustering did not run for this run.")
+else:
+    cc = sc_tcr[sc_tcr['consensus_cluster'].astype('string').fillna('').str.strip().ne('')]
+    if cc.empty:
+        sc_note("No cell received a consensus cluster: no clonotype was clustered by enough "
+                "methods. Lowering `--consensus_min_methods` makes the consensus less strict.")
+    else:
+        size = cc.groupby('consensus_cluster')['cell_id'].size()
+        top = size.sort_values(ascending=False).index[:25].tolist()
+        t = cc[cc['consensus_cluster'].isin(top)]
+        pat_of = t.groupby('consensus_cluster')[subject_col].agg(lambda s: ', '.join(sorted(set(s))))
+        ylab = {c: f'{c} ({pat_of[c]}, {size[c]} cells)' for c in top}
+
+        # (a) Which samples / timepoints each cluster appears in.
+        g = t.groupby(['consensus_cluster', 'sample']).size().rename('cells').reset_index()
+        g['frac'] = g['cells'] / g['sample'].map(sc_tcr.groupby('sample').size())
+        g['label'] = g['sample'].map(sc_alias).fillna(g['sample'])
+        g['y'] = g['consensus_cluster'].map(ylab)
+        cols = [sc_alias.get(s, s) for s in sc_sample_order if s in set(g['sample'])]
+        fig = px.scatter(g, x='label', y='y', size='cells', color='frac', size_max=22,
+                         category_orders={'label': cols, 'y': [ylab[c] for c in top]},
+                         color_continuous_scale='Viridis',
+                         hover_data={'cells': True, 'frac': ':.2%', 'y': False},
+                         labels={'label': 'Sample (grouped by patient, ordered by timepoint)', 'y': '',
+                                 'frac': 'Share of<br>sample TCR+'},
+                         title='Top consensus clusters across samples')
+        sc_show(fig, height=max(SC_HEIGHT, 24 * len(top) + 180))
+
+        # (b) Cell states of each cluster.
+        if sc_has_annot:
+            m = pd.crosstab(t['consensus_cluster'], t['annot'])
+            frac = m.div(m.sum(axis=1), axis=0).reindex(top)
+            keep = frac.max().sort_values(ascending=False).index[:15]
+            frac = frac[keep]
+            fig = go.Figure(go.Heatmap(z=frac.values, x=list(keep), y=[ylab[c] for c in top],
+                                       colorscale='Blues', zmin=0, zmax=1,
+                                       customdata=m.reindex(top)[keep].values,
+                                       colorbar=dict(title='Fraction', tickformat='.0%'),
+                                       hovertemplate='%{y}<br>%{x}: %{z:.0%} (%{customdata} cells)<extra></extra>'))
+            fig.update_layout(title='Cell-state composition of the top consensus clusters')
+            fig.update_yaxes(autorange='reversed')
+            sc_show(fig, height=max(SC_HEIGHT, 24 * len(top) + 180))
+```
+**Figure `{python} fig_no()`. Consensus clusters across samples and cell states.** The 25 largest consensus clusters, labelled with the patient(s) they come from and their cell count. The dot plot shows the samples each cluster appears in: dot size is the number of cells and colour is the share of that sample's TCR+ cells. The heatmap shows each cluster's cell-state make-up. A cluster recovered at several timepoints, or in both blood and tissue, is a group of similar receptors persisting across the response. A cluster concentrated in one effector or exhausted state is a candidate antigen-specific family.
+
+**How to read it.** Read each row of the dot plot from left to right: dots in several samples of the
+patient mean the receptor family persists or recurs; a dot in one sample only is a local or transient
+response. Large, dark dots mark samples where the family makes up a sizeable share of the T cells.
+Then look at the same cluster in the heatmap: one dominant state means the family's cells share a
+fate (for example a tumour-reactive family that is mostly exhausted), while several states mean its
+cells differentiate along a path. Clusters of very few clonotypes behave like single clones; check
+`n_clonotypes` in the consensus table above before reading them as convergent families.
+
+### Consensus clusters, CoNGA and TCRi {#sec-sc-consensus-scores}
+
+```{python}
+#| output: asis
+#| echo: false
+
+if sc_tcr is None or not sc_has_consensus or not (sc_has_conga or sc_has_tcri):
+    sc_note("Needs consensus clusters plus CoNGA or TCRi scores (a GEX object).")
+else:
+    cc = sc_tcr[sc_tcr['consensus_cluster'].astype('string').fillna('').str.strip().ne('')]
+    agg = dict(cells=('cell_id', 'size'), patients=(subject_col, lambda s: ', '.join(sorted(set(s)))),
+               state=('annot', lambda s: s.value_counts().index[0]),
+               samples=('sample', 'nunique'))
+    if sc_has_conga:
+        agg['conga_hits'] = ('conga_hit', 'mean')
+    if sc_has_tcri:
+        agg['mean_tcri'] = ('tcri_score', 'mean')
+    d = cc.groupby('consensus_cluster').agg(**agg).reset_index()
+    d = d[d['cells'] >= SC_MIN_CELLS]
+    if d.empty:
+        sc_note(f"No consensus cluster reaches {SC_MIN_CELLS} cells.")
+    else:
+        if sc_has_conga and sc_has_tcri:
+            fig = px.scatter(d, x='conga_hits', y='mean_tcri', size='cells', color='state',
+                             hover_name='consensus_cluster',
+                             hover_data={'patients': True, 'samples': True, 'cells': True},
+                             color_discrete_map=sc_annot_colors(sc_tcr['annot'].unique()),
+                             labels={'conga_hits': 'Cells in CoNGA hits', 'mean_tcri': 'Mean TCRi score',
+                                     'state': 'Dominant state'},
+                             title='Consensus clusters: CoNGA support vs TCRi score')
+            fig.update_xaxes(tickformat='.0%')
+        else:
+            ycol = 'conga_hits' if sc_has_conga else 'mean_tcri'
+            d = d.sort_values(ycol, ascending=False).head(30)
+            fig = px.bar(d, x='consensus_cluster', y=ycol, color='state',
+                         category_orders={'consensus_cluster': d['consensus_cluster'].tolist()},
+                         hover_data={'patients': True, 'samples': True, 'cells': True},
+                         color_discrete_map=sc_annot_colors(sc_tcr['annot'].unique()),
+                         labels={'consensus_cluster': 'Consensus cluster', 'conga_hits': 'Cells in CoNGA hits',
+                                 'mean_tcri': 'Mean TCRi score', 'state': 'Dominant state'},
+                         title='Consensus clusters ranked by ' + ('CoNGA support' if sc_has_conga else 'TCRi score'))
+            if ycol == 'conga_hits':
+                fig.update_yaxes(tickformat='.0%')
+        fig.update_traces(marker=dict(line=dict(width=0.5, color='white')))
+        sc_show(fig, height=480)
+```
+**Figure `{python} fig_no()`. Sequence clusters set against transcriptome-aware evidence.** Each point is a consensus cluster with at least 10 cells, sized by cell count and coloured by its dominant state. The x-axis is the share of its cells in CoNGA hit clonotypes, meaning receptor similarity mirrored by transcriptional similarity. The y-axis is the cluster's mean TCRi score, meaning how strongly the receptors encode a phenotype bias. Clusters high on both axes are supported by sequence, transcriptome and receptor-intrinsic evidence, and are the strongest candidates for shared antigen specificity.
+
+**How to read it.** When both CoNGA and TCRi ran (a scatter plot), it splits into four corners; with only one of them, the bars rank the clusters on that axis alone.
+
+- **Top right (CoNGA high, TCRi high):** receptors that look alike, cells that look alike, and receptors
+  that predict a phenotype. The most coherent antigen-driven families; prioritise the large ones.
+- **Bottom right (CoNGA high, TCRi low):** similar receptors with a shared transcriptional state, but the
+  receptor itself does not predict the state. Often innate-like (MAIT, iNKT) families, or a state set
+  by the environment rather than by the receptor.
+- **Top left (CoNGA low, TCRi high):** the receptors carry a phenotype bias, but the cells are not
+  grouped in expression space, for example a family spread over related states.
+- **Bottom left:** sequence similarity only, without transcriptome support. Not necessarily wrong,
+  but the weakest evidence.
+
+Small points are clusters of few cells, whose CoNGA share and mean TCRi can swing with one or two cells.

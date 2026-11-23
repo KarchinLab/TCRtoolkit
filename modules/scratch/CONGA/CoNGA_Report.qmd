@@ -299,6 +299,10 @@ choose_col <- function(df, primary = NULL, fallback = NULL) {
 
 # load-and-resolve
 seu <- readRDS(params$seurat_rds)
+# Object size, for ranking memory across processes (bin/trace_memory_summary.py).
+cat(sprintf("OBJECT_LOAD\tprocess=CONGA\tfile=%s\tfile_mb=%.0f\tobject_mb=%.0f\tcells=%d\tfeatures=%d\tr_max_used_mb=%.0f",
+  basename(params$seurat_rds), file.size(params$seurat_rds) / 2^20, as.numeric(utils::object.size(seu)) / 2^20,
+  ncol(seu), nrow(seu), sum(gc()[, 6])), "\n", file = stderr())
 md <- normalize_colnames(seu@meta.data)
 seu@meta.data <- md
 
@@ -807,6 +811,8 @@ import pandas as pd
 import numpy as np
 
 adata = ad.read_h5ad(final_h5ad)
+import os, resource, sys
+print(f'OBJECT_LOAD\tprocess=CONGA\tfile={os.path.basename(final_h5ad)}\tfile_mb={os.path.getsize(final_h5ad)/2**20:.0f}\tcells={adata.n_obs}\tfeatures={adata.n_vars}\tpeak_rss_mb={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024:.0f}', file=sys.stderr)
 obs = adata.obs.copy()
 obs['cell_id'] = obs.index.astype(str)
 

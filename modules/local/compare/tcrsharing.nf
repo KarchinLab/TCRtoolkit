@@ -13,7 +13,6 @@ process TCRSHARING_CALC {
     python - <<EOF
     import numpy as np
     import pandas as pd
-    import matplotlib.pyplot as plt
 
     # Load data
     df = pd.read_csv("${concat_cdr3}", sep="\t")
@@ -55,81 +54,6 @@ process TCRSHARING_CALC {
 
     # Export final list
     final_df.to_csv("cdr3_sharing.tsv", sep="\t", index=False)
-    EOF
-    """
-}
-
-process TCRSHARING_HISTOGRAM {
-    label 'process_low'
-
-    input:
-    path shared_cdr3
-
-    output:
-    path "sharing_histogram.png"
-
-    script:
-    """
-    python - <<EOF
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    
-    merged_df = pd.read_csv('${shared_cdr3}', sep='\t')
-
-    # Plot histogram
-    sharing = merged_df['total_samples'].values
-
-    # Create integer bin edges from 0 to max(data)
-    bins = np.arange(min(sharing), max(sharing) + 2)  # +2 to include the last value as a bin edge
-
-    plt.figure(figsize=(8, 5))
-    plt.hist(sharing, bins=bins, edgecolor='black', align='left')
-    plt.xticks(bins[:-1])  # whole number positions and labels
-    plt.yscale('log')
-
-    plt.xlabel('Number of Shared Samples')
-    plt.ylabel('TCR Sequence Frequency (log scale)')
-    plt.title('TCR Sharing Histogram')
-
-    # Save to file
-    plt.savefig("sharing_histogram.png", dpi=300, bbox_inches="tight")
-    plt.close()
-    EOF
-    """
-}
-
-process TCRSHARING_SCATTERPLOT {
-    label 'process_low'
-
-    input:
-    path shared_cdr3
-
-    output:
-    path "sharing_pgen_scatterplot.png"
-
-    script:
-    """
-    python - <<EOF
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    from matplotlib.ticker import MaxNLocator
-
-    merged_df = pd.read_csv('${shared_cdr3}', sep='\t')
-
-    # Create scatter plot with log-transform pgen
-    plt.figure(figsize=(8, 6))
-    plt.grid(True)
-    plt.scatter(merged_df["log10_pgen"], merged_df["total_samples"], c='blue', alpha=0.7)
-    plt.gca().yaxis.set_major_locator(MaxNLocator(integer=True))
-
-    plt.xlabel("log10(Probability)")
-    plt.ylabel("Number of Shared Samples")
-    plt.title("Scatterplot of Shared TCRs vs log10(Generation Probability)")
-    plt.tight_layout()
-    plt.savefig("sharing_pgen_scatterplot.png", dpi=300, bbox_inches="tight")
-    plt.close()
     EOF
     """
 }

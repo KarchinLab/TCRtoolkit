@@ -5,9 +5,10 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
-include { PATIENT_CONCATENATE; PATIENT_CALC } from '../../modules/local/patient'
+include { PATIENT_CONCATENATE } from '../../modules/local/patient'
 include { GLIPH2_TURBOGLIPH } from '../../modules/local/compare/gliph2'
 include { GIANA_CALC    } from '../../modules/local/compare/giana'
+include { TCRDIST3_MATRIX } from '../../modules/local/patient/tcrdist3'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -30,7 +31,20 @@ workflow PATIENT {
 
     PATIENT_CONCATENATE ( patient_groups )
 
-    PATIENT_CALC( PATIENT_CONCATENATE.out.patient_cdr3 )
+    // TCRdist3 on all of a patient's clones at once (the scope GIANA / GLIPH2 use), so
+    // similar TCRs are linked across that patient's samples.
+    def tcrdist_groups = processed_samples
+        .map { meta, file -> [ meta[patient_key] ?: meta.patient, meta.sample, file ] }
+        .groupTuple()
+    TCRDIST3_MATRIX(
+        tcrdist_groups,
+        params.matrix_sparsity,
+        params.distance_metric,
+        file(params.db_path)
+    )
+
+    // Within-patient overlap (Jaccard / Sorensen / Morisita) is the patient pairs of
+    // REPERTOIRE_METRICS' overlap_samples.tsv.
 
     GIANA_CALC(
         PATIENT_CONCATENATE.out.patient_cdr3,
@@ -61,7 +75,26 @@ workflow PATIENT {
         )
     }
 
+    // One row per patient (clone counts, nnz, radius, wall time, peak RSS), joined to the
+    // Nextflow trace by bin/trace_memory_summary.py to rank memory by patient.
+    TCRDIST3_MATRIX.out.metrics
+        .collectFile(name: 'tcrdist_metrics.tsv', keepHeader: true, skip: 1, sort: true,
+                     storeDir: "${params.outdir}/pipeline_info")
+
     emit:
+    // Patient matrices and clone tables (report notebooks), and the compact cluster maps
+    // CLUSTER_TO_SC / CLUSTER_ROLLUP read instead of the matrices.
+    tcrdist_patient_clones = TCRDIST3_MATRIX.out.patient_clones
+    tcrdist_patient_matrix = TCRDIST3_MATRIX.out.patient_matrix
+    tcrdist_cluster_map    = TCRDIST3_MATRIX.out.cluster_map
+    // Per-sample blocks plus the patient files, staged into the report notebooks' tcrdist3/.
+    tcrdist_files          = TCRDIST3_MATRIX.out.sample_matrices
+                                 .mix( TCRDIST3_MATRIX.out.sample_clone_dfs,
+                                       TCRDIST3_MATRIX.out.patient_clones,
+                                       TCRDIST3_MATRIX.out.patient_matrix.map { _patient, f -> f } )
+                                 .flatten()
+                                 .collect()
+
     // Additive outputs consumed only by the single-cell modality (CLUSTER_TO_SC).
     // GIANA_CALC's second positional output is the giana.txt cluster file.
     giana_clusters         = GIANA_CALC.out[1]
