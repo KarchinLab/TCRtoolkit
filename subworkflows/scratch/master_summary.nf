@@ -14,7 +14,7 @@ include { MASTER_SUMMARY } from '../../modules/scratch/MASTER_SUMMARY/main.nf'
  */
 workflow MASTER_SUMMARY_SW {
     take:
-    seurat_rds
+    marker_table        // SC_MARKER_EXPRESSION's marker_expression.tsv, or NO_FILE
     export_cells
 
     rollup_tables
@@ -36,7 +36,7 @@ workflow MASTER_SUMMARY_SW {
     ).collect()
 
     MASTER_SUMMARY(
-        seurat_rds,
+        marker_table,
         export_cells,
         rollup_tables,
         tcell_tables,

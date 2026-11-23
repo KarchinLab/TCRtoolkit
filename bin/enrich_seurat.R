@@ -58,6 +58,10 @@ if (has_seurat) {
     suppressPackageStartupMessages(library(Seurat))
     message("[Bridge 2+] Loading Seurat object: ", seurat_rds_path)
     seurat_obj <- readRDS(seurat_rds_path)
+    # Object size, for ranking memory across processes (bin/trace_memory_summary.py).
+    cat(sprintf("OBJECT_LOAD\tprocess=CLUSTER_TO_SC\tfile=%s\tfile_mb=%.0f\tobject_mb=%.0f\tcells=%d\tfeatures=%d\tr_max_used_mb=%.0f",
+      basename(seurat_rds_path), file.size(seurat_rds_path) / 2^20, as.numeric(utils::object.size(seurat_obj)) / 2^20,
+      ncol(seurat_obj), nrow(seurat_obj), sum(gc()[, 6])), "\n", file = stderr())
 } else {
     message("[Bridge 2+] No Seurat object - writing per-cell cluster TSVs only")
 }
@@ -175,98 +179,41 @@ if (length(gliph2_files) > 0) {
     message("[Bridge 2+] No GLIPH2 files found — skipping GLIPH2 annotation")
 }
 
-# ── TCRdist3 cluster mapping (connected components at radius, per patient) ────
-# One distance matrix per patient (TCRDIST3_MATRIX), over the clones of all that patient's
-# samples. Clones within `tcrdist_radius` are linked, rows with the same CDR3b are merged
-# (cells are matched on CDR3b), and each connected component with >= 2 distinct CDR3b is a
-# cluster. Singletons get no cluster, as with GIANA / GLIPH2.
-clone_df_files <- list.files(".", pattern = "_tcrdist_patient_clones\\.csv$", full.names = TRUE)
-tcrdist_map    <- NULL
+# ── TCRdist3 cluster mapping (per patient, precomputed) ───────────────────────
+# TCRDIST3_MATRIX cuts each patient's clusters at --tcrdist_radius and writes them as
+# <patient>_tcrdist_cluster_map.tsv (one row per clone; tcrdist_cluster empty for clones
+# outside any cluster). Clones within the radius are linked, rows sharing a CDR3b are tied
+# together, and a connected component with >= 2 distinct CDR3b is a cluster. Reading these
+# small tables keeps the raw distance matrices out of this all-patient step.
+map_files   <- list.files(".", pattern = "_tcrdist_cluster_map\\.tsv$", full.names = TRUE)
+tcrdist_map <- NULL
 
-h5_reader <- if (requireNamespace("rhdf5", quietly = TRUE)) "rhdf5" else
-             if (requireNamespace("hdf5r", quietly = TRUE)) "hdf5r" else NA_character_
-
-read_h5 <- function(path, keys) {
-    if (identical(h5_reader, "rhdf5")) {
-        stats::setNames(lapply(keys, function(k) rhdf5::h5read(path, k)), keys)
-    } else {
-        fh <- hdf5r::H5File$new(path, mode = "r")
-        on.exit(fh$close_all(), add = TRUE)
-        stats::setNames(lapply(keys, function(k) fh[[k]]$read()), keys)
-    }
-}
-
-# Sparse (i, j) pairs within radius, diagonal excluded. In the sparse layout an absent
-# entry is "beyond the sparsity cutoff" and a true zero distance is stored as -1.
-pairs_within_radius <- function(patient) {
-    mat_hdf5 <- paste0(patient, "_tcrdist_patient_matrix.hdf5")
-    mat_csv  <- paste0(patient, "_tcrdist_patient_matrix.csv")
-    if (file.exists(mat_hdf5) && !is.na(h5_reader)) {
-        h5    <- read_h5(mat_hdf5, c("data", "indices", "indptr", "shape"))
-        shape <- as.integer(h5$shape)
-        mat   <- Matrix::sparseMatrix(j = as.integer(h5$indices) + 1L, p = as.integer(h5$indptr),
-                                      x = as.numeric(h5$data), dims = shape)
-        tm    <- Matrix::summary(mat)
-        tm$x[tm$x == -1] <- 0
-        keep  <- tm$x <= tcrdist_radius & tm$i != tm$j
-        return(list(n = shape[1], i = tm$i[keep], j = tm$j[keep]))
-    }
-    if (file.exists(mat_csv)) {
-        mat <- as.matrix(read.csv(mat_csv, header = FALSE))
-        w   <- which(mat <= tcrdist_radius, arr.ind = TRUE)
-        w   <- w[w[, 1] != w[, 2], , drop = FALSE]
-        return(list(n = nrow(mat), i = w[, 1], j = w[, 2]))
-    }
-    NULL
-}
-
-if (length(clone_df_files) > 0) {
-    message("[Bridge 2+] Processing ", length(clone_df_files),
-            " TCRdist3 patient matrix(es) at radius ", tcrdist_radius)
-
-    parts <- lapply(clone_df_files, function(cdf_path) {
+if (length(map_files) > 0) {
+    message("[Bridge 2+] Reading ", length(map_files), " TCRdist3 cluster map(s)")
+    parts <- lapply(map_files, function(f) {
         tryCatch({
-            patient  <- sub("_tcrdist_patient_clones\\.csv$", "", basename(cdf_path))
-            clone_df <- read.csv(cdf_path, stringsAsFactors = FALSE, check.names = FALSE)
-            pr       <- pairs_within_radius(patient)
-            if (is.null(pr)) {
-                message("[Bridge 2+] No distance matrix for patient '", patient, "' — skipping")
-                return(NULL)
-            }
-            n    <- nrow(clone_df)
-            cdr3 <- toupper(clone_df[["cdr3_b_aa"]])
-            # Node per clone row, plus one node per CDR3b tying its rows together.
-            cdr3_ids <- match(cdr3, unique(cdr3))
-            edges <- rbind(cbind(pr$i, pr$j), cbind(seq_len(n), n + cdr3_ids))
-            g     <- igraph::graph_from_edgelist(edges, directed = FALSE)
-            g     <- igraph::add_vertices(g, max(0, n + max(cdr3_ids) - igraph::vcount(g)))
-            memb  <- igraph::components(g)$membership[seq_len(n)]
-
-            df <- data.frame(patient = patient, CDR3b = cdr3, comp = memb,
-                             stringsAsFactors = FALSE) %>%
-                distinct(CDR3b, .keep_all = TRUE)
-            sizes <- table(df$comp)
-            df <- df[df$comp %in% as.integer(names(sizes)[sizes >= 2]), , drop = FALSE]
-            if (nrow(df) == 0) return(NULL)
-            df$tcrdist_cluster <- paste0(patient, "_T", match(df$comp, sort(unique(df$comp))))
-            df[, c("patient", "CDR3b", "tcrdist_cluster")]
+            m <- read.delim(f, stringsAsFactors = FALSE, check.names = FALSE,
+                            colClasses = c(tcrdist_cluster = "character"))
+            m <- m[!is.na(m$tcrdist_cluster) & nzchar(m$tcrdist_cluster), , drop = FALSE]
+            if (!nrow(m)) return(NULL)
+            data.frame(patient = as.character(m$patient), CDR3b = toupper(m$cdr3_b_aa),
+                       tcrdist_cluster = m$tcrdist_cluster, stringsAsFactors = FALSE) %>%
+                distinct(patient, CDR3b, .keep_all = TRUE)
         }, error = function(e) {
-            message("[Bridge 2+] Warning: TCRdist3 clustering failed for '",
-                    cdf_path, "': ", e$message)
+            message("[Bridge 2+] Warning: could not read TCRdist3 cluster map '", f, "': ", e$message)
             NULL
         })
     })
-
     valid_parts <- Filter(Negate(is.null), parts)
     if (length(valid_parts) == 0) {
         message("[Bridge 2+] TCRdist3: no clusters in any patient")
     } else {
         tcrdist_map <- bind_rows(valid_parts)
         message("[Bridge 2+] TCRdist3: ", nrow(tcrdist_map), " clustered (patient, CDR3b) in ",
-                dplyr::n_distinct(tcrdist_map$tcrdist_cluster), " clusters")
+                dplyr::n_distinct(tcrdist_map$tcrdist_cluster), " clusters (radius ", tcrdist_radius, ")")
     }
 } else {
-    message("[Bridge 2+] No TCRdist3 patient matrices found — skipping TCRdist3 annotation")
+    message("[Bridge 2+] No TCRdist3 cluster maps found — skipping TCRdist3 annotation")
 }
 
 # ── Write per-cell export TSVs (for Consensus Clustering) ────────────────────

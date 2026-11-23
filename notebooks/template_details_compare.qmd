@@ -97,5 +97,7 @@ This pipeline can be used to analyze both **single-cell and bulk TCR data**. Ple
 
 {{< include ./_compare_overlap.qmd >}}
 
+{{< include ./_compare_selection.qmd >}}
+
 <!-- The single-cell (or bulk) clone-level longitudinal section is included inside Clonal
      dynamics, in template_overlap.qmd. -->

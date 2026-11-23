@@ -35,7 +35,7 @@ def runSections(notebookName) {
     [
         template_qc              : ['_qc_overview.qmd', '_qc_technical.qmd'],
         template_details_sample  : ['_sample_gene_usage.qmd', '_sample_clonal_structure.qmd', '_violin_heatmap.qmd'],
-        template_details_compare : ['_compare_overlap.qmd'],
+        template_details_compare : ['_compare_overlap.qmd', '_compare_selection.qmd'],
         template_details_patient : ['_patient_clustering.qmd', '_violin_heatmap.qmd'],
     ][notebookName] ?: []
 }

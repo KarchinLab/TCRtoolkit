@@ -96,6 +96,38 @@ else:
 ```
 **Figure `{python} fig_no()`. Phenotypic fate of persistent clones.** One tab per patient. The patient's samples are columns (labelled by alias), ordered by timepoint and then compartment, so at a single timepoint blood and tissue sit next to each other. Each flow joins clones detected in two neighbouring samples (at least one cell in each), going from their dominant state in the first sample to their dominant state in the second, with width proportional to the number of clones; hover a block or flow for its count. Horizontal flows within one state show phenotypic stability. Diagonal flows show clones changing state, for example memory clones whose cells have become effector or exhausted at a later timepoint, or blood clones that look different once in tissue.
 
+### Clone-level plasticity {#sec-sc-plasticity}
+
+The diagram above follows each clone's dominant state. This table uses all of a clone's cells:
+for each clone with enough cells at two successive timepoints, the Jensen-Shannon divergence (JSD)
+between its state distributions, from 0 (same distribution) to 1 (no state in common), with a
+95% bootstrap interval.
+
+**How to read it.** Small clones show some JSD by chance, so the raw value is never enough.
+`q (over time)` asks whether the clone's distribution changed at all; a shift of the whole
+population also counts. `q (clone-specific)` asks whether it moved more than random cells drawn
+from the same timepoints, so a low value here is the evidence for change particular to this
+clone. Timepoints that differ in lesion as well as day are compared as given.
+
+```{python}
+#| output: asis
+#| echo: false
+
+_pl = rb_read('tcell', 'clonal_plasticity.tsv')
+if _pl is None:
+    rb_note("No clone had enough cells at two successive timepoints, or plasticity was not run (produced by CLONAL_PLASTICITY).")
+else:
+    _n = len(_pl)
+    _s = int((_pl['q_state'] < 0.05).sum())
+    _t = int((_pl['q_time'] < 0.05).sum())
+    rb_text(f"{_n} clone and timepoint pairs tested: {_t} changed over time and {_s} changed more than "
+            "random cells from the same timepoints (q < 0.05).")
+    _cols = {'patient': 'Patient', 'origin': 'Compartment', 'clone': 'Clone', 't1': 'From', 't2': 'To', 'n1': 'Cells (from)',
+             'n2': 'Cells (to)', 'jsd': 'JSD', 'ci_low': 'CI low', 'ci_high': 'CI high', 'q_time': 'q (over time)',
+             'q_state': 'q (clone-specific)'}
+    rb_table(_pl.sort_values(['q_state', 'jsd'], ascending=[True, False]).head(50)[list(_cols)].rename(columns=_cols).round(3))
+```
+
 ### Blood and tissue {#sec-sc-blood-tissue}
 
 ```{python}

@@ -15,8 +15,19 @@ include { BULK_TO_EXPORT }      from '../modules/bridges/bulk_to_export'
 include { MASTER_SUMMARY_SW }   from '../subworkflows/scratch/master_summary'
 include { REPORT }              from '../subworkflows/local/report'
 include { REPORT_BUNDLE }       from '../modules/bridges/report_bundle'
+include { RESULTS_EXPORT }      from '../modules/local/export_results'
 
 def enabled(x) { x == null || x == true }
+
+// Tables RESULTS_EXPORT joins into results/, picked by name (everything else is left out),
+// collected sorted so the task hash does not depend on the order upstream tasks finished.
+def resultsInputs(ch) {
+    def names = ['clonotypes.csv', 'expanded_clones_summary.csv', 'contracting_clones_summary.csv',
+                 'detailed_comparisons_expansion.csv', 'detailed_comparisons_contraction.csv',
+                 'sample_stats.csv', 'overlap_samples.tsv', 'olga_pgen.tsv', 'concatenated_cdr3_sorted.tsv']
+    ch.flatten().filter { f -> f.name in names || f.name.endsWith('.vdjmatch.txt') }
+        .unique { f -> f.name }.collect(sort: true).ifEmpty([])
+}
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -127,8 +138,7 @@ workflow TCRTOOLKIT_BULK {
                     BULK_TO_EXPORT.out.export_cells,
                     BULKTCR_ANALYSIS.out.giana_clusters,
                     BULKTCR_ANALYSIS.out.gliph2_cluster_details,
-                    BULKTCR_ANALYSIS.out.tcrdist_clone_df,
-                    BULKTCR_ANALYSIS.out.tcrdist_output,
+                    BULKTCR_ANALYSIS.out.tcrdist_cluster_map,
                     channel.value(nofile),
                     ch_project_name
                 )
@@ -136,6 +146,25 @@ workflow TCRTOOLKIT_BULK {
                 rollup_tables    = CLONOTYPE_CLUSTERING.out.rollup_tables
                 consensus_tables = CLONOTYPE_CLUSTERING.out.consensus_tables
                 consensus_report = CLONOTYPE_CLUSTERING.out.consensus_report
+            }
+
+            // --- results/: the core tables every report figure is drawn from ---
+            // Written with or without the report notebooks (--run_reports false).
+            if (enabled(params.run_results_export)) {
+                RESULTS_EXPORT(
+                    resultsInputs(channel.empty().mix(
+                        BULKTCR_ANALYSIS.out.clonal_dynamics_files,
+                        BULKTCR_ANALYSIS.out.sample_stats,
+                        BULKTCR_ANALYSIS.out.repertoire_tables,
+                        BULKTCR_ANALYSIS.out.cdr3_pgen,
+                        BULKTCR_ANALYSIS.out.vdjdb_files,
+                        BULKTCR_ANALYSIS.out.concat_cdr3_sorted)),
+                    rep_export.ifEmpty(nofile),
+                    channel.value(nofile), channel.value(nofile), channel.value(nofile), channel.value(nofile),
+                    channel.value(file(params.samplesheet)),
+                    channel.fromPath("${projectDir}/bin/export_results.py", checkIfExists: true),
+                    ch_project_name
+                )
             }
 
             // --- Report notebooks ---
@@ -149,7 +178,7 @@ workflow TCRTOOLKIT_BULK {
                     channel.empty()
                         .mix(BULKTCR_ANALYSIS.out.sample_stats, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
                         .collect().ifEmpty([]),
-                    BULKTCR_ANALYSIS.out.shared_cdr3.flatten().collect().ifEmpty([]),
+                    BULKTCR_ANALYSIS.out.shared_cdr3.mix(BULKTCR_ANALYSIS.out.selection_files).flatten().collect().ifEmpty([]),
                     BULKTCR_ANALYSIS.out.repertoire_tables.flatten().collect().ifEmpty([]),
                     channel.value([]), channel.value([]),
                     consensus_tables.flatten().collect().ifEmpty([]),

@@ -93,8 +93,8 @@ def compute_dynamics(clonotypes_df, subject_col, origin_col, timepoint_col,
         if len(timepoints) < 2:
             continue
 
-        freq_pivot = subject_df.pivot_table(index=CLONE_COLS, columns=timepoint_col, values='frequency', fill_value=0)
-        counts_pivot = subject_df.pivot_table(index=CLONE_COLS, columns=timepoint_col, values='duplicate_count', fill_value=0)
+        freq_pivot = subject_df.pivot_table(index=CLONE_COLS, columns=timepoint_col, values='frequency', fill_value=0, aggfunc='sum')
+        counts_pivot = subject_df.pivot_table(index=CLONE_COLS, columns=timepoint_col, values='duplicate_count', fill_value=0, aggfunc='sum')
         subject_total_counts = subject_df.groupby(timepoint_col)['duplicate_count'].sum()
 
         for t_pre, t_post in itertools.combinations(timepoints, 2):

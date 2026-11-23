@@ -7,8 +7,7 @@
  * All cluster files are discovered by pattern in the working directory:
  *   *_giana.txt                    - GIANA per-patient output
  *   cluster_member_details*.txt    - GLIPH2 per-patient output
- *   *_clone_df.csv                 - TCRdist3 per-sample clone table
- *   *_distance_matrix.*            - TCRdist3 per-sample distance matrix
+ *   *_tcrdist_cluster_map.tsv      - TCRdist3 per-patient clusters (TCRDIST3_MATRIX)
  *
  * The Seurat object is optional (NO_FILE on the VDJ-only route and for bulk data); then
  * only the per-cell TSVs are written and enriched_seurat.rds is not emitted.
@@ -32,8 +31,8 @@ process CLUSTER_TO_SC {
     path export_cells
     path giana_files        // collected *_giana.txt files (one per patient)
     path gliph2_files       // collected cluster_member_details dirs/files
-    path tcrdist_clone_dfs  // collected <patient>_tcrdist_patient_clones.csv files
-    path tcrdist_matrices   // collected <patient>_tcrdist_patient_matrix.* files
+    path tcrdist_maps       // collected <patient>_tcrdist_cluster_map.tsv files (no matrices:
+                            // the clusters are cut per patient, in TCRDIST3_MATRIX)
     val  tcrdist_radius
 
     output:

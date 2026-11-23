@@ -75,10 +75,18 @@ workflow PATIENT {
         )
     }
 
+    // One row per patient (clone counts, nnz, radius, wall time, peak RSS), joined to the
+    // Nextflow trace by bin/trace_memory_summary.py to rank memory by patient.
+    TCRDIST3_MATRIX.out.metrics
+        .collectFile(name: 'tcrdist_metrics.tsv', keepHeader: true, skip: 1, sort: true,
+                     storeDir: "${params.outdir}/pipeline_info")
+
     emit:
-    // Patient matrices and clone tables, for CLUSTER_TO_SC's TCRdist3 clusters.
+    // Patient matrices and clone tables (report notebooks), and the compact cluster maps
+    // CLUSTER_TO_SC / CLUSTER_ROLLUP read instead of the matrices.
     tcrdist_patient_clones = TCRDIST3_MATRIX.out.patient_clones
     tcrdist_patient_matrix = TCRDIST3_MATRIX.out.patient_matrix
+    tcrdist_cluster_map    = TCRDIST3_MATRIX.out.cluster_map
     // Per-sample blocks plus the patient files, staged into the report notebooks' tcrdist3/.
     tcrdist_files          = TCRDIST3_MATRIX.out.sample_matrices
                                  .mix( TCRDIST3_MATRIX.out.sample_clone_dfs,

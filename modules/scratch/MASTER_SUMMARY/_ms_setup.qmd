@@ -58,8 +58,11 @@ have <- function(x) !is.null(x) && nrow(x) > 0
 note <- function(txt) knitr::asis_output(paste0("\n::: {.callout-note appearance=\"simple\"}\n",
                                                 txt, "\n:::\n\n"))
 
+# Per-figure TSVs only with --write_figure_tables: the figures are views of the core tables
+# in results/ (RESULTS_EXPORT), so writing each one again is redundant.
+write_fig_tables <- isTRUE(as.logical(params$write_figure_tables %||% FALSE))
 save_table <- function(df, filename) {
-  if (have(df)) fwrite(df, file.path(params$outdir, "tables", filename), sep = "\t")
+  if (write_fig_tables && have(df)) fwrite(df, file.path(params$outdir, "tables", filename), sep = "\t")
   invisible(df)
 }
 
@@ -166,6 +169,162 @@ lplot <- function(df, title, xlab, ylab, logx = TRUE, logy = TRUE, height = 470)
         plotly::layout(title = ttl(title), height = height, margin = list(t = 60),
                        xaxis = list(title = xlab, type = if (logx) "log" else "linear"),
                        yaxis = list(title = ylab, type = if (logy) "log" else "linear")))
+}
+
+# ── Per-patient tabs ────────────────────────────────────────────────────────
+# One tab per key (patient), in the same `::: {.panel-tabset}` layout as the report
+# notebooks' per-patient figures; a single key renders without a tab bar. render(key)
+# returns a widget or tagList. Each panel goes through knit_child so its htmlwidget
+# dependencies reach the page (a widget printed inside a loop would lose them). Call
+# from a chunk with `results: asis`.
+patient_tabs <- function(keys, render, level = "####") {
+  .knit_one <- function(obj) {
+    .tab_obj <- obj
+    knitr::knit_child(text = c("```{r}", "#| echo: false", ".tab_obj", "```"),
+                      envir = environment(), quiet = TRUE)
+  }
+  keys <- as.character(keys)
+  if (!length(keys)) return(invisible(NULL))
+  if (length(keys) == 1) { cat(.knit_one(render(keys[1])), "\n\n"); return(invisible(NULL)) }
+  cat("::: {.panel-tabset}\n\n")
+  for (k in keys) cat(level, " ", k, "\n\n", .knit_one(render(k)), "\n\n", sep = "")
+  cat(":::\n\n")
+  invisible(NULL)
+}
+
+# Numbered caption under a figure outside the GEX section ("Figure T1."). text is HTML.
+figcap <- function(w, label, title, text = "") {
+  if (inherits(w, "plotly")) {
+    w <- plotly::plotly_build(w)
+    if (!is.null(w$x$layout$height)) w$height <- w$x$layout$height
+  }
+  htmltools::tagList(w, htmltools::tags$p(style = "margin-top: 0.5rem;",
+    htmltools::HTML(sprintf("<strong>Figure %s. %s.</strong> %s", label, title, text))))
+}
+
+# ── Clone tracking (alluvial) ───────────────────────────────────────────────
+# Clone-level share of each sample, the patient's top clones stacked at the bottom of every
+# bar and joined between consecutive samples by ribbons. Used by the TCR-only view (from
+# CLONAL_DYNAMICS clonotypes) and the phenotype view (from the per-cell export).
+#   fr   : data.frame(key, sample, pct)      - a clone's % of the sample; keys = top clones
+#   smp  : data.frame(sample, label, hover)  - samples in plotting order
+#   keys : top clone keys, rank order (1 = largest peak)
+#   seg  : optional data.frame(key, sample, state, frac) - each block's split by cell
+#          state (key "rest" for the other clones); NULL draws one colour per clone
+#   clone_cols  : colour per key (TCR-only blocks and every ribbon)
+#   state_cols_ : colour per state (when seg is given)
+#   key_text    : legend / hover label per key
+track_slate <- c("#1f2d3d", "#34485e", "#4c6279", "#667d94", "#8399ad", "#a2b4c4",
+                 "#b8c6d3", "#cbd6df", "#dbe3ea", "#e8edf2")
+track_rest  <- "#e6e5e0"
+
+track_plot <- function(fr, smp, keys, clone_cols, key_text, title, seg = NULL,
+                       state_cols_ = NULL, height = 520, unit = "cells") {
+  n  <- nrow(smp); w <- 0.42
+  pct <- matrix(0, length(keys), n, dimnames = list(keys, smp$sample))
+  ok <- fr$key %in% keys & fr$sample %in% smp$sample
+  pct[cbind(as.character(fr$key[ok]), as.character(fr$sample[ok]))] <- fr$pct[ok]
+  lo <- apply(pct, 2, function(v) cumsum(v) - v)          # lower edge of each block
+  if (!is.matrix(lo)) lo <- matrix(lo, nrow = length(keys), dimnames = dimnames(pct))
+  top <- colSums(pct)
+  p <- plotly::plot_ly()
+  # Ribbons: one smooth band per clone between consecutive samples, and one for the rest.
+  tt <- seq(0, 1, length.out = 30); sm <- 3 * tt^2 - 2 * tt^3
+  band <- function(p, x0, x1, a0, b0, a1, b1, col, alpha) {
+    xs <- x0 + (x1 - x0) * tt
+    lo_ <- a0 + (a1 - a0) * sm; hi_ <- b0 + (b1 - b0) * sm
+    plotly::add_trace(p, x = c(xs, rev(xs)), y = c(hi_, rev(lo_)), type = "scatter", mode = "lines",
+                      fill = "toself", fillcolor = plotly::toRGB(col, alpha),
+                      line = list(color = "white", width = 0.8), hoverinfo = "skip",
+                      showlegend = FALSE, inherit = FALSE)
+  }
+  if (n > 1) for (s in seq_len(n - 1)) {
+    x0 <- s - 1 + w / 2; x1 <- s - w / 2
+    for (k in keys) {
+      if (pct[k, s] == 0 && pct[k, s + 1] == 0) next
+      p <- band(p, x0, x1, lo[k, s], lo[k, s] + pct[k, s], lo[k, s + 1], lo[k, s + 1] + pct[k, s + 1],
+                clone_cols[[k]], if (is.null(seg)) 0.42 else 0.32)
+    }
+    p <- band(p, x0, x1, top[s], 100, top[s + 1], 100, track_rest, 0.55)
+  }
+  # Bars, as stacked blocks with an explicit base so each block sits where its ribbon ends.
+  blk <- do.call(rbind, lapply(seq_len(n), function(s) rbind(
+    data.frame(key = keys, s = s, y0 = lo[, s], h = pct[, s], stringsAsFactors = FALSE),
+    data.frame(key = "rest", s = s, y0 = top[s], h = 100 - top[s], stringsAsFactors = FALSE))))
+  blk <- blk[blk$h > 0, , drop = FALSE]
+  blk$lab  <- ifelse(blk$key == "rest", "All other clones", key_text[blk$key])
+  blk$where <- smp$hover[blk$s]
+  if (is.null(seg)) {
+    for (k in c(keys, "rest")) {
+      b <- blk[blk$key == k, , drop = FALSE]
+      if (!nrow(b)) next
+      p <- plotly::add_bars(p, x = b$s - 1, y = b$h, base = b$y0, width = w, name = b$lab[1],
+                            marker = list(color = if (k == "rest") track_rest else clone_cols[[k]],
+                                          line = list(color = "white", width = 1)),
+                            text = paste0(b$lab, "<br>", b$where, "<br>", sprintf("%.1f%%", b$h), " of the sample"),
+                            hovertemplate = "%{text}<extra></extra>", textposition = "none",
+                            legendgroup = k, inherit = FALSE)
+    }
+  } else {
+    # Each block split by the cell states of its cells in that sample.
+    sg <- merge(blk, transform(seg, s = match(sample, smp$sample))[, c("key", "s", "state", "frac")],
+                by = c("key", "s"))
+    sg <- sg[order(sg$s, match(sg$key, c(keys, "rest")), match(sg$state, names(state_cols_))), ]
+    sg$h2 <- sg$h * sg$frac
+    sg$b2 <- ave(sg$h2, sg$s, sg$key, FUN = function(v) cumsum(v) - v) + sg$y0
+    for (st in intersect(names(state_cols_), unique(sg$state))) {
+      b <- sg[sg$state == st, , drop = FALSE]
+      p <- plotly::add_bars(p, x = b$s - 1, y = b$h2, base = b$b2, width = w, name = st,
+                            marker = list(color = state_cols_[[st]], line = list(width = 0)),
+                            text = paste0(b$lab, "<br>", b$where, "<br>", st, ": ",
+                                          sprintf("%.0f%%", 100 * b$frac), " of the block (",
+                                          sprintf("%.1f%%", b$h2), " of the sample)"),
+                            hovertemplate = "%{text}<extra></extra>", textposition = "none",
+                            legendgroup = st, inherit = FALSE)
+    }
+    # White outline around each clone's block, so the stacked states read as one block.
+    p <- plotly::layout(p, shapes = lapply(seq_len(nrow(blk)), function(i) list(
+      type = "rect", xref = "x", yref = "y", x0 = blk$s[i] - 1 - w / 2, x1 = blk$s[i] - 1 + w / 2,
+      y0 = blk$y0[i], y1 = blk$y0[i] + blk$h[i], line = list(color = "white", width = 1.2),
+      fillcolor = "rgba(0,0,0,0)")))
+  }
+  # Each clone's number on its peak bar, so identity never rests on colour alone.
+  ann <- lapply(seq_along(keys), function(i) {
+    s <- which.max(pct[keys[i], ])
+    if (pct[keys[i], s] < 1.5) return(NULL)
+    list(x = s - 1, y = lo[keys[i], s] + pct[keys[i], s] / 2, text = paste0("<b>", i, "</b>"),
+         showarrow = FALSE, font = list(color = "white", size = 12), xref = "x", yref = "y")
+  })
+  sized(pconf(plotly::layout(p, barmode = "overlay", title = ttl(title), height = height,
+                       margin = list(t = 60, b = 90),
+                       xaxis = list(title = "", tickmode = "array", tickvals = seq_len(n) - 1,
+                                    ticktext = smp$label, range = c(-0.6, n - 0.4), zeroline = FALSE,
+                                    showgrid = FALSE),
+                       yaxis = list(title = paste0("Share of the sample's ", unit), range = c(0, 100),
+                                    ticksuffix = "%", showgrid = FALSE, zeroline = FALSE),
+                       annotations = Filter(Negate(is.null), ann),
+                       legend = list(orientation = "v", x = 1.02, y = 1, yanchor = "top",
+                                     traceorder = "normal",
+                                     title = list(text = if (is.null(seg)) "Top clones (CDR3β)" else "Cell state")))))
+}
+
+# A plotly widget placed inside a tagList takes the chunk's default height rather than its
+# layout's: build it and carry the layout height over (as withcap() does).
+sized <- function(p) {
+  w <- plotly::plotly_build(p)
+  if (!is.null(w$x$layout$height)) w$height <- w$x$layout$height
+  w
+}
+
+# Clone key list (number, CDR3β, detail) shown under a tracking figure.
+clone_key_html <- function(keys, cdr3, detail, cols) {
+  items <- vapply(seq_along(keys), function(i) sprintf(
+    paste0('<span style="display:inline-block;margin:0 1.2rem 0.3rem 0;">',
+           '<span style="display:inline-block;width:1.2em;text-align:center;color:white;',
+           'background:%s;font-weight:600;border-radius:2px;margin-right:0.35rem;">%d</span>',
+           '<code>%s</code> <span style="color:#52514e;">%s</span></span>'),
+    cols[[keys[i]]], i, htmltools::htmlEscape(cdr3[i]), htmltools::htmlEscape(detail[i])), character(1))
+  paste(items, collapse = "")
 }
 
 itable <- function(df, caption = NULL, pageSize = 10, ...) {

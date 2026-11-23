@@ -42,7 +42,8 @@ process REPORT_BUNDLE {
     for d in cells vdj_qc pseudobulk sample compare repertoire tcell mergedvdj consensus rollup conga tcri; do
         mkdir -p report_bundle/\$d
         for f in in/\$d/*.tsv in/\$d/*.csv in/\$d/*.txt; do
-            if [ -s "\$f" ]; then cp -L "\$f" report_bundle/\$d/; fi
+            # dd, not cp: cp's NFS server-side copy can hang on larger tables (see gliph2.nf).
+            if [ -s "\$f" ]; then dd if="\$f" of="report_bundle/\$d/\$(basename "\$f")" bs=1M status=none; fi
         done
     done
     echo "${route}" > report_bundle/route.txt

@@ -60,6 +60,13 @@ params:
   top_n_annotations: 20
   top_n_clusters: 20
   top_n_genes: 25
+  # Clone tracking figures: clones stacked per patient (alluvial) and clones drawn on the
+  # cell-state map, sample by sample.
+  top_n_tracked_clones: 6
+  top_n_umap_clones: 3
+  # Each figure's data as its own TSV under <outdir>/tables/. Off by default: every figure is
+  # a view of the core tables RESULTS_EXPORT writes to results/ (see results/README.md).
+  write_figure_tables: false
   base_size: 12
 ---
 
@@ -81,6 +88,109 @@ comparison and patient).
      tables are in the QC & Run Info report; per-sample, comparison and patient detail are in
      the Details reports. -->
 {{< include ./_discovery_brief.md >}}
+
+# Tracking the top clones over time {#sec-top-clones}
+
+**What it shows.** For each patient, the share of every sample's repertoire held by the
+patient's largest clones, followed from sample to sample. Clones are TCRβ clonotypes (CDR3β +
+V gene), the unit the clonal dynamics test uses: a paired α/β clone splits whenever a cell loses
+its α chain, so following the β chain keeps one clone together.
+
+**Why it matters.** The clonal dynamics tables say *which* clones changed significantly; this
+view shows *how much* of the repertoire they take up and *when*: a clone that dominates one
+timepoint, a set of clones that rise together after treatment, or a repertoire that stays
+diverse throughout.
+
+**How to read it.** One tab per patient. Each bar is one sample, in timepoint order; the
+numbered blocks at the bottom are the patient's largest clones (ranked by their peak share in
+any of the patient's samples) and the grey block above is every other clone. Ribbons only join
+consecutive samples of the same compartment; they are not measurements between them. The key
+under the figure gives each clone's CDR3β, its peak share and whether the clonal dynamics
+analysis called it expanding or contracting. Hover a block for its exact share.
+
+```{r}
+#| label: top-clones-tracking
+#| results: asis
+trk <- T("clonal", "clonotypes.csv")
+trk_n <- max(1L, as.integer(params$top_n_tracked_clones %||% 6))
+if (!have(trk) || !all(c("sample", "junction_aa") %in% names(trk))) {
+  cat(as.character(note("The clonal dynamics clonotype table is missing, so clones cannot be tracked over time.")))
+} else {
+  pc <- intersect(c(as_str1(params$patient_col), "patient", "patient_id", "subject_id"), names(trk))[1]
+  trk$patient_ <- if (is.na(pc)) "all" else as.character(trk[[pc]])
+  trk$origin_  <- if ("origin" %in% names(trk)) as.character(trk$origin) else "all"
+  trk$origin_[is.na(trk$origin_) | !nzchar(trk$origin_)] <- "all"
+  trk$tp_      <- if ("timepoint" %in% names(trk)) as.character(trk$timepoint) else as.character(trk$sample)
+  trk$alias_   <- if ("alias" %in% names(trk)) as.character(trk$alias) else as.character(trk$sample)
+  trk$v_       <- if ("v_call" %in% names(trk)) sub("\\*.*$", "", as.character(trk$v_call)) else ""
+  trk$key      <- paste(trk$junction_aa, trk$v_, sep = "|")
+  if (!"frequency" %in% names(trk)) trk$frequency <- trk$duplicate_count / ave(trk$duplicate_count, trk$sample, FUN = sum)
+  tpo <- trimws(strsplit(as_str1(params$timepoint_order), ",", fixed = TRUE)[[1]]); tpo <- tpo[nzchar(tpo)]
+  trk$rank_ <- if ("timepoint_rank" %in% names(trk)) suppressWarnings(as.numeric(trk$timepoint_rank)) else NA
+  miss <- is.na(trk$rank_); trk$rank_[miss] <- match(trk$tp_[miss], c(tpo, sort(setdiff(unique(trk$tp_), tpo))))
+
+  fr_all <- trk %>% group_by(patient_, origin_, sample, key) %>%
+    summarise(pct = 100 * sum(frequency), .groups = "drop")
+  smp_all <- trk %>% distinct(patient_, origin_, sample, tp_, alias_, rank_) %>%
+    distinct(sample, .keep_all = TRUE) %>% arrange(patient_, origin_, rank_, alias_)
+  # Clones the clonal dynamics analysis called (patient x CDR3b), for the key.
+  called <- function(f, lab) {
+    t <- T("clonal", f)
+    if (!have(t) || !"junction_aa" %in% names(t)) return(NULL)
+    tpc <- intersect(c(as_str1(params$patient_col), "patient", "patient_id", "subject_id"), names(t))[1]
+    data.frame(patient_ = if (is.na(tpc)) "all" else as.character(t[[tpc]]),
+               junction_aa = as.character(t$junction_aa), call = lab)
+  }
+  calls <- bind_rows(called("expanded_clones_summary.csv", "expanding"),
+                     called("contracting_clones_summary.csv", "contracting"))
+  calls <- if (nrow(calls)) calls %>% distinct() %>% group_by(patient_, junction_aa) %>%
+    summarise(call = paste(sort(unique(call)), collapse = " and "), .groups = "drop") else
+    data.frame(patient_ = character(), junction_aa = character(), call = character())
+
+  # A patient is tracked in every compartment it was sampled at least twice in.
+  panels <- smp_all %>% count(patient_, origin_) %>% filter(n >= 2)
+  pats <- sort(unique(panels$patient_))
+  skipped <- setdiff(unique(smp_all$patient_), pats)
+  if (!length(pats)) {
+    cat(as.character(note("No patient was sampled at two or more timepoints in one compartment, so no clone can be tracked over time.")))
+  } else {
+    patient_tabs(pats, function(pt) {
+      ors <- panels$origin_[panels$patient_ == pt]
+      figs <- list(); keytxt <- character()
+      for (o in ors) {
+        smp <- smp_all %>% filter(patient_ == pt, origin_ == o)
+        fr  <- fr_all %>% filter(patient_ == pt, origin_ == o)
+        peak <- fr %>% group_by(key) %>% summarise(peak = max(pct), .groups = "drop") %>%
+          arrange(desc(peak), key) %>% head(trk_n)
+        keys <- peak$key
+        cdr3 <- sub("\\|.*$", "", keys)
+        cl <- calls$call[match(paste(pt, cdr3), paste(calls$patient_, calls$junction_aa))]
+        cols <- setNames(as.list(track_slate[seq_along(keys)]), keys)
+        lab  <- setNames(paste0(seq_along(keys), "  ", cdr3), keys)
+        dup  <- duplicated(smp$tp_) | duplicated(smp$tp_, fromLast = TRUE)
+        smp$label <- ifelse(dup, smp$alias_, smp$tp_)
+        smp$hover <- paste0(smp$alias_, " (", smp$tp_, ")")
+        ttl_ <- if (length(ors) > 1) paste0(pt, " · ", o, ": top ", length(keys), " clones") else
+          paste0(pt, ": top ", length(keys), " clones")
+        figs[[o]] <- track_plot(fr, smp, keys, cols, lab, ttl_, unit = "TCRβ clonotype counts")
+        keytxt <- c(keytxt, paste0(if (length(ors) > 1) paste0("<em>", htmltools::htmlEscape(o), ":</em> ") else "",
+          clone_key_html(keys, cdr3, paste0("peak ", sprintf("%.1f%%", peak$peak),
+                                            ifelse(is.na(cl), "", paste0(" · called ", cl))), cols)))
+      }
+      htmltools::tagList(
+        figcap(htmltools::tagList(figs), "T1", "Top clones over time",
+               paste("Share of each sample's repertoire held by the patient's largest TCRβ clonotypes",
+                     "(numbered by peak share; grey = all other clones). Bars are samples in timepoint",
+                     "order; ribbons only join consecutive samples. The share is of the sample's",
+                     "receptor counts: cells on single-cell routes, templates or reads on bulk routes.")),
+        htmltools::tags$div(style = "font-size:0.88rem;margin:0.2rem 0 1rem 0;",
+                            htmltools::HTML(paste(keytxt, collapse = "<br>"))))
+    })
+    if (length(skipped)) cat(sprintf("\n*Not shown (fewer than two samples in any compartment): %s.*\n\n",
+                                     paste(sort(skipped), collapse = ", ")))
+  }
+}
+```
 
 # Consensus clustering {#sec-consensus}
 
@@ -146,15 +256,17 @@ itable(cons_clusters, pageSize = 10)
 
 # Reference tables
 
-Every table rendered above is also written to `Master_Summary_Report/tables/` as TSV for
-downstream use.
+Every figure in this report is a view of one of the run's core tables, written to
+`results/` by RESULTS_EXPORT whether or not the reports render: `samples.tsv`,
+`clones.tsv.gz`, `clone_tests.tsv.gz`, `sample_overlap.tsv` and, with single-cell data,
+`cells.tsv.gz` and `marker_expression.tsv`. `results/README.md` lists their columns and the
+table behind each figure. With `--write_figure_tables true` each figure's own data is also
+written to `Master_Summary_Report/tables/`.
 
 ```{r}
 #| label: written-tables
 files <- list.files(file.path(params$outdir, "tables"), pattern = "\\.tsv$")
-if (!length(files)) note("No tables were written.") else {
-  itable(data.frame(table = sort(files), stringsAsFactors = FALSE), pageSize = 25)
-}
+if (length(files)) itable(data.frame(table = sort(files), stringsAsFactors = FALSE), pageSize = 25)
 ```
 
 # Session info

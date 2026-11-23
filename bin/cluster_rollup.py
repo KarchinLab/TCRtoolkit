@@ -101,20 +101,29 @@ def read_gliph2(paths):
 
 
 def read_tcrdist(paths):
-    # TCRDIST3_MATRIX writes one <patient>_tcrdist_patient_clones.csv per patient (plus
-    # per-sample blocks for the reports, which would double count here - skip them).
+    # TCRDIST3_MATRIX writes one <patient>_tcrdist_cluster_map.tsv per patient: every clone
+    # it compared, with its cluster at --tcrdist_radius. The older
+    # <patient>_tcrdist_patient_clones.csv (clones only) is still accepted. Per-sample
+    # blocks for the reports would double count here - skip them.
     frames = []
     for p in paths:
-        if not usable(p) or not p.endswith("_tcrdist_patient_clones.csv"):
+        if not usable(p):
+            continue
+        if p.endswith("_tcrdist_cluster_map.tsv"):
+            suffix, sep = "_tcrdist_cluster_map.tsv", "\t"
+        elif p.endswith("_tcrdist_patient_clones.csv"):
+            suffix, sep = "_tcrdist_patient_clones.csv", ","
+        else:
             continue
         try:
-            df = pd.read_csv(p, low_memory=False)
+            df = pd.read_csv(p, sep=sep, low_memory=False,
+                             dtype={"tcrdist_cluster": "string"} if sep == "\t" else None)
         except Exception as exc:
             print(f"[cluster_rollup] WARN: could not read {p}: {exc}", file=sys.stderr)
             continue
         if df.empty:
             continue
-        df["__group"] = tag_from_name(p, "_tcrdist_patient_clones.csv")
+        df["__group"] = tag_from_name(p, suffix)
         frames.append(df)
     return pd.concat(frames, ignore_index=True) if frames else None
 
@@ -384,6 +393,15 @@ def main():
                 "tcrdist_cluster": lab,
                 "cdr3": cdr3_export.astype("string"),
             }).dropna().drop_duplicates()
+            n_tcrdist_clusters = int(members["tcrdist_cluster"].nunique())
+            n_clustered_clones = int(len(members))
+            td_detail = cluster_detail(members, "tcrdist_cluster", members["cdr3"], "TCRdist3")
+            clustered["TCRdist3"] = set(members["cdr3"])
+        elif "tcrdist_cluster" in tcrd.columns and cdr3 is not None:
+            # Consensus did not run: the clusters TCRDIST3_MATRIX wrote in its cluster maps.
+            lab = tcrd["tcrdist_cluster"].astype("string").replace("", pd.NA)
+            members = pd.DataFrame({"__group": tcrd["__group"], "tcrdist_cluster": lab,
+                                    "cdr3": cdr3.str.upper()}).dropna().drop_duplicates()
             n_tcrdist_clusters = int(members["tcrdist_cluster"].nunique())
             n_clustered_clones = int(len(members))
             td_detail = cluster_detail(members, "tcrdist_cluster", members["cdr3"], "TCRdist3")

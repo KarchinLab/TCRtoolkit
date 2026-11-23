@@ -182,7 +182,15 @@
           "default": 100000,
           "minimum": 1000,
           "description": "Number of sequences processed per OLGA chunk. Larger values reduce parallelization and increase memory usage."
-        }
+        },
+        "run_selection_test": {"type": "boolean", "default": true, "description": "Test clonotype sharing against the generative null."},
+        "selection_fdr": {"type": "number", "default": 0.05, "minimum": 0, "maximum": 1, "description": "FDR for calling selection candidates."},
+        "selection_min_subjects": {"type": "integer", "default": 3, "minimum": 2, "description": "Fewest subjects for the selection test."},
+        "vdjdb_search_scope": {"type": "string", "default": "0,0,0", "description": "vdjmatch search scope: substitutions, indels, total edits."},
+        "vdjdb_v_match": {"type": "boolean", "default": true, "description": "Require V-gene agreement for a VDJdb match."},
+        "vdjdb_min_confidence": {"type": "integer", "default": 1, "minimum": 0, "maximum": 3, "description": "Minimum VDJdb confidence score."},
+        "quarto_heap_mb": {"type": "integer", "default": 16384, "minimum": 1024, "description": "JavaScript heap in MB for rendering the Master Summary."},
+        "selection_anchors": {"type": "string", "format": "file-path", "description": "OLGA anchor sequences used to calibrate the selection test."}
       }
     },
     "giana_options": {
@@ -261,6 +269,10 @@
       "fa_icon": "fas fa-dna",
       "description": "Single-cell TCR modality (--mode singlecell). Ignored in bulk mode.",
       "properties": {
+        "run_plasticity": {"type": "boolean", "default": true, "description": "Clone-level state change between timepoints (VDJ+GEX route)."},
+        "plasticity_min_cells": {"type": "integer", "default": 5, "minimum": 2, "description": "Cells a clone needs at both timepoints."},
+        "plasticity_n_boot": {"type": "integer", "default": 1000, "minimum": 100, "description": "Bootstrap resamples for confidence intervals."},
+        "plasticity_n_perm": {"type": "integer", "default": 10000, "minimum": 100, "description": "Permutations for each null."},
         "mode": {
           "type": "string",
           "enum": ["bulk", "singlecell"],
@@ -630,6 +642,33 @@
     "tcrdist_radius": {
       "type": "integer",
       "default": 24
+    },
+    "trace_report_suffix": {
+      "type": "string",
+      "description": "Suffix of the trace, report and timeline files in <outdir>/pipeline_info/ (default: launch timestamp)."
+    },
+    "run_results_export": {
+      "type": "boolean",
+      "default": true,
+      "description": "Write the core results tables to <outdir>/results/ (also with --run_reports false)."
+    },
+    "write_figure_tables": {
+      "type": "boolean",
+      "default": false,
+      "description": "Also write each Master Summary figure's data as its own TSV (redundant with results/)."
+    },
+    "tcrdist_max_patient_clones": {
+      "type": "integer",
+      "default": 0,
+      "description": "Fail TCRDIST3_MATRIX before any distance is computed when a patient has more clones than this (exit status 3, logged as TCRDIST_LIMIT). 0 = no limit."
+    },
+    "aws_queue": {
+      "type": "string",
+      "description": "AWS Batch queue for -profile aws_spot."
+    },
+    "aws_region": {
+      "type": "string",
+      "description": "AWS region for -profile aws_spot."
     },
     "tcrdist_min_cells_per_group": {
       "type": "integer",

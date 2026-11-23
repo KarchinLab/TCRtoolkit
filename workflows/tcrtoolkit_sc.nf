@@ -39,9 +39,12 @@ include { SC_TO_CDR3_SW }        from '../subworkflows/bridges/sc_to_cdr3.nf'
 include { VDJ_TO_BULK_SW }       from '../subworkflows/bridges/vdj_to_bulk.nf'
 include { SC_SAMPLE_STATS }      from '../modules/bridges/sc_sample_stats.nf'
 include { SC_REPORT_SAMPLESHEET } from '../modules/bridges/sc_report_samplesheet.nf'
+include { CLONAL_PLASTICITY } from '../modules/bridges/clonal_plasticity.nf'
 include { REPORT_BUNDLE }        from '../modules/bridges/report_bundle.nf'
 include { BULK_TO_EXPORT }       from '../modules/bridges/bulk_to_export.nf'
 include { MERGE_VDJ_OBJECT }     from '../modules/bridges/merge_vdj_object.nf'
+include { SC_MARKER_EXPRESSION } from '../modules/bridges/sc_marker_expression.nf'
+include { RESULTS_EXPORT }       from '../modules/local/export_results.nf'
 
 // ── Shared bulk-TCR analysis engine (main/local — unchanged behavior) ─────
 include { PSEUDOBULK_QC_SW }  from '../subworkflows/local/pseudobulk_qc.nf'
@@ -53,6 +56,16 @@ include { REPORT }            from '../subworkflows/local/report.nf'
 // inside nested if-blocks under this Nextflow version's strict-syntax parser
 // ("`enabled` is not defined") - a plain top-level function is.
 def enabled(x) { x == null || x == true }
+
+// Tables RESULTS_EXPORT joins into results/, picked by name (everything else is left out),
+// collected sorted so the task hash does not depend on the order upstream tasks finished.
+def resultsInputs(ch) {
+    def names = ['clonotypes.csv', 'expanded_clones_summary.csv', 'contracting_clones_summary.csv',
+                 'detailed_comparisons_expansion.csv', 'detailed_comparisons_contraction.csv',
+                 'sample_stats.csv', 'overlap_samples.tsv', 'olga_pgen.tsv', 'concatenated_cdr3_sorted.tsv']
+    ch.flatten().filter { f -> f.name in names || f.name.endsWith('.vdjmatch.txt') }
+        .unique { f -> f.name }.collect(sort: true).ifEmpty([])
+}
 
 // Pull a named file out of a module's collected tables/ channel, falling back to NO_FILE
 // so a route where that module did not run still supplies something the report can read
@@ -199,6 +212,10 @@ workflow TCRTOOLKIT_SC {
         BULK_TO_EXPORT( concat_cdr3_sorted, sc_samplesheet, 'cell' )
     } else {
         tcell_tables = tcell_out.tables
+        if (enabled(params.run_plasticity)) {
+            CLONAL_PLASTICITY( tcell_out.export_cells, report_samplesheet )
+            tcell_tables = tcell_tables.mix(CLONAL_PLASTICITY.out.table)
+        }
     }
     def cluster_export = vdjOnly ? BULK_TO_EXPORT.out.export_cells : tcell_out.export_cells
 
@@ -218,14 +235,12 @@ workflow TCRTOOLKIT_SC {
         cluster_export,
         BULKTCR_ANALYSIS.out.giana_clusters,
         BULKTCR_ANALYSIS.out.gliph2_cluster_details,
-        BULKTCR_ANALYSIS.out.tcrdist_clone_df,
-        BULKTCR_ANALYSIS.out.tcrdist_output,
+        BULKTCR_ANALYSIS.out.tcrdist_cluster_map,
         conga_export,
         ch_project_name
     )
     consensus_report = CLONOTYPE_CLUSTERING.out.consensus_report
     consensus_tables = CLONOTYPE_CLUSTERING.out.consensus_tables
-    rep_seurat       = CLONOTYPE_CLUSTERING.out.rep_seurat
     rep_export       = CLONOTYPE_CLUSTERING.out.rep_export
 
     // ── Step 6b: GEX-only cell-level analyses ─────────────────────────────
@@ -239,6 +254,42 @@ workflow TCRTOOLKIT_SC {
             tcri_tables = tcri_out.tables
             tcri_report = tcri_out.report_html
         }
+    }
+
+    // ── Step 6c: compact artifacts first, reports render from them ────────
+    // Marker expression is the only report input needing the GEX object: computed once
+    // here, so MASTER_SUMMARY never loads the Seurat.
+    def marker_table = channel.value(nofile)
+    if (!vdjOnly) {
+        SC_MARKER_EXPRESSION(
+            tcell_out.seurat_tcells_with_tcr,
+            tcell_out.export_cells,
+            channel.fromPath("${projectDir}/bin/sc_marker_expression.R", checkIfExists: true),
+            ch_project_name
+        )
+        marker_table = SC_MARKER_EXPRESSION.out.table
+    }
+
+    // results/: the core tables every report figure is drawn from, written with or
+    // without the report notebooks.
+    if (enabled(params.run_results_export)) {
+        RESULTS_EXPORT(
+            resultsInputs(channel.empty().mix(
+                BULKTCR_ANALYSIS.out.clonal_dynamics_files,
+                BULKTCR_ANALYSIS.out.sample_stats,
+                BULKTCR_ANALYSIS.out.repertoire_tables,
+                BULKTCR_ANALYSIS.out.cdr3_pgen,
+                BULKTCR_ANALYSIS.out.vdjdb_files,
+                BULKTCR_ANALYSIS.out.concat_cdr3_sorted)),
+            rep_export,
+            vdjOnly ? channel.value(nofile) : tcell_out.export_cells,
+            conga_export,
+            pickFile(tcri_tables, 'tcri_export_cells.tsv', nofile),
+            marker_table,
+            report_samplesheet,
+            channel.fromPath("${projectDir}/bin/export_results.py", checkIfExists: true),
+            ch_project_name
+        )
     }
 
     // ── Step 7: report notebooks + MASTER_SUMMARY — BOTH routes ───────────
@@ -263,7 +314,7 @@ workflow TCRTOOLKIT_SC {
             channel.empty()
                 .mix(BULKTCR_ANALYSIS.out.sample_stats, BULKTCR_ANALYSIS.out.v_family, BULKTCR_ANALYSIS.out.j_family)
                 .collect().ifEmpty([]),
-            BULKTCR_ANALYSIS.out.shared_cdr3.flatten().collect().ifEmpty([]),
+            BULKTCR_ANALYSIS.out.shared_cdr3.mix(BULKTCR_ANALYSIS.out.selection_files).flatten().collect().ifEmpty([]),
             repertoire_tables.flatten().collect().ifEmpty([]),
             tcell_tables.flatten().collect().ifEmpty([]),
             mergedvdj_tables.flatten().collect().ifEmpty([]),
@@ -285,7 +336,7 @@ workflow TCRTOOLKIT_SC {
             .ifEmpty([nofile])
 
         MASTER_SUMMARY_SW(
-            rep_seurat,
+            marker_table,
             rep_export,
             CLONOTYPE_CLUSTERING.out.rollup_tables,
             tcell_tables.flatten().collect().ifEmpty([]),

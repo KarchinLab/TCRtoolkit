@@ -57,6 +57,13 @@ params:
   top_n_annotations: 20
   top_n_clusters: 20
   top_n_genes: 25
+  # Clone tracking figures: clones stacked per patient (alluvial) and clones drawn on the
+  # cell-state map, sample by sample.
+  top_n_tracked_clones: 6
+  top_n_umap_clones: 3
+  # Each figure's data as its own TSV under <outdir>/tables/. Off by default: every figure is
+  # a view of the core tables RESULTS_EXPORT writes to results/ (see results/README.md).
+  write_figure_tables: false
   base_size: 12
 ---
 

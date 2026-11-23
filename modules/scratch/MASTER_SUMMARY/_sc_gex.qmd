@@ -107,8 +107,10 @@ state_cols  <- function(x) {
 # Numbered caption under a figure or table of this section ("Figure G1."), counted only when
 # the figure is drawn. text is HTML.
 gx_fig_n <- 0; gx_tab_n <- 0
-withcap <- function(w, title, text = "", kind = "Figure") {
-  if (kind == "Figure") { gx_fig_n <<- gx_fig_n + 1; n <- gx_fig_n } else { gx_tab_n <<- gx_tab_n + 1; n <- gx_tab_n }
+# n: a fixed number, for one figure drawn in several patient tabs (reserve it with next_fig()).
+withcap <- function(w, title, text = "", kind = "Figure", n = NULL) {
+  if (!is.null(n)) {
+  } else if (kind == "Figure") { gx_fig_n <<- gx_fig_n + 1; n <- gx_fig_n } else { gx_tab_n <<- gx_tab_n + 1; n <- gx_tab_n }
   # Inside a tagList a plotly widget takes the chunk's default height, not its layout's, and
   # the caption below would overlap a taller figure: size the widget from its layout.
   if (inherits(w, "plotly")) {
@@ -120,6 +122,7 @@ withcap <- function(w, title, text = "", kind = "Figure") {
   htmltools::tagList(w, htmltools::tags$p(style = "margin-top: 0.5rem;",
     htmltools::HTML(sprintf("<strong>%s G%d. %s.</strong> %s", kind, n, title, text))))
 }
+next_fig <- function() { gx_fig_n <<- gx_fig_n + 1; gx_fig_n }
 
 # Heatmap. m: numeric matrix with dimnames; hover text from fmt, or a matrix of hover text.
 hmap <- function(m, title, zlab, colorscale = "Viridis", height = 520, zmid = NULL, fmt = "%{z:.2f}",
@@ -525,6 +528,166 @@ if (have(gx_tcr) && exists("cd_status") && is.data.frame(cd_status) && nrow(cd_s
 }
 ```
 
+## The top clones' cell states over time {#sec-sc-gex-tracking}
+
+**What it shows.** The clone-tracking view of *Tracking the top clones over time*, with each
+block now split by the cell states of its cells, and the same clones drawn on the cell-state map
+sample by sample.
+
+**Why it matters.** A clone's share of the repertoire says how much it expanded; its cells'
+states say what it became. Following both over time separates a clone that expands as effector
+cells and then contracts from one that persists in an exhausted or resident state, or one that
+changes state as it grows.
+
+**How to read it.** One tab per patient. In the bar chart, each bar is one sample (TCR+ cells
+with a TCRβ chain), the numbered blocks at the bottom are the patient's largest clones and the
+block on top is every other clone; colour is cell state, and each ribbon takes the colour of
+its clone's dominant state. The key under the chart gives each clone's dominant state, the
+share of its cells in that state, and its peak share of a sample. In the maps, the first panel
+is every cell of the cohort coloured by state; each further panel is one of the patient's
+samples, with the cells of its largest clones coloured by state on the grey map of all cells.
+
+```{r}
+#| label: gex-tracking-prep
+gx_trk <- NULL
+if (have(gx_tcr)) {
+  gx_trk <- gx_tcr[!is.na(gx_tcr$cdr3b) & nzchar(gx_tcr$cdr3b) & !gx_tcr$cdr3b %in% c("NA", "None"), , drop = FALSE]
+  # Clones are TCRbeta (CDR3b + V), as in the clonal dynamics test and the TCR-only view.
+  gx_trk$key <- paste(gx_trk$cdr3b, if ("trbv" %in% names(gx_trk)) sub("\\*.*$", "", as.character(gx_trk$trbv)) else "",
+                      sep = "|")
+  gx_trk_tot <- gx_trk %>% count(sample, name = "tot")
+  gx_trk_fr  <- gx_trk %>% count(patient_, origin, sample, key, name = "n") %>%
+    left_join(gx_trk_tot, by = "sample") %>% mutate(pct = 100 * n / tot)
+  gx_trk_smp <- gx_samples %>% filter(sample %in% gx_trk$sample)
+  gx_trk_smp$label <- ifelse(duplicated(paste(gx_trk_smp$patient_, gx_trk_smp$origin, gx_trk_smp$timepoint)) |
+                               duplicated(paste(gx_trk_smp$patient_, gx_trk_smp$origin, gx_trk_smp$timepoint), fromLast = TRUE),
+                             gx_trk_smp$alias, as.character(gx_trk_smp$timepoint))
+  gx_trk_smp$label[is.na(gx_trk_smp$label)] <- gx_trk_smp$alias[is.na(gx_trk_smp$label)]
+  gx_trk_smp$hover <- paste0(gx_trk_smp$alias, " (", gx_trk_smp$timepoint, ")")
+  gx_trk_panels <- gx_trk_smp %>% count(patient_, origin) %>% filter(n >= 2)
+  gx_trk_cols <- state_cols(gx$annot)
+  # Top clones of a patient (and compartment), by their peak share of any one sample.
+  gx_trk_top <- function(pt, o = NULL, n) {
+    f <- gx_trk_fr %>% filter(patient_ == pt)
+    if (!is.null(o)) f <- f %>% filter(origin %in% o)
+    f %>% group_by(key) %>% summarise(peak = max(pct), .groups = "drop") %>% arrange(desc(peak), key) %>% head(n)
+  }
+}
+```
+
+```{r}
+#| label: gex-tracking-alluvial
+#| results: asis
+if (!is.null(gx_trk)) {
+  if (!nrow(gx_trk_panels)) {
+    cat(as.character(note("No patient has two or more samples with TCR+ cells in one compartment, so clones cannot be tracked over time.")))
+  } else {
+    n_top <- max(1L, as.integer(params$top_n_tracked_clones %||% 6))
+    fig_no <- next_fig()
+    patient_tabs(sort(unique(gx_trk_panels$patient_)), function(pt) {
+      ors <- gx_trk_panels$origin[gx_trk_panels$patient_ == pt]
+      figs <- list(); keytxt <- character()
+      for (o in ors) {
+        smp  <- gx_trk_smp %>% filter(patient_ == pt, origin == o)
+        cells <- gx_trk %>% filter(patient_ == pt, origin == o)
+        peak <- gx_trk_top(pt, o, n_top); keys <- peak$key
+        # Each clone's dominant state over all its cells in this compartment.
+        dom <- cells %>% filter(key %in% keys) %>% count(key, annot) %>% group_by(key) %>%
+          mutate(f = n / sum(n)) %>% slice_max(f, n = 1, with_ties = FALSE) %>% ungroup()
+        dom <- dom[match(keys, dom$key), ]
+        cols <- setNames(as.list(unname(gx_trk_cols[dom$annot])), keys)
+        # Every block split by state: a top clone's cells, or the sample's other cells.
+        seg <- cells %>% mutate(key = ifelse(key %in% keys, key, "rest")) %>%
+          count(key, sample, state = annot) %>% group_by(key, sample) %>%
+          mutate(frac = n / sum(n)) %>% ungroup() %>% as.data.frame()
+        cdr3 <- sub("\\|.*$", "", keys)
+        lab  <- setNames(paste0(seq_along(keys), "  ", cdr3), keys)
+        ttl_ <- paste0(pt, if (length(ors) > 1) paste0(" · ", o) else "", ": top ", length(keys), " clones by cell state")
+        figs[[o]] <- track_plot(gx_trk_fr %>% filter(patient_ == pt, origin == o), smp, keys, cols, lab, ttl_,
+                                seg = seg, state_cols_ = gx_trk_cols, unit = "TCR+ cells")
+        keytxt <- c(keytxt, paste0(if (length(ors) > 1) paste0("<em>", htmltools::htmlEscape(o), ":</em> ") else "",
+          clone_key_html(keys, cdr3, sprintf("%s %.0f%% · peak %.1f%%", dom$annot, 100 * dom$f, peak$peak), cols)))
+      }
+      htmltools::tagList(
+        withcap(htmltools::tagList(figs), "Top clones over time, by cell state",
+                paste("Share of each sample's TCR+ cells held by the patient's largest TCRβ clones (numbered",
+                      "by peak share; top block = all other clones), each block split by the cell states of",
+                      "its cells in that sample. Ribbons take the colour of the clone's dominant state and only",
+                      "join consecutive samples. A clone whose block changes colour between samples changed",
+                      "state; one whose colour holds while its block grows expanded within one state. Shares",
+                      "of samples with few cells are noisy: hover a segment for its share."), n = fig_no),
+        htmltools::tags$div(style = "font-size:0.88rem;margin:0.2rem 0 1rem 0;",
+                            htmltools::HTML(paste(keytxt, collapse = "<br>"))))
+    })
+  }
+}
+```
+
+```{r}
+#| label: gex-tracking-umap
+#| results: asis
+if (!is.null(gx_trk) && nrow(gx_trk_panels) && !is.null(gx_emb)) {
+  n_umap <- max(1L, as.integer(params$top_n_umap_clones %||% 3))
+  fig_no <- next_fig()
+  set.seed(1)
+  bg <- gx[!is.na(gx[[gx_emb[1]]]) & !is.na(gx[[gx_emb[2]]]), , drop = FALSE]
+  ref <- if (nrow(bg) > 15000) bg[sample.int(nrow(bg), 15000), , drop = FALSE] else bg
+  grey <- if (nrow(bg) > 6000) bg[sample.int(nrow(bg), 6000), , drop = FALSE] else bg
+  xr <- range(bg[[gx_emb[1]]]); yr <- range(bg[[gx_emb[2]]])
+  ax <- function(r) list(range = r, visible = FALSE, showgrid = FALSE, zeroline = FALSE)
+  panel_title <- function(txt) list(list(text = txt, x = 0, y = 1, xref = "paper", yref = "paper",
+                                         xanchor = "left", yanchor = "bottom", showarrow = FALSE,
+                                         font = list(size = 12)))
+  patient_tabs(sort(unique(gx_trk_panels$patient_)), function(pt) {
+    peak <- gx_trk_top(pt, NULL, n_umap); keys <- peak$key
+    smp <- gx_trk_smp %>% filter(patient_ == pt)
+    pl <- list()
+    # Reference panel: every cell of the cohort, coloured by state (legend shown here only).
+    p0 <- plotly::plot_ly()
+    for (st in names(gx_trk_cols)) {
+      d <- ref[ref$annot == st, , drop = FALSE]
+      if (!nrow(d)) next
+      p0 <- plotly::add_trace(p0, x = d[[gx_emb[1]]], y = d[[gx_emb[2]]], type = "scattergl", mode = "markers",
+                              marker = list(size = 2.5, color = gx_trk_cols[[st]]), name = st, legendgroup = st,
+                              hoverinfo = "skip", inherit = FALSE)
+    }
+    pl[[1]] <- plotly::layout(p0, xaxis = ax(xr), yaxis = ax(yr),
+                              annotations = panel_title(sprintf("All cells by state (%s)", format(nrow(bg), big.mark = ","))))
+    for (i in seq_len(nrow(smp))) {
+      s <- smp$sample[i]
+      hit <- gx_trk[gx_trk$sample == s & gx_trk$key %in% keys, , drop = FALSE]
+      n_tcr <- sum(gx_trk$sample == s)
+      p <- plotly::add_trace(plotly::plot_ly(), x = grey[[gx_emb[1]]], y = grey[[gx_emb[2]]], type = "scattergl",
+                             mode = "markers", marker = list(size = 2, color = "#e6e5e0"), hoverinfo = "skip",
+                             showlegend = FALSE, inherit = FALSE)
+      for (st in intersect(names(gx_trk_cols), unique(hit$annot))) {
+        d <- hit[hit$annot == st, , drop = FALSE]
+        p <- plotly::add_trace(p, x = d[[gx_emb[1]]], y = d[[gx_emb[2]]], type = "scattergl", mode = "markers",
+                               marker = list(size = 6, color = gx_trk_cols[[st]], line = list(color = "white", width = 0.5)),
+                               name = st, legendgroup = st, showlegend = FALSE, inherit = FALSE,
+                               text = paste0("clone ", match(d$key, keys), " ", d$cdr3b, "<br>", st, "<br>", d$alias),
+                               hovertemplate = "%{text}<extra></extra>")
+      }
+      pl[[i + 1]] <- plotly::layout(p, xaxis = ax(xr), yaxis = ax(yr),
+                                    annotations = panel_title(sprintf("%s: %d of %s cells", smp$label[i], nrow(hit),
+                                                                      format(n_tcr, big.mark = ","))))
+    }
+    nc <- min(4, length(pl)); nr <- ceiling(length(pl) / nc)
+    fig <- plotly::subplot(pl, nrows = nr, margin = c(0.01, 0.01, 0.045, 0.045)) %>%
+      plotly::layout(title = ttl(sprintf("%s: the %d largest clones, sample by sample", pt, length(keys))),
+                     height = 270 * nr + 110, margin = list(t = 80),
+                     legend = list(itemsizing = "constant", title = list(text = "Cell state")))
+    withcap(pconf(fig), "Top clones on the cell-state map, sample by sample",
+            paste0("First panel: every cell of the cohort coloured by state. Other panels: one per sample of ",
+                   htmltools::htmlEscape(pt), " in timepoint order, with the cells of the patient's ", length(keys),
+                   " largest clones (", paste0("<code>", htmltools::htmlEscape(sub("\\|.*$", "", keys)), "</code>", collapse = ", "),
+                   ") coloured by state on the grey map of all cells; the panel title gives how many of the",
+                   " sample's TCR+ cells they are. Clones that move across the map between samples changed state.",
+                   " Hover a coloured cell for its clone and sample."), n = fig_no)
+  })
+}
+```
+
 ## Clones shared between cell states {#sec-sc-gex-sharing}
 
 **What it shows.** How often an expanded clone has cells in two different states at once.
@@ -636,48 +799,29 @@ singleton cells within each state, to see what expansion adds beyond the state i
 
 ```{r}
 #| label: gex-genes
-gx_expr <- NULL
-.rds <- as_str1(params$seurat_rds)
-if (have(gx) && nzchar(.rds) && file.exists(.rds) && file.size(.rds) > 0) {
-  gx_expr <- tryCatch({
-    suppressPackageStartupMessages(library(Seurat))
-    seu <- readRDS(.rds)
-    genes <- c("CD8A", "CD8B", "CD4", "SELL", "CCR7", "TCF7", "IL7R", "GZMK", "GZMA", "GZMB",
-               "PRF1", "GNLY", "NKG7", "IFNG", "CX3CR1", "KLRG1", "ITGAE", "CD69", "ZNF683",
-               "PDCD1", "HAVCR2", "LAG3", "TIGIT", "CTLA4", "TOX", "CXCL13", "ENTPD1",
-               "KLRB1", "SLC4A10", "ZBTB16", "MKI67", "TOP2A", "FOXP3", "TRDC")
-    genes <- intersect(genes, rownames(seu))
-    cells <- intersect(gx$cell_id, colnames(seu))
-    if (length(genes) < 2 || length(cells) < 50) NULL else {
-      get_layer <- function(l) tryCatch(SeuratObject::LayerData(seu, layer = l),
-                                        error = function(e) tryCatch(Seurat::GetAssayData(seu, slot = l),
-                                                                     error = function(e) NULL))
-      dat <- suppressWarnings(get_layer("data"))
-      if (!is.null(dat) && all(dim(dat) > 0)) {
-        mat <- dat[genes, cells, drop = FALSE]
-      } else {
-        # Downstream objects can carry counts only: LogNormalize the panel genes against
-        # each cell's full library size, as Seurat's NormalizeData would.
-        cnt <- get_layer("counts")[, cells, drop = FALSE]
-        mat <- log1p(Matrix::t(Matrix::t(cnt[genes, , drop = FALSE]) / Matrix::colSums(cnt)) * 1e4)
-      }
-      rm(seu); invisible(gc())
-      list(mat = as.matrix(mat), meta = gx[match(cells, gx$cell_id), , drop = FALSE])
-    }
-  }, error = function(e) { message("GEX expression unavailable: ", conditionMessage(e)); NULL })
+# Marker-panel expression per state and clone group, precomputed from the GEX object by
+# SC_MARKER_EXPRESSION (results/marker_expression.tsv): the report never loads the object.
+gx_mk <- T("markers", "marker_expression.tsv")
+if (have(gx_mk)) {
+  gx_mk$annot <- as.character(gx_mk$annot)
+  # Mean over several groups, weighted by their cells.
+  gx_mean <- function(d) d %>% group_by(gene, annot) %>%
+    summarise(m = sum(mean_logexpr * n_cells) / sum(n_cells), n = sum(n_cells), .groups = "drop")
+  gx_wide <- function(d) {
+    w <- tidyr::pivot_wider(d[, c("gene", "annot", "m")], names_from = annot, values_from = m)
+    m <- as.matrix(w[, -1, drop = FALSE]); rownames(m) <- w$gene; m
+  }
 }
-if (have(gx) && is.null(gx_expr)) note("The GEX object could not be read, or shares too few cells / marker genes with the export; expression panels are skipped.")
+if (have(gx) && !have(gx_mk)) note("No marker-expression table (the GEX object shares too few cells or marker genes with the export); expression panels are skipped.")
 ```
 
 
 ```{r}
 #| label: gex-markers-state
-if (!is.null(gx_expr)) {
-  g <- gx_expr$meta$annot
-  avg <- sapply(split(seq_along(g), g), function(i) Matrix::rowMeans(gx_expr$mat[, i, drop = FALSE]))
+if (have(gx_mk)) {
+  avg <- gx_wide(gx_mean(gx_mk))
   z <- t(scale(t(avg)))
   z[is.na(z)] <- 0
-  save_table(as.data.frame(avg) %>% tibble::rownames_to_column("gene"), "gex_marker_mean_by_state.tsv")
   withcap(hmap(t(z), "Canonical T-cell genes by cell state (row-scaled mean expression)", "z-score",
                colorscale = "RdBu", zmid = 0, height = max(420, 32 * ncol(z) + 200)),
           "Marker genes by cell state",
@@ -687,28 +831,22 @@ if (!is.null(gx_expr)) {
                 "<em>GZMB</em>, <em>PRF1</em>, <em>NKG7</em>; exhausted cells for <em>PDCD1</em>,",
                 "<em>HAVCR2</em>, <em>TOX</em>, <em>CXCL13</em>; MAIT for <em>KLRB1</em>, <em>SLC4A10</em>;",
                 "Treg for <em>FOXP3</em>; cycling cells for <em>MKI67</em>, <em>TOP2A</em>. Because each gene is",
-                "scaled on its own, the colours compare states, not genes."))
+                "scaled on its own, the colours compare states, not genes. Source: <code>results/marker_expression.tsv</code>."))
 }
 ```
 
 
 ```{r}
 #| label: gex-markers-expanded
-if (!is.null(gx_expr)) {
-  md <- gx_expr$meta
-  ok <- md$has_tcr
-  # Count both groups over the same states (a state may have only one kind of cell).
-  lv <- sort(unique(as.character(md$annot[ok])))
-  n_exp <- table(factor(md$annot[ok & md$expanded %in% TRUE], levels = lv))
-  n_sgl <- table(factor(md$annot[ok & md$expanded %in% FALSE], levels = lv))
-  st <- lv[n_exp >= 20 & n_sgl >= 20]
+if (have(gx_mk)) {
+  # States with at least 20 expanded and 20 singleton TCR+ cells.
+  n_by <- gx_mk %>% distinct(annot, group, n_cells)
+  st <- intersect(n_by$annot[n_by$group == "expanded" & n_by$n_cells >= 20],
+                  n_by$annot[n_by$group == "singleton" & n_by$n_cells >= 20])
   if (!length(st)) note("Too few expanded and non-expanded cells per state to compare expression.") else {
-    lfc <- sapply(st, function(s) {
-      e <- ok & md$annot == s
-      Matrix::rowMeans(gx_expr$mat[, e & md$expanded, drop = FALSE]) -
-        Matrix::rowMeans(gx_expr$mat[, e & !md$expanded, drop = FALSE])
-    })
-    save_table(as.data.frame(lfc) %>% tibble::rownames_to_column("gene"), "gex_expanded_vs_singleton_by_state.tsv")
+    e <- gx_wide(gx_mk %>% filter(group == "expanded", annot %in% st) %>% transmute(gene, annot, m = mean_logexpr))
+    s1 <- gx_wide(gx_mk %>% filter(group == "singleton", annot %in% st) %>% transmute(gene, annot, m = mean_logexpr))
+    lfc <- e[, sort(st), drop = FALSE] - s1[rownames(e), sort(st), drop = FALSE]
     withcap(hmap(t(lfc), "Expanded vs singleton cells within each state (difference in mean log-expression)",
                  "Δ log-expr", colorscale = "RdBu", zmid = 0, height = max(420, 32 * length(st) + 200)),
             "Expanded vs singleton cells within each state",

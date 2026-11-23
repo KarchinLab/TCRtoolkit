@@ -9,7 +9,10 @@ process MASTER_SUMMARY {
     input:
       // Core per-cell inputs. stageAs with a real extension matters: the .qmd picks its
       // reader from the extension, and knitr/quarto infer image type the same way.
-      path seurat_rds,        stageAs: 'in_seurat_rds.rds'
+      // Marker-panel expression per state and clone group (SC_MARKER_EXPRESSION), in place
+      // of the Seurat object: rendering never loads the expression matrix. NO_FILE off the
+      // GEX route.
+      path marker_table,      stageAs: 'intables/markers/marker_expression.tsv'
       path export_cells,      stageAs: 'in_export_cells.tsv'
 
       // Each upstream module contributes its whole tables/ directory under
@@ -45,6 +48,8 @@ process MASTER_SUMMARY {
 
     script:
     """
+    # Bulk cohorts embed large figures; the flattened Discovery Brief alone can pass 90 MB, too large for the default JavaScript heap.
+    export QUARTO_DENO_EXTRA_OPTIONS=--v8-flags=--max-old-space-size=${params.quarto_heap_mb}
     mkdir -p Master_Summary_Report/tables Master_Summary_Report/figures
     cp -L src/*.qmd .
 
@@ -67,7 +72,6 @@ process MASTER_SUMMARY {
       -P project_name="${project_name}"
       -P modality="${(params.mode ?: 'bulk').toLowerCase()}"
       -P tables_dir="intables"
-      -P seurat_rds="${seurat_rds}"
       -P export_cells_file="${export_cells}"
       -P label_col="${params.label_col}"
       -P sample_col="${params.sample_col}"
@@ -76,6 +80,7 @@ process MASTER_SUMMARY {
       -P timepoint_col="${params.timepoint_col}"
       -P timepoint_order="${params.timepoint_order ?: ''}"
       -P tcrdist_radius=${params.tcrdist_radius}
+      -P write_figure_tables=${params.write_figure_tables ? 'true' : 'false'}
     )
 
     quarto render Master_Summary_Report.qmd "\${common[@]}" -P outdir="Master_Summary_Report"

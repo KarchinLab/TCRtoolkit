@@ -75,7 +75,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.stats import mannwhitneyu
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, triu as sparse_triu
 
 tcrdist_dir = f"{project_dir}/tcrdist3/"
 
@@ -106,13 +106,13 @@ def create_distance_tabs_with_heatmap(meta_df, origin_col='origin'):
                 indices = f['indices'][:]
                 indptr = f['indptr'][:]
 
-            sparse_matrix = csr_matrix((data, indices, indptr))
-            dense_matrix = sparse_matrix.toarray()
-            # Symmetrize
-            dense_matrix = np.maximum(dense_matrix, dense_matrix.T)
-
-            # Extract upper triangle (exclude diagonal 0 and lower triangle)
-            upper_triangle = dense_matrix[np.triu_indices(dense_matrix.shape[0], k=1)]
+            # Stay sparse: a dense copy of a large sample's block is n^2 values, almost all
+            # of them absent (beyond the cutoff). Symmetrise and take the stored entries of
+            # the upper triangle; -1 (a true zero distance) and 0 are dropped below, as before.
+            n_rows = len(indptr) - 1
+            sparse_matrix = csr_matrix((data, indices, indptr), shape=(n_rows, n_rows))
+            sparse_matrix = sparse_matrix.maximum(sparse_matrix.T)
+            upper_triangle = sparse_triu(sparse_matrix, k=1).tocoo().data
 
             # Filter valid (ignore -1 or 0 if those indicate missing/self)
             valid_distances = upper_triangle[(upper_triangle != -1) & (upper_triangle != 0)]

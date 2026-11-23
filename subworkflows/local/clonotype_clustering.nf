@@ -28,8 +28,7 @@ workflow CLONOTYPE_CLUSTERING {
     export_cells        // channel: per-cell / per-clonotype export table
     giana_clusters      // channel: *_giana.txt (per patient)
     gliph2_details      // channel: cluster_member_details (per patient)
-    tcrdist_clone_df    // channel: <patient>_tcrdist_patient_clones.csv (per patient)
-    tcrdist_output      // channel: [patient, distance matrix] (per patient)
+    tcrdist_cluster_map // channel: <patient>_tcrdist_cluster_map.tsv (per patient)
     conga_export        // channel: CoNGA per-cell export (VDJ+GEX route), or NO_FILE
     project_name        // value channel
 
@@ -41,8 +40,7 @@ workflow CLONOTYPE_CLUSTERING {
         export_cells,
         giana_clusters,
         gliph2_details,
-        tcrdist_clone_df,
-        tcrdist_output.map { _meta, f -> f }
+        tcrdist_cluster_map
     )
     // Without a GEX object CLUSTER_TO_SC writes no Seurat; downstream gets NO_FILE.
     enriched_seurat = has_seurat ? CLUSTER_TO_SC_SW.out.enriched_seurat : channel.value(nofile)
@@ -71,10 +69,11 @@ workflow CLONOTYPE_CLUSTERING {
     // GIANA / GLIPH2 / TCRdist3 write raw per-patient output but no rollup
     // table; this summarises them into the files the Master Summary reads.
     CLUSTER_ROLLUP(
-        giana_clusters.collect().ifEmpty([]),
-        gliph2_details.collect().ifEmpty([]),
-        tcrdist_clone_df.collect().ifEmpty([]),
-        tcrdist_output.map { _meta, f -> f }.collect().ifEmpty([]),
+        giana_clusters.collect(sort: true).ifEmpty([]),
+        gliph2_details.collect(sort: true).ifEmpty([]),
+        // Sorted so the task hash does not depend on the order patients finished in, and
+        // -resume reuses it.
+        tcrdist_cluster_map.collect(sort: true).ifEmpty([]),
         rep_export,
         channel.fromPath("${projectDir}/bin/cluster_rollup.py", checkIfExists: true),
         project_name

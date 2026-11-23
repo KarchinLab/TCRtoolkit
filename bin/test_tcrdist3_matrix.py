@@ -38,5 +38,41 @@ class TestNameConversion(unittest.TestCase):
             self.assertEqual(result, split_output, f"Failed for input: {split_input}")
 
 
+class TestClusterMap(unittest.TestCase):
+    """cluster_map: clones within the radius are linked, rows sharing a CDR3b are tied, and a
+    component needs >= 2 distinct CDR3b to be a cluster."""
+
+    def test_components(self):
+        import numpy as np
+        import pandas as pd
+        import scipy.sparse as sp
+        clones = pd.DataFrame({
+            "sample":    ["s1", "s1", "s2", "s2", "s1"],
+            "cdr3_b_aa": ["CASSA", "CASSB", "CASSA", "CASSZ", "CASSQ"],
+            "v_b_gene":  ["TRBV1*01"] * 5,
+            "count":     [3, 1, 2, 1, 1],
+        })
+        # 0-1 within radius; 2 is CASSA again (tied to 0); 3-4 at 30 (beyond 24);
+        # a true zero distance is stored as -1 and must count as linked.
+        d = np.zeros((5, 5))
+        d[0, 1] = d[1, 0] = 12
+        d[3, 4] = d[4, 3] = 30
+        m = sp.csr_matrix(d)
+        out, n_edges = t3m.cluster_map(clones, m, 24, "P1")
+        self.assertEqual(n_edges, 1)
+        lab = out["tcrdist_cluster"].tolist()
+        self.assertEqual(lab[0], lab[1])
+        self.assertEqual(lab[0], lab[2])          # same CDR3b, other sample
+        self.assertEqual(lab[3], "")              # beyond the radius
+        self.assertEqual(lab[4], "")
+        self.assertEqual(out.loc[0, "cluster_n_cdr3"], 2)
+        self.assertEqual(out.loc[0, "cluster_n_clones"], 3)
+        # -1 = zero distance: links 3 and 4 into a cluster.
+        d[3, 4] = d[4, 3] = -1
+        out, _ = t3m.cluster_map(clones, sp.csr_matrix(d), 24, "P1")
+        self.assertNotEqual(out.loc[3, "tcrdist_cluster"], "")
+        self.assertEqual(out.loc[3, "tcrdist_cluster"], out.loc[4, "tcrdist_cluster"])
+
+
 if __name__ == '__main__':
     unittest.main()

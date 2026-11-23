@@ -313,6 +313,10 @@ has_seurat <- !is.null(params$seurat_rds) && nzchar(as.character(params$seurat_r
   file.exists(params$seurat_rds) && file.size(params$seurat_rds) > 0
 
 seu <- if (has_seurat) readRDS(params$seurat_rds) else NULL
+# Object size, for ranking memory across processes (bin/trace_memory_summary.py).
+if (!is.null(seu)) cat(sprintf("OBJECT_LOAD\tprocess=CONSENSUS_CLUSTERING\tfile=%s\tfile_mb=%.0f\tobject_mb=%.0f\tcells=%d\tfeatures=%d\tr_max_used_mb=%.0f",
+  basename(params$seurat_rds), file.size(params$seurat_rds) / 2^20, as.numeric(utils::object.size(seu)) / 2^20,
+  ncol(seu), nrow(seu), sum(gc()[, 6])), "\n", file = stderr())
 export_cells_main <- safe_read_table(params$export_cells_file)
 gliph_export_tbl <- safe_read_table(params$gliph_export_cells_file)
 tcrdist_export_tbl <- safe_read_table(params$tcrdist_export_cells_file)

@@ -8,6 +8,7 @@
 include { TCRSHARING_CALC } from '../../modules/local/compare/tcrsharing'
 include { OLGA_MERGE as TCRSHARING_OLGA_MERGE } from '../../modules/local/olga'
 include { CLONAL_DYNAMICS } from '../../modules/local/compare/clonal_dynamics'
+include { SELECTION_TEST } from '../../modules/local/compare/selection_test'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -33,8 +34,20 @@ workflow COMPARE {
         samplesheet
     )
 
+    def ch_selection = channel.empty()
+    if (params.run_selection_test) {
+        SELECTION_TEST(
+            TCRSHARING_OLGA_MERGE.out.concat_cdr3_pgen,
+            samplesheet,
+            file(params.selection_anchors)
+        )
+        ch_selection = SELECTION_TEST.out.results
+            .mix(SELECTION_TEST.out.summary, SELECTION_TEST.out.calibration)
+    }
+
     emit:
         shared_cdr3 = TCRSHARING_CALC.out.shared_cdr3
+        selection_files = ch_selection
         clonal_dynamics_files = CLONAL_DYNAMICS.out.clonotypes
             .mix(CLONAL_DYNAMICS.out.detailed_expansion)
             .mix(CLONAL_DYNAMICS.out.detailed_contraction)

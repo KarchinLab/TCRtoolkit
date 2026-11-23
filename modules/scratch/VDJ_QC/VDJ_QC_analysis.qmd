@@ -408,6 +408,10 @@ if ((is.null(metadata_tbl) || nrow(metadata_tbl) == 0) &&
   })
 
   seu <- readRDS(params$input_annotated_object)
+  # Object size, for ranking memory across processes (bin/trace_memory_summary.py).
+  cat(sprintf("OBJECT_LOAD\tprocess=VDJ_QC\tfile=%s\tfile_mb=%.0f\tobject_mb=%.0f\tcells=%d\tfeatures=%d\tr_max_used_mb=%.0f",
+    basename(params$input_annotated_object), file.size(params$input_annotated_object) / 2^20, as.numeric(utils::object.size(seu)) / 2^20,
+    ncol(seu), nrow(seu), sum(gc()[, 6])), "\n", file = stderr())
 
   metadata_tbl <- seu@meta.data %>%
     tibble::rownames_to_column("cell_id_full") %>%

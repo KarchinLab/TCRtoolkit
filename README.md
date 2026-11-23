@@ -118,7 +118,7 @@ After the pipeline finishes, `TCRtoolkit` generates interactive HTML reports usi
 | `template_details_sample.qmd` | sample | Per-sample repertoire composition, V/J gene usage (TRA and TRB for single-cell, TRB for bulk), generation probability and VDJdb; single-cell runs add clone rank abundance, cell states of clones, CoNGA and TCRi |
 | `template_details_compare.qmd` | sample + compare | Clonal dynamics (with the phenotypic fate of persistent clones, blood vs tissue and individual clone tracking for single-cell data, clone sizes over time for bulk), TCR sharing and generation probability, repertoire overlap |
 | `template_details_patient.qmd` | sample + patient | TCR sequence clustering: GIANA, GLIPH2 (`--use_gliph2`) and TCRdist3 (clusters and within-sample distance distributions), their comparison, and the consensus clusters; single-cell runs add clustering coverage by cell state and the consensus clusters' samples, cell states, CoNGA and TCRi |
-| `Master_Summary_Report.qmd` (**Master Summary**) | clonotype clustering ran (`--run_master_summary`) | Highest-impact repertoire findings (the Discovery Brief), consensus clustering (all routes) and, with a GEX object, the cell-state analyses: expansion and clonal dynamics by cell state, CoNGA, TCRi, T-cell integration |
+| `Master_Summary_Report.qmd` (**Master Summary**) | clonotype clustering ran (`--run_master_summary`) | Highest-impact repertoire findings (the Discovery Brief), the top clones tracked over time per patient, consensus clustering (all routes) and, with a GEX object, the cell-state analyses: expansion and clonal dynamics by cell state, CoNGA, TCRi, T-cell integration |
 
 Each report is published to its own folder under `<outdir>/report/`:
 
@@ -165,9 +165,32 @@ The clone unit depends on the modality: bulk counts TRB clonotypes (reads/templa
 
 After the cohort comparison, both modalities run the same chain: a per-cell (single-cell) or per-clonotype (bulk) export → `CLUSTER_TO_SC` (GIANA / GLIPH2 / TCRdist3 clusters mapped onto those rows) → `CONSENSUS_CLUSTERING` → `CLUSTER_ROLLUP` → `MASTER_SUMMARY`. Without a GEX object these steps run on the export table alone. Bulk runs need `run_compare` plus `run_sample` and/or `run_patient`; disable with `--run_clonotype_clustering false`.
 
-All three methods cluster per patient, over all of that patient's samples, and their clusters are mapped onto the rows of that patient only (matched on patient and CDR3β). TCRdist3 clusters are the connected components of the patient's distance matrix at `--tcrdist_radius`, with at least two distinct CDR3β. On the single-cell VDJ+GEX route CoNGA runs before the consensus and is a fourth method: each CoNGA hit clonotype (score < 1) is labelled by its (GEX cluster, TCR cluster) pair. Because the methods label clusters independently, the consensus does not compare labels: two clonotypes are linked when at least `--consensus_min_methods` methods (default 2) place them in the same cluster, and each connected group of linked clonotypes is one consensus cluster. `consensus_cluster_map.tsv` lists, per consensus cluster, its clonotypes, cells, the methods whose agreement built it (`consensus_methods`) and the member clusters of each method.
+All three methods cluster per patient, over all of that patient's samples, and their clusters are mapped onto the rows of that patient only (matched on patient and CDR3β). TCRdist3 clusters are the connected components of the patient's distance matrix at `--tcrdist_radius`, with at least two distinct CDR3β. `TCRDIST3_MATRIX` computes the sparse matrix only out to that radius and cuts the clusters itself, writing `<patient>_tcrdist_cluster_map.tsv` (one row per clone: CDR3β, V gene, count, cluster, cluster size and edge count); `CLUSTER_TO_SC` and `CLUSTER_ROLLUP` read these maps, never the matrices. On the single-cell VDJ+GEX route CoNGA runs before the consensus and is a fourth method: each CoNGA hit clonotype (score < 1) is labelled by its (GEX cluster, TCR cluster) pair. Because the methods label clusters independently, the consensus does not compare labels: two clonotypes are linked when at least `--consensus_min_methods` methods (default 2) place them in the same cluster, and each connected group of linked clonotypes is one consensus cluster. `consensus_cluster_map.tsv` lists, per consensus cluster, its clonotypes, cells, the methods whose agreement built it (`consensus_methods`) and the member clusters of each method.
 
-With a GEX object (`--input_annotated_object`), `MASTER_SUMMARY` also renders `SC_GEX_Report.html` from `modules/scratch/MASTER_SUMMARY/_sc_gex.qmd` (cell-state map, composition by sample and condition, expansion and clone sharing by cell state, marker-gene expression of expanded cells, CoNGA, TCRi and consensus clusters by cell state), and the same section is appended to the Master Summary. Other routes get a short stub in its place.
+With a GEX object (`--input_annotated_object`), `MASTER_SUMMARY` also renders `SC_GEX_Report.html` from `modules/scratch/MASTER_SUMMARY/_sc_gex.qmd` (cell-state map, composition by sample and condition, expansion and clone sharing by cell state, the top clones' cell states over time and on the map, one tab per patient, marker-gene expression of expanded cells, CoNGA, TCRi and consensus clusters by cell state), and the same section is appended to the Master Summary. Other routes get a short stub in its place.
+
+## Results tables (with or without reports)
+
+`RESULTS_EXPORT` writes the run's results to `<outdir>/results/` on every run, including `--run_reports false`. The set is small and non-redundant: every report figure is a view of one of these tables, and `results/README.md` lists their columns and which table each figure comes from.
+
+| Table | One row per |
+|---|---|
+| `samples.tsv` | sample: metadata and repertoire metrics (clonality, diversity, Hill numbers) |
+| `clones.tsv.gz` | sample × TCRβ clonotype: count, frequency, generation probability, VDJdb match, GIANA / GLIPH2 / TCRdist3 / consensus cluster, clonal dynamics call, publicity |
+| `clone_tests.tsv.gz` | Fisher test of a clonotype between two timepoints (expansion and contraction) |
+| `sample_overlap.tsv` | sample pair: Jaccard, Sørensen, Morisita-Horn |
+| `cells.tsv.gz` | cell (single-cell): state, clone, UMAP, CoNGA / TCRi / cluster calls |
+| `marker_expression.tsv` | gene × cell state × clone group (GEX route) |
+
+On the GEX route `SC_MARKER_EXPRESSION` computes the marker-gene table from the Seurat object once; the Master Summary renders from it and never loads the object. The Master Summary's per-figure TSVs are off by default (`--write_figure_tables true` restores them).
+
+## Large cohorts: memory and resume
+
+- `--tcrdist_radius` is also the sparse TCRdist3 cutoff (previously a fixed 50), so the stored matrix holds only the pairs any step uses.
+- `--tcrdist_max_patient_clones N` makes `TCRDIST3_MATRIX` fail before computing distances for a patient with more than `N` clones (exit status 3, not retried; the log line starts `TCRDIST_LIMIT` and gives `n_patient_clones`).
+- Every run writes a trace (with `peak_rss`), report and timeline to `<outdir>/pipeline_info/`, plus `tcrdist_metrics.tsv` (per patient: input rows, unique CDR3β, clones, sparse `nnz`, radius, wall time, peak RSS). Steps that load a Seurat or H5AD object log an `OBJECT_LOAD` line (file and in-memory size, cells, features).
+- `bin/trace_memory_summary.py --trace out/pipeline_info/execution_trace_*.txt --tcrdist-metrics out/pipeline_info/tcrdist_metrics.tsv --scan-logs --outdir out/pipeline_info/memory_summary` ranks memory by process and by patient and extrapolates TCRdist3 memory per clone.
+- `-profile aws_spot` (`conf/aws_spot.config`) runs on AWS Batch Spot with retries; keep the work directory on S3 (`-w s3://...`) and pass `-resume`, and completed per-patient tasks are reused after an interruption.
 
 ## Key Parameters
 
@@ -185,8 +208,15 @@ All parameters and their defaults are in `nextflow.config`. Supply non-default v
 | `--run_reports` | `true` | Render the HTML report notebooks |
 | `--run_clonotype_clustering` | `true` | Cluster-to-row mapping, consensus clustering and rollups |
 | `--consensus_min_methods` | `2` | Methods that must agree to link two clonotypes in a consensus cluster |
-| `--tcrdist_radius` | `24` | TCRdist3 distance radius for clusters |
+| `--tcrdist_radius` | `24` | TCRdist3 distance radius for clusters, and the sparse matrix cutoff |
+| `--tcrdist_max_patient_clones` | `0` | Fail TCRdist3 early for a patient with more clones than this (0 = no limit) |
+| `--run_results_export` | `true` | Write the core results tables to `results/` (also with `--run_reports false`) |
+| `--write_figure_tables` | `false` | Also write each Master Summary figure's data as its own TSV |
 | `--run_master_summary` | `true` | Render the Master Summary |
+| `--run_selection_test` / `--selection_fdr` | `true` / `0.05` | Test clonotype sharing against the generative null, and the FDR for calling selection candidates |
+| `--selection_min_subjects` | `3` | Fewest subjects for the selection test; below this it reports itself as skipped |
+| `--vdjdb_search_scope` / `--vdjdb_v_match` / `--vdjdb_min_confidence` | `0,0,0` / `true` / `1` | VDJdb matching rule: edits allowed, V-gene agreement, minimum confidence. Loosening it sharply raises false matches |
+| `--run_plasticity` / `--plasticity_min_cells` | `true` / `5` | Clone-level state change between timepoints (VDJ+GEX route), and the cells a clone needs at both timepoints |
 | `--timepoint_order` | — | Comma-separated timepoint order for the reports (default: numeric, else alphabetical) |
 | `--container` | `ghcr.io/karchinlab/tcrtoolkit:main` | Main container image |
 | `--max_memory` / `--max_cpus` / `--max_time` | `768.GB` / `192` / `48.h` | Resource caps |

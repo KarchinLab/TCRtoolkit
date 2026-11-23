@@ -48,6 +48,7 @@ workflow BULKTCR_ANALYSIS {
     def ch_sample_csv = channel.empty()
     def ch_tcrdist_clone_df = channel.empty()
     def ch_tcrdist_output = channel.empty()
+    def ch_tcrdist_cluster_map = channel.empty()
     def ch_v_family = channel.empty()
     def ch_j_family = channel.empty()
     def ch_tcrdist_files = channel.value([])
@@ -65,6 +66,7 @@ workflow BULKTCR_ANALYSIS {
     def ch_gliph2_global_similarities = channel.value([])
 
     def ch_shared_cdr3 = channel.empty()
+    def ch_selection_files = channel.empty()
     def ch_clonal_dynamics_files = channel.value([])
     def ch_reports = channel.empty()
     def ch_sample_stats = channel.empty()
@@ -106,6 +108,7 @@ workflow BULKTCR_ANALYSIS {
 
         ch_tcrdist_clone_df = PATIENT.out.tcrdist_patient_clones
         ch_tcrdist_output = PATIENT.out.tcrdist_patient_matrix
+        ch_tcrdist_cluster_map = PATIENT.out.tcrdist_cluster_map
         ch_tcrdist_files = PATIENT.out.tcrdist_files
         ch_giana_clusters = PATIENT.out.giana_clusters
         ch_gliph2_cluster_details = PATIENT.out.gliph2_cluster_details
@@ -124,6 +127,7 @@ workflow BULKTCR_ANALYSIS {
         )
 
         ch_shared_cdr3 = COMPARE.out.shared_cdr3
+        ch_selection_files = COMPARE.out.selection_files
         ch_clonal_dynamics_files = COMPARE.out.clonal_dynamics_files
     }
 
@@ -309,6 +313,7 @@ workflow BULKTCR_ANALYSIS {
     repertoire_tables = ch_repertoire_tables   // REPERTOIRE_METRICS *.tsv
     tcrdist_clone_df  = ch_tcrdist_clone_df    // <patient>_tcrdist_patient_clones.csv
     tcrdist_output    = ch_tcrdist_output      // [patient, <patient>_tcrdist_patient_matrix.*]
+    tcrdist_cluster_map = ch_tcrdist_cluster_map // <patient>_tcrdist_cluster_map.tsv
     v_family          = ch_v_family
     j_family          = ch_j_family
     tcrdist_files     = ch_tcrdist_files
@@ -326,6 +331,7 @@ workflow BULKTCR_ANALYSIS {
     gliph2_global_similarities    = ch_gliph2_global_similarities
 
     shared_cdr3 = ch_shared_cdr3
+    selection_files = ch_selection_files
     clonal_dynamics_files = ch_clonal_dynamics_files
 
     reports = ch_reports
