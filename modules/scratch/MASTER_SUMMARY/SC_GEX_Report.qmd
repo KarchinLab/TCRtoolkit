@@ -1,5 +1,5 @@
 ---
-title: "TCR-Toolkit-SCRATCH: Single-cell GEX Report"
+title: "TCRtoolkit: Single-cell GEX Report"
 format:
   html:
     toc: true
@@ -17,7 +17,7 @@ execute:
   warning: false
   message: false
 params:
-  project_name: "TCR-Toolkit-SCRATCH"
+  project_name: "TCRtoolkit"
   # "singlecell" or "bulk". Bulk runs have no cells: every export row is one sample x
   # clonotype, so "cells" in this report then means clonotypes.
   modality: "singlecell"

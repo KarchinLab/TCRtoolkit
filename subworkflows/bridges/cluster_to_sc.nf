@@ -35,13 +35,13 @@ workflow CLUSTER_TO_SC_SW {
     tcrdist_matrices
 
     main:
-    def nofile = file("${projectDir}/assets/NO_FILE")
-
-    // Collect all per-patient / per-sample files into single inputs
-    giana_collected    = giana_clusters.collect().ifEmpty([nofile])
-    gliph2_collected   = gliph2_details.collect().ifEmpty([nofile])
-    clone_dfs_collected = tcrdist_clone_dfs.collect().ifEmpty([nofile])
-    matrices_collected  = tcrdist_matrices.collect().ifEmpty([nofile])
+    // Collect all per-patient / per-sample files into single inputs. A method that did not
+    // run (e.g. run_patient=false) stages nothing; substituting NO_FILE for each of them
+    // made the identically named placeholders collide on staging.
+    giana_collected    = giana_clusters.collect().ifEmpty([])
+    gliph2_collected   = gliph2_details.collect().ifEmpty([])
+    clone_dfs_collected = tcrdist_clone_dfs.collect().ifEmpty([])
+    matrices_collected  = tcrdist_matrices.collect().ifEmpty([])
 
     CLUSTER_TO_SC(
         seurat_rds,

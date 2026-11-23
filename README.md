@@ -75,7 +75,7 @@ outdir: "out_singlecell"
 | `sample` | yes | Sample ID |
 | `file` | yes | Path or URL to the sample's TCR table |
 | `patient` | for `run_patient` | Patient ID; groups samples for patient-level clustering and per-patient report tabs |
-| `timepoint`, `origin` | recommended | Timepoint and compartment (e.g. `tumor`, `blood`), used by clonal dynamics and the reports |
+| `timepoint`, `origin` | recommended | Timepoint and compartment (e.g. `tumor`, `blood`/`PBMC`, or any other tissue or body fluid), used by clonal dynamics, the compartment comparison and the reports. Figures that put several patients on one axis also use `timepoint`, so its values should be comparable across patients (e.g. binned study days `0`, `15`, `30`); another column can be chosen with `--cohort_time_col` |
 | `alias` | optional | Short label shown in the reports instead of the sample ID |
 
 `--input_format` sets the format of the TCR tables:
@@ -118,7 +118,7 @@ After the pipeline finishes, `TCRtoolkit` generates interactive HTML reports usi
 | `template_details_sample.qmd` | sample | Per-sample repertoire composition, V/J gene usage (TRA and TRB for single-cell, TRB for bulk), generation probability and VDJdb; single-cell runs add clone rank abundance, cell states of clones, CoNGA and TCRi |
 | `template_details_compare.qmd` | sample + compare | Clonal dynamics (with the phenotypic fate of persistent clones, blood vs tissue and individual clone tracking for single-cell data, clone sizes over time for bulk), TCR sharing and generation probability, repertoire overlap |
 | `template_details_patient.qmd` | sample + patient | TCR sequence clustering: GIANA, GLIPH2 (`--use_gliph2`) and TCRdist3 (clusters and within-sample distance distributions), their comparison, and the consensus clusters; single-cell runs add clustering coverage by cell state and the consensus clusters' samples, cell states, CoNGA and TCRi |
-| `Master_Summary_Report.qmd` (**Master Summary**) | clonotype clustering ran (`--run_master_summary`) | Highest-impact repertoire findings (the Discovery Brief), consensus clustering (all routes) and, with a GEX object, the cell-state analyses: expansion and clonal dynamics by cell state, CoNGA, TCRi, T-cell integration |
+| `Master_Summary_Report.qmd` (**Master Summary**) | clonotype clustering ran (`--run_master_summary`) | Highest-impact repertoire findings (the Discovery Brief), consensus clustering (all routes) and, with a GEX object, the cell-state analyses: expansion and clonal dynamics by cell state, CoNGA, TCRi, T-cell integration; then two additional sections: clonotype flows between sample compartments (e.g. tumour and blood) and clones shared with reference studies (with `--reference_samplesheet`) |
 
 Each report is published to its own folder under `<outdir>/report/`:
 
@@ -161,6 +161,39 @@ Diversity, clone-size bins, overlap and clone sharing are computed once, by `REP
 
 The clone unit depends on the modality: bulk counts TRB clonotypes (reads/templates), and single-cell counts paired clones (`A:<CDR3a>|B:<CDR3b>`, cells), taken from `paired_clones.tsv` written by the route's bridge (`SC_TO_CDR3` or `VDJ_TO_BULK`), which define the clone identically. The public-clone analysis in `tcrsharing` uses TRB CDR3 because generation probability (OLGA) is defined per CDR3.
 
+### Compartments, e.g. tumour and blood (both modalities)
+
+`COMPARTMENT_OVERLAP` (part of the compare stage) compares the clonotypes of each patient's compartments, named by the samplesheet column `--compartment_col` (default `origin`). Any compartment labels can be compared (tumour, blood, lymph node, CSF, other body fluids); common ones are harmonised (`PBMC`/`blood` to `Blood`, `tumor`/`TIL` to `Tumor`) and the rest are used as given. Clone counts are pooled per compartment over all of the patient's samples, and again per `--cohort_time_col` value where the patient was sampled in several compartments at the same time. The Master Summary draws them, in an additional section, as per-patient flow diagrams (clones shared with blood highlighted) with an overlap table. Without a compartment column, or with no patient sampled in two compartments, the tables are header-only and the report section says why.
+
+| Output | Contents |
+|---|---|
+| `compartment/compartment_overlap_summary.tsv` | Per patient, stratum (`all` or a time value) and compartment pair: samples, clones, shared clones, fraction of each compartment's clones and repertoire (summed frequency) in shared clones, Jaccard, Morisita-Horn |
+| `compartment/compartment_flow.tsv` | Per-compartment frequencies of the clones drawn in the flow diagrams (top `--compartment_top_n` per compartment) plus an `Other` remainder |
+| `compartment/compartment_shared_clones.tsv` | Every clone found in two or more compartments of a patient, with its frequency in each |
+| `compartment/compartment_samples.tsv` | Per sample: patient, harmonised compartment, timepoint and cohort time |
+| `compartment/compartment_overlap_status.txt` | `ok`, or why the comparison was skipped |
+
+### Cross-study reference comparison (optional, both modalities)
+
+With `--reference_samplesheet`, `REFERENCE_MATCH` looks for the run's clonotypes in external reference sets: earlier cohorts or trial iterations, or published clones of interest (tumour-reactive, antigen-specific). Without it the step does not run and nothing changes.
+
+`--reference_samplesheet` is either a single reference table, or a CSV listing several:
+
+| Column | Required | Description |
+|---|---|---|
+| `study` | recommended | Name of the reference set (default: the file name) |
+| `file` | yes | Reference table, relative to the samplesheet or absolute |
+| `cdr3_col`, `v_col`, `count_col`, `freq_col`, `patient_col` | optional | Column names in that table when not auto-detected |
+| `label_cols` | optional | `;`-separated annotation columns carried into the matches (e.g. `Putative Target;Post CAN3110`) |
+
+Reference tables are AIRR rearrangement TSVs or any CSV/TSV clone list. Only a CDR3 amino-acid column is required; auto-detected names are `junction_aa`, `cdr3_aa`, `cdr3aa`, `cdr3b`, `cdr3`, `aminoAcid`, `TCR_ Clonotype` (CDR3), `v_call`, `v_gene`, `vGeneName` (V gene), `duplicate_count`, `templates`, `count` (count), `frequency`, `freq`, `productive_frequency` (frequency), `patient`, `subject_id` (patient) and `antigen`, `epitope`, `putative_target` (annotation). Clones match exactly on `--reference_match_key`: `junction_aa,v_call` (default; V genes compared at gene level, Adaptive names mapped to IMGT) or `junction_aa`. A reference without V genes is matched on CDR3 alone. Similarity-based matching (TCRdist3 / GLIPH2) is not implemented yet (TODO in `bin/reference_match.py`).
+
+| Output | Contents |
+|---|---|
+| `reference/reference_matches.tsv` | Every (sample, matched clone): count and frequency in this run and in the reference, reference patient and annotations, match key |
+| `reference/per_sample/<sample>_reference_matches.tsv` | The same, per sample |
+| `reference/reference_overlap_summary.tsv` | Per sample and per patient x reference: clones, shared clones, fraction of clones / repertoire shared, fraction of the reference found, Jaccard, Morisita-Horn (needs reference counts or frequencies) |
+
 ### Clonotype clustering and Master Summary (both modalities)
 
 After the cohort comparison, both modalities run the same chain: a per-cell (single-cell) or per-clonotype (bulk) export → `CLUSTER_TO_SC` (GIANA / GLIPH2 / TCRdist3 clusters mapped onto those rows) → `CONSENSUS_CLUSTERING` → `CLUSTER_ROLLUP` → `MASTER_SUMMARY`. Without a GEX object these steps run on the export table alone. Bulk runs need `run_compare` plus `run_sample` and/or `run_patient`; disable with `--run_clonotype_clustering false`.
@@ -188,6 +221,12 @@ All parameters and their defaults are in `nextflow.config`. Supply non-default v
 | `--tcrdist_radius` | `24` | TCRdist3 distance radius for clusters |
 | `--run_master_summary` | `true` | Render the Master Summary |
 | `--timepoint_order` | — | Comma-separated timepoint order for the reports (default: numeric, else alphabetical) |
+| `--cohort_time_col` | `timepoint` | Samplesheet column with time comparable across patients (e.g. binned study days), used by figures spanning several patients (falls back to `timepoint`) |
+| `--compartment_col` | `origin` | Samplesheet column naming each sample's compartment (e.g. tumour, blood) |
+| `--compartment_match_key` | `junction_aa,v_call` | Clone key for the compartment comparison (or `junction_aa`) |
+| `--compartment_top_n` | `15` | Clones per compartment drawn in the flow diagrams |
+| `--reference_samplesheet` | — | Reference clonotype sets for the cross-study comparison (unset: not run) |
+| `--reference_match_key` | `junction_aa,v_call` | Exact-match key for the reference comparison (or `junction_aa`) |
 | `--container` | `ghcr.io/karchinlab/tcrtoolkit:main` | Main container image |
 | `--max_memory` / `--max_cpus` / `--max_time` | `768.GB` / `192` / `48.h` | Resource caps |
 

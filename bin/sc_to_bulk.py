@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bridge 1: SC_TO_BULK
-Converts SCRATCH-TCR per-cell export_cells.tsv → per-sample AIRR-format TSVs.
+Converts single-cell per-cell export_cells.tsv → per-sample AIRR-format TSVs.
 
 Usage:
     sc_to_bulk.py <export_cells.tsv> <sample_col> [<meta_cols_csv>]

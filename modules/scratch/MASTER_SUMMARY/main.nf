@@ -24,6 +24,10 @@ process MASTER_SUMMARY {
       path consensus_tables,  stageAs: 'intables/consensus/*'
       path tcri_tables,       stageAs: 'intables/tcri/*'
       path clonal_tables,     stageAs: 'intables/clonal/*'
+      // COMPARTMENT_OVERLAP (compartment flow section) and REFERENCE_MATCH (cross-study
+      // section); empty lists when compare did not run / no --reference_samplesheet.
+      path compartment_tables, stageAs: 'intables/compartment/*'
+      path reference_tables,   stageAs: 'intables/reference/*'
 
       // The Discovery Brief flattened to markdown by RENDER_NOTEBOOK
       // (bin/notebook_to_markdown.py), or NO_FILE without the report notebooks.
@@ -75,6 +79,8 @@ process MASTER_SUMMARY {
       -P condition_col="${params.condition_col}"
       -P timepoint_col="${params.timepoint_col}"
       -P timepoint_order="${params.timepoint_order ?: ''}"
+      -P cohort_time_col="${params.cohort_time_col ?: ''}"
+      -P compartment_top_n=${params.compartment_top_n}
       -P tcrdist_radius=${params.tcrdist_radius}
     )
 

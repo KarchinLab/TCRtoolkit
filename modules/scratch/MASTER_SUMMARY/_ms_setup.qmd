@@ -168,6 +168,26 @@ lplot <- function(df, title, xlab, ylab, logx = TRUE, logy = TRUE, height = 470)
                        yaxis = list(title = ylab, type = if (logy) "log" else "linear")))
 }
 
+# Time labels (d0, d28, Day 100, 28) sorted by their number, explicit --timepoint_order first;
+# non-numeric labels after.
+time_levels <- function(x, order = character()) {
+  x <- unique(as.character(x)); x <- x[!is.na(x) & nzchar(x)]
+  first <- intersect(order, x); x <- setdiff(x, first)
+  num <- vapply(x, function(v) { m <- regmatches(v, regexpr("-?[0-9]+(\\.[0-9]+)?", v)); if (length(m)) as.numeric(m) else NA_real_ }, numeric(1))
+  c(first, x[order(is.na(num), num, x)])
+}
+# A widget printed from a results: asis chunk (inside generated tabs) keeps its JS
+# dependencies only when registered with knitr explicitly.
+emit_widget <- function(w) {
+  if (inherits(w, "plotly")) {
+    w <- plotly::plotly_build(w)
+    if (!is.null(w$x$layout$height)) w$height <- w$x$layout$height
+  }
+  x <- knitr::knit_print(w)
+  knitr::knit_meta_add(attr(x, "knit_meta"))
+  cat("\n\n", x, "\n\n", sep = "")
+}
+
 itable <- function(df, caption = NULL, pageSize = 10, ...) {
   if (!have(df)) return(note("No data available."))
   # Whole-number columns (counts) without decimals; other numbers to 3 digits.

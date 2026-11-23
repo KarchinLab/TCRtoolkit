@@ -1,5 +1,5 @@
 ---
-title: "SCRATCH-TCR: TCRi Report"
+title: "TCRtoolkit: TCRi Report"
 author: "Syed Shujaat Ali Zaidi"
 format:
   html:

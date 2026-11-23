@@ -23,6 +23,8 @@ workflow MASTER_SUMMARY_SW {
     consensus_tables
     tcri_tables
     clonal_tables       // CLONAL_DYNAMICS tables (cell states of expanding/contracting clones)
+    compartment_tables  // COMPARTMENT_OVERLAP tables (clone flows between compartments)
+    reference_tables    // REFERENCE_MATCH tables (cross-study comparison), [] when not run
     discovery_md
 
     barrier_done
@@ -44,6 +46,8 @@ workflow MASTER_SUMMARY_SW {
         consensus_tables,
         tcri_tables,
         clonal_tables,
+        compartment_tables,
+        reference_tables,
         discovery_md,
         ch_notebook,
         barrier_done,

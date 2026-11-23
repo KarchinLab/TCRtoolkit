@@ -45,6 +45,9 @@ timepoint_order_col = 'timepoint_order'
 timepoint_order = ''
 alias_col = 'alias'
 subject_col = 'subject_id'
+# Time axis of figures that put several patients on one axis (values comparable across
+# patients, e.g. binned study days 0,15,30); falls back to timepoint_col when absent.
+cohort_time_col = 'timepoint'
 
 ```
 
@@ -334,6 +337,34 @@ def create_clonality_plot(data, group_col, custom_order=None, plot_type="box"):
     fig.show()
 
 
+# --- 1b. COHORT TIME PLOT (all patients on one axis) ---
+# Patients' own timepoint labels are not comparable (timepoint 3 is day 28 for one patient
+# and day 33 for another), so figures spanning patients use the cohort time column.
+def has_values(frame, col):
+    return col in frame.columns and frame[col].dropna().astype(str).str.strip().ne('').any()
+
+cohort_col = cohort_time_col if has_values(df, cohort_time_col) else (timepoint_col if has_values(df, timepoint_col) else None)
+
+def time_key(x):
+    m = re.search(r'-?\d+(\.\d+)?', str(x))
+    return (0, float(m.group()), str(x)) if m else (1, 0.0, str(x))
+
+def create_cohort_time_plot(data):
+    d = data.dropna(subset=[cohort_col]).copy()
+    d[cohort_col] = d[cohort_col].astype(str)
+    order = sorted(d[cohort_col].unique(), key=time_key)
+    multi = 'origin' in d.columns and d['origin'].nunique() > 1
+    fig = px.box(
+        d, x=cohort_col, y='clonality', color='origin' if multi else None,
+        points='all', hover_data=[c for c in ['alias', subject_col] if c in d.columns],
+        category_orders={cohort_col: order}, height=480,
+        title=f"TCR Clonality by {cohort_col}" + (" and compartment" if multi else "") + " (all patients)")
+    fig.update_traces(marker=dict(size=6, opacity=0.6), pointpos=0, jitter=0.4)
+    fig.update_layout(boxmode='group', yaxis_title='Clonality', xaxis_title=cohort_col,
+                      showlegend=multi, legend_title_text='Compartment', margin=dict(t=80))
+    fig.update_yaxes(showgrid=True, gridcolor='#ebebeb', zeroline=False)
+    fig.show()
+
 # --- 2. GENERATE TABS ---
 
 if len(unique_patients) <= 10:
@@ -345,6 +376,10 @@ if len(unique_patients) <= 10:
     for group in group_opts_all:
         print(f"### {group}\n")
         create_clonality_plot(df, group)
+        print("\n")
+    if cohort_col:
+        print(f"### {cohort_col}\n")
+        create_cohort_time_plot(df)
         print("\n")
     print("::::\n")
 
@@ -410,11 +445,15 @@ else:
         print(f"## {group}\n")
         create_clonality_plot(df, group)
         print("\n")
+    if cohort_col:
+        print(f"## {cohort_col}\n")
+        create_cohort_time_plot(df)
+        print("\n")
     print(":::\n")
 
 ```
 
-**Figure 1. The clonality of samples across timepoints.** Distribution of TCR clonality across metadata variables.
+**Figure 1. The clonality of samples across timepoints.** Distribution of TCR clonality across metadata variables. The cohort-time tab (`--cohort_time_col`, by default `timepoint`) puts every patient's samples on one time axis, with one box per compartment when samples come from several (e.g. tumour and blood); the per-patient tabs follow each patient's own timepoints, split by compartment.
 
 :::: {.callout-note title="More detail: technical flags and biological interpretation" collapse="true"}
 **<u>Technical QC 🚩</u>**  
@@ -614,10 +653,18 @@ def create_upset_tabs(df, patient_list):
         print(f"## {patient_id}\n")
         
         patient_df = df[df[subject_col] == patient_id]
-        timepoints = sorted(patient_df[timepoint_col].unique())
-        
-        # Extracting clones (junction_aa) by timepoint
-        clones_by_timepoint = {tp: set(patient_df[patient_df[timepoint_col] == tp]['junction_aa']) for tp in timepoints}
+        # Several compartments (e.g. tumour and blood): one set per compartment · timepoint, so
+        # clones shared between compartments are not merged into one timepoint.
+        if 'origin' in patient_df.columns and patient_df['origin'].nunique() > 1:
+            set_lab = patient_df['origin'].astype(str) + ' · ' + patient_df[timepoint_col].astype(str)
+            _o = patient_df.assign(_lab=set_lab)[['_lab', 'origin', timepoint_order_col]].drop_duplicates('_lab')
+            timepoints = _o.sort_values(['origin', timepoint_order_col])['_lab'].tolist()
+        else:
+            set_lab = patient_df[timepoint_col]
+            timepoints = sorted(patient_df[timepoint_col].unique())
+
+        # Extracting clones (junction_aa) by timepoint (and compartment)
+        clones_by_timepoint = {tp: set(patient_df[set_lab == tp]['junction_aa']) for tp in timepoints}
 
         upset_data = upsetplot.from_contents(clones_by_timepoint)
 
@@ -670,8 +717,9 @@ def create_upset_tabs(df, patient_list):
         
     print(":::\n")
 
-# Find patient groups with more than 1 timepoint
-timepoint_counts = concat_df.groupby(subject_col)[timepoint_col].nunique()
+# Find patient groups with more than 1 timepoint (or compartment · timepoint)
+set_cols = [timepoint_col] + (['origin'] if 'origin' in concat_df.columns else [])
+timepoint_counts = concat_df[[subject_col] + set_cols].drop_duplicates().groupby(subject_col).size()
 upset_patients = timepoint_counts[timepoint_counts > 1].index.tolist()
 
 # Suppress warnings
@@ -686,7 +734,7 @@ else:
     print("No patients with multiple timepoints found for UpSet plotting.")
     
 ```
-**Figure 3. Clonal sharing.** Upset plot showing the raw number of shared clones between 2 or more samples.
+**Figure 3. Clonal sharing.** Upset plot showing the raw number of shared clones between 2 or more samples. For a patient sampled in several compartments (e.g. tumour and blood), each set is one compartment · timepoint, so the plot also shows clones shared between compartments.
 
 :::: {.callout-note title="More detail: reading an UpSet plot" collapse="true"}
 **Understanding the Upset plot:**
@@ -1161,8 +1209,9 @@ if 'detailed_comparisons_table' in locals() and not detailed_comparisons_table.e
         (detailed_comparisons_table['fold_change'] > fc_thold_up) &
         (pd.to_numeric(detailed_comparisons_table['q_value'], errors='coerce') < signif_thold)
     ]
-    # Store tuple of (subject, origin, t_pre, t_post, CDR3b)
-    sig_exp_lookup = set(zip(sig_exp[subject_col], sig_exp['origin'], sig_exp['t_pre'], sig_exp['t_post'], sig_exp['junction_aa']))
+    # Store tuple of (subject, origin, t_pre, t_post, CDR3b); timepoints as text, like the
+    # plot below (numeric timepoints would otherwise be ints here and text there).
+    sig_exp_lookup = set(zip(sig_exp[subject_col], sig_exp['origin'], sig_exp['t_pre'].astype(str), sig_exp['t_post'].astype(str), sig_exp['junction_aa']))
 
 sig_cont_lookup = set()
 if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_table_cont.empty:
@@ -1170,7 +1219,7 @@ if 'detailed_comparisons_table_cont' in locals() and not detailed_comparisons_ta
         (detailed_comparisons_table_cont['fold_change'] < fc_thold_down) &
         (pd.to_numeric(detailed_comparisons_table_cont['q_value'], errors='coerce') < signif_thold)
     ]
-    sig_cont_lookup = set(zip(sig_cont[subject_col], sig_cont['origin'], sig_cont['t_pre'], sig_cont['t_post'], sig_cont['junction_aa']))
+    sig_cont_lookup = set(zip(sig_cont[subject_col], sig_cont['origin'], sig_cont['t_pre'].astype(str), sig_cont['t_post'].astype(str), sig_cont['junction_aa']))
 
 # Define our color palette
 color_discrete_map = {
@@ -1190,6 +1239,9 @@ for subject, subj_df in clonotypes_df.groupby(subject_col):
     
     for origin in origins:
         orig_df = subj_df[subj_df['origin'] == origin]
+        # Timepoints as text: plotly's hover_data looks column names up as strings, so numeric
+        # timepoints (1, 2, ...) would fail as pivot column names.
+        orig_df = orig_df.assign(**{timepoint_col: orig_df[timepoint_col].astype(str)})
         timepoints = orig_df.sort_values('timepoint_rank')[timepoint_col].unique().tolist()
         
         if len(timepoints) < 2:
@@ -1420,16 +1472,23 @@ else:
         if basename in meta.index:
             df['patient'] = meta.loc[basename, subject_col]
             df[timepoint_col] = meta.loc[basename, timepoint_col]
+            df['origin'] = meta.loc[basename, 'origin'] if 'origin' in meta.columns else ''
             all_clones_list.append(df)
         elif basename in meta['sample'].values:
             row = meta[meta['sample'] == basename].iloc[0]
             df['patient'] = row[subject_col]
             df[timepoint_col] = row[timepoint_col]
+            df['origin'] = row['origin'] if 'origin' in meta.columns else ''
             all_clones_list.append(df)
 
     if all_clones_list:
         all_clones_df = pd.concat(all_clones_list).reset_index(drop=True)
-        
+        # Patients sampled in several compartments: colour by compartment · timepoint.
+        all_clones_df[timepoint_col] = all_clones_df[timepoint_col].astype(str)
+        multi_origin = all_clones_df.groupby('patient')['origin'].transform('nunique') > 1
+        all_clones_df.loc[multi_origin, timepoint_col] = (all_clones_df.loc[multi_origin, 'origin'].astype(str)
+                                                          + ' · ' + all_clones_df.loc[multi_origin, timepoint_col])
+
         unique_timepoints = sorted(all_clones_df[timepoint_col].dropna().unique())
         color_palette = px.colors.qualitative.Plotly + px.colors.qualitative.Set1
         timepoint_colors = {tp: color_palette[i % len(color_palette)] for i, tp in enumerate(unique_timepoints)}
@@ -1539,7 +1598,7 @@ else:
         print(":::\n")
 
 ```
-**Figure 5. TCRdist Network.** Network graphs visualizing sequence similarity between TCR clonotypes based on the TCRdist metric. Nodes represent individual unique clonotypes, with node size proportional to clonal frequency. Node color indicates the sample timepoint where the clone was detected. Edges connect clonotypes with a TCRdist score below a set threshold, forming clusters (metaclones). **(Top)** Full TCR Network: Visualization of all detected metaclones within the patient repertoire. **(Bottom)** Filtered Network (Expanded Metaclones Only): Displays only metaclones containing at least one significantly expanded clonotype, highlighting the structural neighborhoods of treatment-responsive T-cells.
+**Figure 5. TCRdist Network.** Network graphs visualizing sequence similarity between TCR clonotypes based on the TCRdist metric. Nodes represent individual unique clonotypes, with node size proportional to clonal frequency. Node color indicates the sample timepoint where the clone was detected (compartment · timepoint for patients sampled in several compartments). Edges connect clonotypes with a TCRdist score below a set threshold, forming clusters (metaclones). **(Top)** Full TCR Network: Visualization of all detected metaclones within the patient repertoire. **(Bottom)** Filtered Network (Expanded Metaclones Only): Displays only metaclones containing at least one significantly expanded clonotype, highlighting the structural neighborhoods of treatment-responsive T-cells.
 
 :::: {.callout-note title="More detail: why cluster similar sequences" collapse="true"}
 Up to this point, our analysis has treated every unique CDR3 amino acid sequence as a distinct entity. However, immunology is rarely so black and white. T-cell receptors with highly similar, though not identical, sequences often recognize the same antigenic epitope. By focusing only on exact matches, we risk fragmenting the data and missing the broader, coordinated cellular response to a specific antigen.
@@ -1653,8 +1712,9 @@ for row in meta.to_dict('records'):
     merged_df[subject_col] = row[subject_col]
     merged_df[timepoint_col] = str(row[timepoint_col])
     merged_df[timepoint_order_col] = int(row[timepoint_order_col])
+    merged_df['origin'] = row.get('origin', '')
 
-    cols_to_keep = ['cdr3aa', 'freq', 'Category', subject_col, timepoint_col, timepoint_order_col, 'Species', 'Gene', 'Antigen']
+    cols_to_keep = ['cdr3aa', 'freq', 'Category', subject_col, 'origin', timepoint_col, timepoint_order_col, 'Species', 'Gene', 'Antigen']
     all_data.append(merged_df[cols_to_keep])
 
 final_df = pd.concat(all_data, ignore_index=True)
@@ -1678,7 +1738,13 @@ for pat in patients:
 
     # Sort explicitly by timepoint_order before plotting
     pat_df = final_df[final_df[subject_col] == pat].sort_values(by=[timepoint_order_col, 'freq'], ascending=[True, False])
-    ordered_timepoints = pat_df[[timepoint_col, timepoint_order_col]].drop_duplicates().sort_values(timepoint_order_col)[timepoint_col].tolist()
+    # Several compartments: one bar / strip per compartment · timepoint (not pooled).
+    if pat_df['origin'].nunique() > 1:
+        pat_df = pat_df.assign(**{timepoint_col: pat_df['origin'].astype(str) + ' · ' + pat_df[timepoint_col]})
+        pat_df = pat_df.sort_values(by=['origin', timepoint_order_col, 'freq'], ascending=[True, True, False])
+        ordered_timepoints = pat_df[timepoint_col].drop_duplicates().tolist()
+    else:
+        ordered_timepoints = pat_df[[timepoint_col, timepoint_order_col]].drop_duplicates().sort_values(timepoint_order_col)[timepoint_col].tolist()
 
     fig = make_subplots(rows=1, cols=2, subplot_titles=('Repertoire Composition', 'Clonal Dominance'))
 
@@ -1686,7 +1752,8 @@ for pat in patients:
     pt_bar_data = pat_df.groupby([timepoint_col, timepoint_order_col, 'Category']).agg(
         total_freq=('freq', 'sum'),
         tcr_count=('cdr3aa', 'count')
-    ).reset_index().sort_values(timepoint_order_col)
+    ).reset_index()
+    pt_bar_data = pt_bar_data.set_index(timepoint_col).loc[[t for t in ordered_timepoints if t in set(pt_bar_data[timepoint_col])]].reset_index()
 
     for cat in cat_colors.keys():
         cat_bar = pt_bar_data[pt_bar_data['Category'] == cat]
@@ -1709,7 +1776,8 @@ for pat in patients:
     tp_totals = pt_bar_data.groupby([timepoint_col, timepoint_order_col]).agg(
         total_count=('tcr_count', 'sum'),
         top_y=('total_freq', 'sum')
-    ).reset_index().sort_values(timepoint_order_col)
+    ).reset_index()
+    tp_totals = tp_totals.set_index(timepoint_col).loc[[t for t in ordered_timepoints if t in set(tp_totals[timepoint_col])]].reset_index()
 
     fig.add_trace(go.Scatter(
         x=tp_totals[timepoint_col],
@@ -1776,7 +1844,7 @@ for pat in patients:
 print(":::\n")
 
 ```
-**Figure 6. Antigen Specificity Mapping against VDJdb** This figure summarizes the predicted antigen specificity of the TCR repertoire over time, based on exact CDR3 sequence matching to the VDJdb database. **(A) Repertoire Composition by Target Species.** A 100% stacked bar chart showing the proportion of clones at each timepoint categorized by the species of the target antigen. **Red (Self-Antigen):** Clones mapped to human peptides, representing potential tumor-reactive populations. **Blue (Foreign Bystander):** Clones mapped to known viral or bacterial antigens (e.g., CMV, EBV, Influenza). **Grey (Unmapped):** Clones with no known match in the current VDJdb database. **(B) Clonal Dominance of Specific Antigen Targets.** A jitter plot visualizing individual clone frequencies (y-axis, log scale) over time. Each dot represents a unique clonotype. Dots are colored according to their VDJdb mapping status (Self-Antigen, Foreign Bystander, or Unmapped), matching the color scheme in Panel A. This visualization highlights whether highly dominant expanding clones are mapped to potential therapeutic targets versus bystander viruses.
+**Figure 6. Antigen Specificity Mapping against VDJdb** This figure summarizes the predicted antigen specificity of the TCR repertoire over time, based on exact CDR3 sequence matching to the VDJdb database. **(A) Repertoire Composition by Target Species.** A 100% stacked bar chart showing the proportion of clones at each timepoint (compartment · timepoint for patients sampled in several compartments, e.g. tumour and blood) categorized by the species of the target antigen. **Red (Self-Antigen):** Clones mapped to human peptides, representing potential tumor-reactive populations. **Blue (Foreign Bystander):** Clones mapped to known viral or bacterial antigens (e.g., CMV, EBV, Influenza). **Grey (Unmapped):** Clones with no known match in the current VDJdb database. **(B) Clonal Dominance of Specific Antigen Targets.** A jitter plot visualizing individual clone frequencies (y-axis, log scale) over time. Each dot represents a unique clonotype. Dots are colored according to their VDJdb mapping status (Self-Antigen, Foreign Bystander, or Unmapped), matching the color scheme in Panel A. This visualization highlights whether highly dominant expanding clones are mapped to potential therapeutic targets versus bystander viruses.
 
 :::: {.callout-note title="More detail: interpreting specificity categories" collapse="true"}
 Clonal dynamics tell us which clones are active. However, it doesn't tell us what those T-cells are actually recognizing. In the context of cancer immunology, distinguishing between a T-cell attacking a tumor antigen and one reacting to a common background virus (like CMV or EBV) is crucial.  
@@ -1814,10 +1882,13 @@ rename_dict = {}
 if 'junction_aa' in exp_df.columns: rename_dict['junction_aa'] = 'cdr3aa'
 exp_df = exp_df.rename(columns=rename_dict)
 
+# Expansion is called within a compartment, so match it to the same compartment's clones.
+merge_keys = [subject_col, timepoint_col, 'cdr3aa'] + (['origin'] if 'origin' in exp_df.columns else [])
+exp_df[timepoint_col] = exp_df[timepoint_col].astype(str)
 expanded_annotated = pd.merge(
-    exp_df[[subject_col, timepoint_col, 'cdr3aa']],
+    exp_df[merge_keys].drop_duplicates(),
     final_df,
-    on=[subject_col, timepoint_col, 'cdr3aa'],
+    on=merge_keys,
     how='inner'
 )
 
@@ -1825,14 +1896,14 @@ expanded_annotated = pd.merge(
 
 # Dropped 'Antigen' to force aggregation at the Species level
 plot_data = expanded_annotated.groupby(
-    [subject_col, timepoint_col, timepoint_order_col, 'Category', 'Species']
+    [subject_col, 'origin', timepoint_col, timepoint_order_col, 'Category', 'Species']
 ).agg(
     total_freq=('freq', 'sum'),
     tcr_count=('cdr3aa', 'nunique')
 ).reset_index()
 
 # Calculate the 100% normalized percentage based on unique expanded clones per timepoint
-tp_totals = plot_data.groupby([subject_col, timepoint_col])['tcr_count'].transform('sum')
+tp_totals = plot_data.groupby([subject_col, 'origin', timepoint_col])['tcr_count'].transform('sum')
 plot_data['clone_pct'] = (plot_data['tcr_count'] / tp_totals) * 100
 
 # Strict sorting
@@ -1874,9 +1945,15 @@ for pat in all_patients:
         continue
 
     pat_data['_r'] = pd.to_numeric(pat_data[timepoint_order_col].astype(str), errors='coerce')
+    # Several compartments: one bar per compartment · timepoint.
+    if pat_data['origin'].nunique() > 1:
+        pat_data[timepoint_col] = pat_data['origin'].astype(str) + ' · ' + pat_data[timepoint_col].astype(str)
+        pat_data = pat_data.sort_values(['origin', '_r'])
+    else:
+        pat_data = pat_data.sort_values('_r')
     tp_n = pat_data.groupby(timepoint_col)['tcr_count'].sum()
     pat_data['cat'] = [f"{tp} (n={int(tp_n[tp]):,})" for tp in pat_data[timepoint_col]]
-    order = pat_data.sort_values('_r')['cat'].drop_duplicates().tolist()
+    order = pat_data['cat'].drop_duplicates().tolist()
     d = pd.DataFrame({
         'cat': pat_data['cat'], 'grp': pat_data['Species'].astype(str), 'val': pat_data['clone_pct'] / 100,
         'hover': [f"{pat} · {tp}<br>{sp} ({cat}): {pc:.1f}% ({int(n)} of {int(tp_n[tp])} expanded clones)"
@@ -1891,7 +1968,7 @@ for pat in all_patients:
 print(":::\n")
 
 ```
-**Figure 7. Predicted Antigen Specificity of Expanded TCR Clones.** One bar per timepoint, read from the top in time order; each bar sums to 100% of the clonotypes that expanded significantly at that timepoint (compared with an earlier one) and matched a VDJdb entry, split by the species of the matched antigen. n= in the bar label is the number of those clonotypes; hover a segment for its count and summed frequency.
+**Figure 7. Predicted Antigen Specificity of Expanded TCR Clones.** One bar per timepoint (compartment · timepoint for patients sampled in several compartments), read from the top in time order; each bar sums to 100% of the clonotypes that expanded significantly at that timepoint (compared with an earlier one) and matched a VDJdb entry, split by the species of the matched antigen. n= in the bar label is the number of those clonotypes; hover a segment for its count and summed frequency.
 
 **Visualizing Expanded Clone Specificity**  
 

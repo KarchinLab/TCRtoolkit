@@ -28,7 +28,8 @@ process CLUSTER_TO_SC {
     publishDir "${params.outdir}/bridge/cluster_to_sc", mode: 'copy', overwrite: true
 
     input:
-    path seurat_rds
+    // stageAs: the NO_FILE placeholder (no GEX object) must not collide with other inputs.
+    path seurat_rds,        stageAs: 'in_seurat.rds'
     path export_cells
     path giana_files        // collected *_giana.txt files (one per patient)
     path gliph2_files       // collected cluster_member_details dirs/files

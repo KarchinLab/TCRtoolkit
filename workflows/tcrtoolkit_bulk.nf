@@ -177,6 +177,8 @@ workflow TCRTOOLKIT_BULK {
                     consensus_tables.flatten().collect().ifEmpty([]),
                     channel.value([]),
                     channel.value([]),
+                    BULKTCR_ANALYSIS.out.compartment_tables.map { l -> l ?: [] },
+                    BULKTCR_ANALYSIS.out.reference_tables.map { l -> l ?: [] },
                     discovery_md.ifEmpty(nofile).first(),
                     consensus_report.collect().ifEmpty([nofile]),
                     ch_project_name

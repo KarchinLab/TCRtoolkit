@@ -293,6 +293,8 @@ workflow TCRTOOLKIT_SC {
             consensus_tables.flatten().collect().ifEmpty([]),
             tcri_tables.flatten().collect().ifEmpty([]),
             BULKTCR_ANALYSIS.out.clonal_dynamics_files.map { l -> l ?: [] },
+            BULKTCR_ANALYSIS.out.compartment_tables.map { l -> l ?: [] },
+            BULKTCR_ANALYSIS.out.reference_tables.map { l -> l ?: [] },
             discovery_md.ifEmpty(nofile).first(),
             master_barrier,
             ch_project_name

@@ -54,6 +54,7 @@ process RENDER_NOTEBOOK {
         -P timepoint_order_col:'${params.timepoint_order_col}' \\
         -P timepoint_order:'${params.timepoint_order}' \\
         -P alias_col:'${params.alias_col}' \\
+        -P cohort_time_col:'${params.cohort_time_col}' \\
         ${project_dir_arg} \\
         ${keep_ipynb_arg} \\
         --to html

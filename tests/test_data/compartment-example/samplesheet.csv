@@ -1,0 +1,9 @@
+sample,alias,patient,timepoint,protocol_day,origin,file
+P002_d0_Tumor,P002_d0_Tumor,P002,0,d0,Tumor,tests/test_data/compartment-example/P002_d0_Tumor.tsv
+P002_d30_Tumor,P002_d30_Tumor,P002,30,d30,Tumor,tests/test_data/compartment-example/P002_d30_Tumor.tsv
+P002_d0_Blood,P002_d0_Blood,P002,0,d0,PBMC,tests/test_data/compartment-example/P002_d0_Blood.tsv
+P002_d30_Blood,P002_d30_Blood,P002,30,d30,PBMC,tests/test_data/compartment-example/P002_d30_Blood.tsv
+P004_d0_Tumor,P004_d0_Tumor,P004,0,d0,Tumor,tests/test_data/compartment-example/P004_d0_Tumor.tsv
+P004_d33_Tumor,P004_d33_Tumor,P004,30,d33,Tumor,tests/test_data/compartment-example/P004_d33_Tumor.tsv
+P004_d0_Blood,P004_d0_Blood,P004,0,d0,PBMC,tests/test_data/compartment-example/P004_d0_Blood.tsv
+P004_d33_Blood,P004_d33_Blood,P004,30,d33,PBMC,tests/test_data/compartment-example/P004_d33_Blood.tsv

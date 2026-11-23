@@ -1,5 +1,5 @@
 ---
-title: "SCRATCH-TCR: T-Cell Integration Report"
+title: "TCRtoolkit: T-Cell Integration Report"
 author: "Syed Shujaat Ali Zaidi"
 format:
   html:

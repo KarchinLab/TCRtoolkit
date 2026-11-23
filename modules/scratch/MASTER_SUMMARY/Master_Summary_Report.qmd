@@ -1,5 +1,5 @@
 ---
-title: "TCR-Toolkit-SCRATCH: Master Summary"
+title: "TCRtoolkit: Master Summary"
 format:
   html:
     toc: true
@@ -20,7 +20,7 @@ execute:
   warning: false
   message: false
 params:
-  project_name: "TCR-Toolkit-SCRATCH"
+  project_name: "TCRtoolkit"
   # "singlecell" or "bulk". Bulk runs have no cells: every export row is one sample x
   # clonotype, so "cells" in this report then means clonotypes.
   modality: "singlecell"
@@ -43,6 +43,10 @@ params:
   timepoint_col: "timepoint"
   # Comma-separated cohort timepoint order (--timepoint_order); empty sorts alphabetically.
   timepoint_order: ""
+  # Compartment section: time column the compartments are compared at (--cohort_time_col)
+  # and clones per compartment drawn in its flow diagrams (--compartment_top_n).
+  cohort_time_col: "timepoint"
+  compartment_top_n: 15
   clone_id_col: "clone_id"
   clone_size_col: "clone_size"
   consensus_cluster_col: "consensus_cluster"
@@ -143,6 +147,13 @@ itable(cons_clusters, pageSize = 10)
 ```
 
 {{< include ./_sc_gex.qmd >}}
+
+<!-- Additional sections, after the existing ones: clonotype sharing between sample
+     compartments (COMPARTMENT_OVERLAP), and the optional cross-study comparison
+     (REFERENCE_MATCH; absent without --reference_samplesheet). -->
+{{< include ./_ms_compartment.qmd >}}
+
+{{< include ./_ms_reference.qmd >}}
 
 # Reference tables
 

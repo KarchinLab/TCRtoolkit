@@ -169,6 +169,56 @@
           "type": "string",
           "default": "alias",
           "description": "Samplesheet column giving a display alias for each sample."
+        },
+        "cohort_time_col": {
+          "type": "string",
+          "default": "timepoint",
+          "description": "Samplesheet column with a time axis comparable across patients (e.g. binned study days 0,15,30), used by figures spanning several patients. Falls back to timepoint_col when absent."
+        }
+      }
+    },
+    "compartment_options": {
+      "title": "Compartment comparison options",
+      "type": "object",
+      "fa_icon": "fas fa-project-diagram",
+      "description": "Clonotype sharing between each patient's sample compartments (e.g. tumor and blood), shown as flow diagrams in the Master Summary.",
+      "properties": {
+        "compartment_col": {
+          "type": "string",
+          "default": "origin",
+          "description": "Samplesheet column naming each sample's compartment (e.g. Tumor, PBMC/Blood, or any other tissue or body fluid). The section is skipped when the column is absent or no patient has two compartments."
+        },
+        "compartment_match_key": {
+          "type": "string",
+          "default": "junction_aa,v_call",
+          "enum": ["junction_aa,v_call", "junction_aa"],
+          "description": "Clone identity used to compare compartments: CDR3 amino acid plus V gene, or CDR3 only."
+        },
+        "compartment_top_n": {
+          "type": "integer",
+          "default": 15,
+          "minimum": 1,
+          "description": "Largest clones per compartment drawn in each flow diagram; the rest are pooled as 'Other'."
+        }
+      }
+    },
+    "reference_options": {
+      "title": "Cross-study reference comparison",
+      "type": "object",
+      "fa_icon": "fas fa-exchange-alt",
+      "description": "Optional comparison of this run's clonotypes with external reference clonotype sets (earlier cohorts, published tumour-reactive or antigen-specific clones).",
+      "properties": {
+        "reference_samplesheet": {
+          "type": "string",
+          "format": "file-path",
+          "exists": true,
+          "description": "CSV with columns study,file (optional: cdr3_col,v_col,count_col,freq_col,label_cols,patient_col) listing reference clone tables, or a single reference table (AIRR TSV or any CSV/TSV with a CDR3 amino-acid column). Unset: the step does not run."
+        },
+        "reference_match_key": {
+          "type": "string",
+          "default": "junction_aa,v_call",
+          "enum": ["junction_aa,v_call", "junction_aa"],
+          "description": "Exact-match key. References without a V gene column are matched on CDR3 only."
         }
       }
     },
@@ -366,6 +416,12 @@
     },
     {
       "$ref": "#/$defs/plotting_options"
+    },
+    {
+      "$ref": "#/$defs/compartment_options"
+    },
+    {
+      "$ref": "#/$defs/reference_options"
     },
     {
       "$ref": "#/$defs/olga_options"

@@ -1,0 +1,115 @@
+<!-- Cross-study clonotype comparison (REFERENCE_MATCH tables under intables/reference/).
+     Included by Master_Summary_Report.qmd. Renders nothing - not even its heading - when the
+     run had no --reference_samplesheet, so reports of runs without one are unchanged. -->
+
+```{r}
+#| label: reference-load
+ref_sum     <- T("reference", "reference_overlap_summary.tsv")
+ref_matches <- T("reference", "reference_matches.tsv")
+ref_ran     <- file.exists(file.path(params$tables_dir, "reference", "reference_overlap_summary.tsv"))
+# Sample order and labels (patient, then cohort time, then compartment) from COMPARTMENT_OVERLAP.
+ref_samples <- T("compartment", "compartment_samples.tsv")
+```
+
+```{r}
+#| label: reference-section
+#| results: asis
+if (ref_ran) {
+  cat("\n# Clones shared with reference studies {#sec-reference}\n\n")
+  cat(paste(
+    "::: {.callout-tip title=\"In short\" appearance=\"simple\"}\n",
+    "- **What it shows:** which of this run's clonotypes are also present in external reference",
+    "sets (`--reference_samplesheet`): earlier cohorts or iterations of the trial, or published",
+    "clones of interest (tumour-reactive, antigen-specific).\n",
+    "- **Why it matters:** clones that recur across studies point to shared, possibly",
+    "antigen-driven responses; reference clones with a known target annotate this run's repertoire.\n",
+    "- **How to read it:** bars give, per sample, the fraction of the repertoire (summed clone",
+    "frequency) in clones found in each reference; the tables list the matched clones with their",
+    "frequency in both studies.\n:::\n\n"))
+  cat(paste(
+    "Clones are matched exactly on CDR3β amino acid and V gene (`--reference_match_key`); a reference",
+    "without V genes is matched on CDR3 alone (column *Key*). Exact matching misses similar but",
+    "non-identical receptors of the same specificity; similarity-based matching (TCRdist3, GLIPH2) is",
+    "not yet part of this comparison.\n\n"))
+}
+if (ref_ran && !have(ref_sum)) {
+  note("The reference comparison ran but produced no summary (no clonotypes to compare).")
+}
+```
+
+```{r}
+#| label: reference-plots
+#| results: asis
+if (ref_ran && have(ref_sum)) {
+  save_table(ref_sum, "master_reference_overlap_summary.tsv")
+  ds <- ref_sum %>% filter(level == "sample")
+  # Order samples by patient, cohort time and compartment; label with alias + compartment.
+  if (have(ref_samples)) {
+    ds <- ds %>% left_join(ref_samples %>% select(sample, alias, compartment, cohort_time), by = c("id" = "sample"))
+    tl <- time_levels(ref_samples$cohort_time, trimws(strsplit(as_str1(params$timepoint_order), ",")[[1]]))
+    ds <- ds %>% mutate(tr = match(cohort_time, tl)) %>% arrange(patient, tr, compartment, alias)
+    ds$lab <- ifelse(is.na(ds$alias) | !nzchar(ds$alias), ds$id, ds$alias)
+  } else {
+    ds <- ds %>% arrange(patient, id); ds$lab <- ds$id
+  }
+  ds$lab <- factor(ds$lab, levels = rev(unique(ds$lab)))
+  cat("\n## Repertoire found in each reference {#sec-reference-samples}\n\n")
+  p <- pconf(plotly::plot_ly(ds, x = ~frac_repertoire_shared, y = ~lab, color = ~study, colors = pal,
+                             type = "bar", orientation = "h", textposition = "none",
+                             text = ~paste0(lab, " (", patient, ")<br>", study, ": ", shared_clones, " of ",
+                                            format(clones, big.mark = ","), " clones; ",
+                                            percent(frac_repertoire_shared, 0.01), " of the repertoire"),
+                             hovertemplate = "%{text}<extra></extra>") %>%
+    plotly::layout(barmode = "group", title = ttl("Fraction of each sample's repertoire in reference clones"),
+                   height = max(420, 22 * nrow(ds) + 160), margin = list(l = 180, t = 60),
+                   xaxis = list(title = "Repertoire (summed clone frequency) in matched clones", tickformat = ".1%"),
+                   yaxis = list(title = ""), legend = list(title = list(text = "Reference"))))
+  emit_widget(p)
+  cat(paste("**Figure R1. Reference clones in each sample.** One bar per sample and reference set,",
+            "samples ordered by patient, then cohort time and compartment (top to bottom). Hover a bar",
+            "for the number of matched clones.\n\n"))
+
+  dp <- ref_sum %>% filter(level == "patient") %>%
+    transmute(Patient = patient, Reference = study, Key = match_key, Clones = clones,
+              `Reference clones` = reference_clones, `Shared clones` = shared_clones,
+              `Clones shared` = round(frac_clones_shared, 4),
+              `Repertoire shared` = round(frac_repertoire_shared, 4),
+              `Reference clones found` = round(frac_reference_clones_found, 4),
+              `Reference repertoire found` = round(frac_reference_repertoire_found, 4),
+              Jaccard = round(jaccard, 5), `Morisita-Horn` = round(morisita_horn, 4))
+  if (nrow(dp)) {
+    cat("\n## Overlap per patient {#sec-reference-patients}\n\n")
+    emit_widget(htmltools::tagList(itable(as.data.frame(dp), pageSize = 10),
+      htmltools::tags$p(style = "margin-top: 0.5rem;", htmltools::HTML(paste(
+        "<strong>Table R1. Overlap with each reference, per patient</strong> (the patient's samples",
+        "pooled). <em>Clones / Repertoire shared</em>: fraction of this patient's clones, and of its",
+        "summed frequency, found in the reference. <em>Reference clones found</em>: fraction of the",
+        "reference's clones seen in this patient. Morisita-Horn needs reference frequencies or counts",
+        "and is empty otherwise. Per-sample values are in",
+        "<code>tables/master_reference_overlap_summary.tsv</code>.")))))
+  }
+}
+```
+
+```{r}
+#| label: reference-matches
+#| results: asis
+if (ref_ran && have(ref_matches)) {
+  save_table(ref_matches, "master_reference_matches.tsv")
+  cat("\n## Matched clones {#sec-reference-matches}\n\n")
+  dm <- ref_matches %>%
+    group_by(study, patient, junction_aa, v_gene, match_key) %>%
+    summarise(samples = n_distinct(sample), max_freq = max(freq, na.rm = TRUE),
+              ref_freq = suppressWarnings(max(ref_freq, na.rm = TRUE)),
+              ref_patient = first(ref_patient), ref_labels = first(ref_labels), .groups = "drop") %>%
+    mutate(ref_freq = ifelse(is.finite(ref_freq), signif(ref_freq, 3), NA),
+           max_freq = signif(max_freq, 3)) %>%
+    arrange(study, desc(max_freq))
+  emit_widget(htmltools::tagList(itable(as.data.frame(dm), pageSize = 10),
+    htmltools::tags$p(style = "margin-top: 0.5rem;", htmltools::HTML(paste(
+      "<strong>Table R2. Clones of this run found in a reference set</strong>, one row per patient and",
+      "clone: the number of the patient's samples carrying it, its largest frequency in this run, its",
+      "frequency in the reference (when given), and the reference's patient(s) and annotations",
+      "(e.g. putative target). Per-sample rows are in <code>tables/master_reference_matches.tsv</code>.")))))
+}
+```

@@ -411,4 +411,86 @@ nextflow_pipeline {
         }
 
     }
+
+    test("Bulk compartments and cross-study reference") {
+
+        tag "bulk"
+        tag "compartment"
+        tag "reference"
+
+        when {
+            params {
+                // Tumor + blood (PBMC) samples of two GBM patients at matched protocol days
+                // (tests/test_data/compartment-example). The fixture's samplesheet lists files
+                // relative to the repository root; nf-test launches elsewhere, so the sheet is
+                // regenerated here with absolute paths.
+                def fixture = "${projectDir}/tests/test_data/compartment-example"
+                def rows = new File("${fixture}/samplesheet.csv").readLines()
+                def sheet = new File("${launchDir}/compartment_samplesheet.csv")
+                sheet.text = ([rows[0]] + rows.drop(1).collect { r ->
+                    def f = r.split(',', -1)
+                    f[-1] = "${projectDir}/${f[-1]}"
+                    f.join(',')
+                }).join('\n') + '\n'
+
+                samplesheet = sheet.path
+                outdir = "out-compartment-reference"
+                input_format = "airr"
+                reference_samplesheet = "${fixture}/reference/reference_samplesheet.csv"
+                // run_patient=false (default): no patient-level clustering, so CLUSTER_TO_SC
+                // gets no GIANA/GLIPH2/TCRdist3 files (regression test for a staging collision).
+                run_patient = false
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            def out = "${launchDir}/out-compartment-reference"
+            assert workflow.success
+            // Both patients have tumor and blood: the overlap table has one row per patient
+            // for all timepoints pooled, plus one per matched protocol day.
+            def summary = new File("${out}/compartment/compartment_overlap_summary.tsv").readLines()
+            assert summary.size() == 7
+            assert new File("${out}/compartment/compartment_overlap_status.txt").text.startsWith("ok")
+            // Two reference sets x (8 samples + 2 patients).
+            assert new File("${out}/reference/reference_overlap_summary.tsv").readLines().size() == 21
+            assert new File("${out}/reference/reference_matches.tsv").readLines().size() > 1
+            def ms = new File("${out}/report/master_summary/Master_Summary_Report.html").text
+            assert ms.contains("Clones shared between compartments")
+            assert ms.contains("Clones shared with reference studies")
+        }
+
+    }
+
+    test("Bulk without compartments or reference keeps the sections out") {
+
+        tag "bulk"
+        tag "compartment"
+
+        when {
+            params {
+                // Single-compartment cohort, no --reference_samplesheet.
+                samplesheet = "${integrationModes}/bulk_sample_patient_compare.csv"
+                outdir = "out-no-compartment"
+                input_format = "adaptive"
+                run_patient = true
+                max_memory = "8.GB"
+                max_cpus = 4
+                container = bulkContainer
+            }
+        }
+
+        then {
+            def out = "${launchDir}/out-no-compartment"
+            assert workflow.success
+            assert new File("${out}/compartment/compartment_overlap_status.txt").text.startsWith("skipped")
+            assert !new File("${out}/reference").exists()
+            def ms = new File("${out}/report/master_summary/Master_Summary_Report.html").text
+            assert ms.contains("No compartment comparison for this run")
+            assert !ms.contains("Clones shared with reference studies")
+        }
+
+    }
 }

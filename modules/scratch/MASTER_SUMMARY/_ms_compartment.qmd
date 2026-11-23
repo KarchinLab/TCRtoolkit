@@ -1,0 +1,264 @@
+<!-- Compartment flows (COMPARTMENT_OVERLAP tables under intables/compartment/). Included by
+     Master_Summary_Report.qmd as an additional section after the existing ones. Skips with a note when the run has
+     no compartment metadata or no patient sampled in two compartments. -->
+
+# Clones shared between compartments {#sec-compartment}
+
+::: {.callout-tip title="In short" appearance="simple"}
+- **What it shows:** for each patient sampled in more than one compartment (for example tumour and peripheral blood, or any other tissue or body fluid in the samplesheet), how the clonotypes of one compartment are found in the others, as flow diagrams and overlap metrics.
+- **Why it matters:** clones that are expanded at the disease site and also circulate in blood are candidates for minimally invasive monitoring of the immune response.
+- **How to read it:** each column is one compartment, each coloured band one clone; a band joining two columns is a clone found in both, and its height in each column is its frequency there.
+:::
+
+**Biological rationale.** Clinical immunology keeps looking for less invasive ways to diagnose
+disease and to follow the immune response at the level of the whole organism, not only at the
+disease site. Peripheral blood can be drawn repeatedly with little risk, whereas a tissue biopsy
+usually needs a procedure, and for some tumours surgery. If disease-relevant T-cell clones (for
+example those expanded in a tumour, or expanding after treatment) are also found in blood, they
+can act as **liquid-biopsy readouts**: their frequency in a blood draw would track the response
+at the disease site between biopsies. The same reasoning applies to other accessible
+compartments, such as cerebrospinal fluid (CSF) for brain tumours, pleural fluid or ascites, or
+a draining lymph node, which may share more of the tissue repertoire than blood does; comparing
+each of them with blood shows which clones reach the systemic circulation.
+
+**How it is computed.** Within each patient, clone counts are pooled per compartment over all of
+that compartment's samples (**All timepoints**), and again per cohort time point where the
+patient was sampled in two or more compartments at the same time (`--cohort_time_col`, by default
+`timepoint`). A clone is a CDR3β amino-acid sequence plus V gene (`--compartment_match_key`).
+Common compartment labels are harmonised (e.g. PBMC → Blood, TIL → Tumor); any other label is
+used as given, so any set of compartments can be compared. For every pair of compartments the table gives
+the shared clones, the fraction of each compartment's clones and of its repertoire (summed clone
+frequency) they make up, the Jaccard index (shared / all unique clones) and the Morisita-Horn
+index (overlap weighted by clone frequency, dominated by the large clones).
+
+```{r}
+#| label: compartment-load
+comp_status_file <- file.path(params$tables_dir, "compartment", "compartment_overlap_status.txt")
+comp_status  <- if (file.exists(comp_status_file)) trimws(readLines(comp_status_file, warn = FALSE)[1]) else ""
+comp_sum     <- T("compartment", "compartment_overlap_summary.tsv")
+comp_flow    <- T("compartment", "compartment_flow.tsv")
+comp_shared  <- T("compartment", "compartment_shared_clones.tsv")
+comp_ok      <- startsWith(comp_status, "ok") && have(comp_sum) && have(comp_flow)
+
+# Column order: other compartments (alphabetical), then Blood, then Tumor, so blood sits next
+# to both the tissue and any other compartment it is compared with.
+comp_order <- function(x) {
+  x <- unique(as.character(x)); last <- c("Blood", "Tumor")
+  c(sort(setdiff(x, last)), intersect(last, x))
+}
+comp_time_col <- {
+  smp <- T("compartment", "compartment_samples.tsv")
+  if (have(smp) && "cohort_time_col" %in% names(smp)) as.character(smp$cohort_time_col[1]) else "time"
+}
+strata_label <- function(s) ifelse(s == "all", "All timepoints", paste(comp_time_col, s))
+
+# ── Flow (alluvial) diagram ────────────────────────────────────────────────
+# One stacked column per compartment (top clones plus "Other", summing to 100%), the same clone
+# order in every column; a ribbon joins a clone's segments in neighbouring columns, its width
+# at each end the clone's frequency in that compartment. Built from filled scatter polygons:
+# plotly's sankey links have one width, so they cannot show a frequency per compartment.
+flow_plot <- function(fl, title, height = 600) {
+  comps <- comp_order(fl$compartment)
+  xs <- setNames(seq_along(comps) - 1, comps); bw <- 0.24
+  pres <- strsplit(as.character(fl$compartments_present), ";", fixed = TRUE)
+  # Highlight clones shared with blood when the patient has blood, else any shared clone.
+  hl_comp <- if ("Blood" %in% comps) "Blood" else NULL
+  fl$hl <- fl$clone != "Other" & as.logical(fl$shared) &
+    vapply(pres, function(p) is.null(hl_comp) || hl_comp %in% p, logical(1))
+  fl$shared <- as.logical(fl$shared) & fl$clone != "Other"
+  cl <- fl %>% filter(clone != "Other") %>% group_by(clone) %>%
+    summarise(w = max(freq), hl = any(hl), sh = any(shared),
+              lab = paste0(first(junction_aa), ifelse(nzchar(first(v_gene)), paste0(" · ", first(v_gene)), "")),
+              hov = paste0(compartment, ": ", percent(freq, 0.01), " (", count, ")", collapse = "<br>"),
+              .groups = "drop") %>%
+    arrange(desc(hl), desc(sh), desc(w))
+  n_hl <- sum(cl$hl)
+  cl$col <- ifelse(cl$hl, NA, ifelse(cl$sh, "#969696", "#d9d9d9"))
+  if (n_hl) cl$col[cl$hl] <- grDevices::colorRampPalette(pal)(max(n_hl, 2))[seq_len(n_hl)]
+  ord <- c(cl$clone, "Other")
+  # Segment positions: stacked from the top of each column in the shared clone order.
+  seg <- fl %>% mutate(o = match(clone, ord)) %>% arrange(compartment, o) %>%
+    group_by(compartment) %>% mutate(y1 = 1 - (cumsum(freq) - freq), y0 = y1 - freq) %>% ungroup()
+  sig <- function(t) 3 * t^2 - 2 * t^3
+  tt <- seq(0, 1, length.out = 25)
+  p <- plotly::plot_ly()
+  for (i in seq_along(ord)) {
+    cid <- ord[i]
+    s <- seg[seg$clone == cid, , drop = FALSE]
+    s <- s[order(match(s$compartment, comps)), , drop = FALSE]
+    xx <- c(); yy <- c()
+    for (j in seq_len(nrow(s))) {          # column segments
+      x <- xs[[s$compartment[j]]]
+      xx <- c(xx, x - bw / 2, x + bw / 2, x + bw / 2, x - bw / 2, x - bw / 2, NA)
+      yy <- c(yy, s$y0[j], s$y0[j], s$y1[j], s$y1[j], s$y0[j], NA)
+    }
+    if (cid != "Other" && nrow(s) > 1) {   # ribbons between neighbouring columns
+      for (j in seq_len(nrow(s) - 1)) {
+        a <- s[j, ]; b <- s[j + 1, ]
+        if (xs[[b$compartment]] - xs[[a$compartment]] != 1) next
+        x0 <- xs[[a$compartment]] + bw / 2; x1 <- xs[[b$compartment]] - bw / 2
+        xr <- x0 + (x1 - x0) * tt
+        xx <- c(xx, xr, rev(xr), x0, NA)
+        yy <- c(yy, a$y1 + (b$y1 - a$y1) * sig(tt), rev(a$y0 + (b$y0 - a$y0) * sig(tt)), a$y1, NA)
+      }
+    }
+    if (cid == "Other") {
+      col <- "#f0f0f0"; txt <- paste0("Other clones<br>",
+        paste0(s$compartment, ": ", percent(s$freq, 0.1), collapse = "<br>"))
+    } else {
+      r <- cl[cl$clone == cid, ]
+      col <- r$col
+      txt <- paste0("<b>", r$lab, "</b><br>", r$hov,
+                    ifelse(r$sh, "<br>shared between compartments", "<br>found in one compartment"))
+    }
+    p <- p %>% plotly::add_trace(x = xx, y = yy, type = "scatter", mode = "lines", fill = "toself",
+                                 fillcolor = plotly::toRGB(col, if (cid == "Other") 1 else 0.85),
+                                 line = list(color = "white", width = 0.6),
+                                 hoveron = "fills", text = txt, hoverinfo = "text",
+                                 showlegend = FALSE, name = cid)
+  }
+  # Legend: one entry per colour class.
+  leg <- c(if (n_hl) setNames(pal[1], if (is.null(hl_comp)) "Shared between compartments" else "Shared with blood"),
+           if (!is.null(hl_comp) && any(cl$sh & !cl$hl)) c("Shared, not with blood" = "#969696"),
+           if (any(!cl$sh)) c("Found in one compartment" = "#d9d9d9"),
+           "Other clones" = "#f0f0f0")
+  for (nm in names(leg)) p <- p %>% plotly::add_trace(x = c(NA), y = c(NA), type = "scatter", mode = "markers",
+                                                     marker = list(symbol = "square", size = 12, color = leg[[nm]]),
+                                                     name = nm, hoverinfo = "skip", showlegend = TRUE)
+  meta <- fl %>% group_by(compartment) %>% summarise(n = sum(count), .groups = "drop")
+  ticks <- paste0("<b>", comps, "</b><br>", format(meta$n[match(comps, meta$compartment)], big.mark = ","), " counts")
+  pconf(p %>% plotly::layout(
+    title = ttl(title), height = height, margin = list(t = 60, b = 70),
+    xaxis = list(title = "", tickvals = unname(xs), ticktext = ticks, range = c(-0.5, length(comps) - 0.5),
+                 zeroline = FALSE, showgrid = FALSE),
+    yaxis = list(title = "Clone frequency in the compartment", tickformat = ".0%", range = c(0, 1),
+                 zeroline = FALSE),
+    legend = list(orientation = "h", y = -0.15)))
+}
+```
+
+```{r}
+#| label: compartment-absent
+#| results: asis
+if (!comp_ok) {
+  why <- if (nzchar(comp_status)) sub("^skipped: ", "", comp_status) else
+    "the compartment analysis did not run (it needs the compare stage)"
+  note(paste0("**No compartment comparison for this run:** ", why, ". ",
+              "To enable it, add a samplesheet column naming each sample's compartment ",
+              "(for example `origin` with values such as `Tumor` and `PBMC`/`Blood`; set `--compartment_col` ",
+              "if it has another name) and include patients sampled in at least two compartments."))
+}
+```
+
+```{r}
+#| label: compartment-flows
+#| results: asis
+if (comp_ok) {
+  cat("\n## Clone flows per patient {#sec-compartment-flows}\n\n")
+  cat(paste("One tab per patient; inside, **All timepoints** pools every sample of a compartment and the",
+            "other tabs compare compartments sampled at the same", comp_time_col, "value.",
+            "Blood and tumour are drawn as the last two columns, after any other compartment, so blood",
+            "sits next to each compartment it is compared with. Coloured bands are clones shared with",
+            "blood (or, for a patient without blood samples, clones shared between any two",
+            "compartments); dark grey bands are clones shared between other compartments only and light",
+            "grey bands clones seen in one compartment. Each column shows the", params$compartment_top_n,
+            "largest clones of every compartment (so a column can include another compartment's",
+            "top clones at low frequency); the remainder is pooled as **Other**.",
+            "Hover a band for the clone's frequency (and count) in each compartment.\n\n"))
+  save_table(comp_flow, "master_compartment_flow.tsv")
+  cat("::: {.panel-tabset}\n\n")
+  for (pt in sort(unique(as.character(comp_flow$patient)))) {
+    cat("### ", pt, "\n\n", sep = "")
+    fp <- comp_flow[comp_flow$patient == pt, , drop = FALSE]
+    strata <- c("all", setdiff(time_levels(fp$stratum), "all"))
+    strata <- intersect(strata, unique(fp$stratum))
+    cat("::: {.panel-tabset}\n\n")
+    for (st in strata) {
+      cat("#### ", strata_label(st), "\n\n", sep = "")
+      emit_widget(flow_plot(fp[fp$stratum == st, , drop = FALSE],
+                            paste0(pt, ": ", strata_label(st))))
+    }
+    cat(":::\n\n")
+  }
+  cat(":::\n\n")
+  cat(paste("**Figure C1. Clonotype flows between compartments.** Stacked columns give the clone",
+            "frequencies within each compartment; ribbons join the same clone (CDR3β + V gene) in",
+            "neighbouring compartments, with widths equal to its frequency at each end. Clones shared",
+            "between non-neighbouring compartments (for example a third compartment and the tumour,",
+            "with blood between them) are counted in the table below.\n\n"))
+}
+```
+
+```{r}
+#| label: compartment-summary
+#| results: asis
+if (comp_ok) {
+  cat("\n## Overlap between compartments {#sec-compartment-overlap}\n\n")
+  cat(paste("Per patient and compartment pair: clones in each compartment, the shared clones, the",
+            "fraction of each compartment's clones and of its repertoire (summed frequency) that the",
+            "shared clones make up, and the Jaccard and Morisita-Horn indices. **All timepoints** pools",
+            "a compartment's samples; the other rows compare compartments sampled at the same time.\n\n"))
+  d <- comp_sum %>%
+    mutate(stratum = strata_label(stratum),
+           pair = paste(compartment_a, "vs", compartment_b)) %>%
+    transmute(Patient = patient, Time = stratum, Pair = pair,
+              `Samples A` = samples_a, `Samples B` = samples_b,
+              `Clones A` = clones_a, `Clones B` = clones_b, `Shared clones` = shared_clones,
+              `Clones A shared` = round(frac_clones_a_shared, 4), `Clones B shared` = round(frac_clones_b_shared, 4),
+              `Repertoire A shared` = round(frac_repertoire_a_shared, 4),
+              `Repertoire B shared` = round(frac_repertoire_b_shared, 4),
+              Jaccard = round(jaccard, 4), `Morisita-Horn` = round(morisita_horn, 4))
+  save_table(comp_sum, "master_compartment_overlap_summary.tsv")
+  emit_widget(htmltools::tagList(
+    itable(d, pageSize = 10),
+    htmltools::tags$p(style = "margin-top: 0.5rem;", htmltools::HTML(paste(
+      "<strong>Table C1. Clonotype overlap between compartments.</strong> A and B are the",
+      "two compartments named in <em>Pair</em>; fractions are 0-1. <em>Repertoire A shared</em>",
+      "is the share of compartment A's cells (or reads) in clones also found in B; with B a",
+      "tissue and A blood, it is the quantity a liquid biopsy would measure.")))))
+
+  # Over cohort time (several patients on one axis): the shared share of each repertoire.
+  dt <- comp_sum %>% filter(stratum != "all")
+  if (nrow(dt) && dplyr::n_distinct(dt$stratum) > 1) {
+    lv <- time_levels(dt$stratum)
+    d2 <- bind_rows(
+      dt %>% transmute(patient, stratum, comp = compartment_a, other = compartment_b, val = frac_repertoire_a_shared, n = shared_clones),
+      dt %>% transmute(patient, stratum, comp = compartment_b, other = compartment_a, val = frac_repertoire_b_shared, n = shared_clones)) %>%
+      mutate(line = paste0(patient, " · ", comp, " (shared with ", other, ")"),
+             x = factor(stratum, levels = lv)) %>% arrange(line, x)
+    p <- pconf(plotly::plot_ly(d2, x = ~x, y = ~val, color = ~line, colors = pal, type = "scatter",
+                               mode = "lines+markers", marker = list(size = 9),
+                               text = ~paste0(line, "<br>", comp_time_col, " ", stratum, "<br>",
+                                              percent(val, 0.1), " of the repertoire (", n, " shared clones)"),
+                               hovertemplate = "%{text}<extra></extra>") %>%
+      plotly::layout(title = ttl("Share of each compartment's repertoire in shared clones, over time"),
+                     height = 460, margin = list(t = 60),
+                     xaxis = list(title = comp_time_col, categoryorder = "array", categoryarray = lv),
+                     yaxis = list(title = "Repertoire in shared clones", tickformat = ".0%"),
+                     legend = list(title = list(text = "Patient · compartment"))))
+    emit_widget(p)
+    cat(paste0("**Figure C2. Shared clones over ", comp_time_col, ".** One line per patient and",
+               " compartment: the fraction of that compartment's repertoire made of clones also found in",
+               " the other compartment sampled at the same time. A rising blood line means more of the",
+               " circulating repertoire is shared with the disease site, the signal a liquid biopsy relies on.\n\n"))
+  }
+
+  if (have(comp_shared)) {
+    cat("\n## Shared clones {#sec-compartment-shared}\n\n")
+    fcols <- grep("^freq_", names(comp_shared), value = TRUE)
+    d3 <- comp_shared %>% filter(stratum == "all")
+    d3$max_freq <- do.call(pmax, c(lapply(fcols, function(c) d3[[c]]), na.rm = TRUE))
+    d3 <- d3 %>% arrange(patient, desc(max_freq)) %>% group_by(patient) %>% slice_head(n = 100) %>% ungroup() %>%
+      select(patient, junction_aa, v_gene, compartments_present, all_of(fcols)) %>%
+      mutate(across(all_of(fcols), ~ signif(.x, 3)))
+    save_table(comp_shared, "master_compartment_shared_clones.tsv")
+    emit_widget(htmltools::tagList(
+      itable(as.data.frame(d3), pageSize = 10),
+      htmltools::tags$p(style = "margin-top: 0.5rem;", htmltools::HTML(paste(
+        "<strong>Table C2. Clones found in two or more compartments</strong> (all timepoints pooled; the",
+        "100 most frequent per patient, ranked by their largest frequency in any compartment).",
+        "<code>freq_*</code> is the clone's frequency in each compartment (0 = not detected).",
+        "The full list is in <code>tables/master_compartment_shared_clones.tsv</code>.")))))
+  }
+}
+```

@@ -66,6 +66,8 @@ workflow BULKTCR_ANALYSIS {
 
     def ch_shared_cdr3 = channel.empty()
     def ch_clonal_dynamics_files = channel.value([])
+    def ch_compartment_tables = channel.value([])
+    def ch_reference_tables = channel.value([])
     def ch_reports = channel.empty()
     def ch_sample_stats = channel.empty()
     def ch_repertoire_tables = channel.empty()
@@ -125,6 +127,8 @@ workflow BULKTCR_ANALYSIS {
 
         ch_shared_cdr3 = COMPARE.out.shared_cdr3
         ch_clonal_dynamics_files = COMPARE.out.clonal_dynamics_files
+        ch_compartment_tables = COMPARE.out.compartment_tables
+        ch_reference_tables = COMPARE.out.reference_tables
     }
 
     if (run_reports && levels.contains('sample')) {
@@ -327,6 +331,8 @@ workflow BULKTCR_ANALYSIS {
 
     shared_cdr3 = ch_shared_cdr3
     clonal_dynamics_files = ch_clonal_dynamics_files
+    compartment_tables = ch_compartment_tables   // COMPARTMENT_OVERLAP tables ([] without compare)
+    reference_tables   = ch_reference_tables     // REFERENCE_MATCH tables ([] without a reference)
 
     reports = ch_reports
 }
